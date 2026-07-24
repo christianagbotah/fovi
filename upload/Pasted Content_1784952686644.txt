@@ -1,0 +1,1994 @@
+#webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/iedupro.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     ifleetpro.lightworldtech.com www.ifleetpro.lightworldtech.com mail.ifleetpro.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://ifleetpro.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/ifleetpro;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/ifleetpro.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/ifleetpro.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/ifleetpro.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     pisapp.lightworldtech.com www.pisapp.lightworldtech.com mail.pisapp.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://pisapp.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/pisapp;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/pisapp.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/pisapp.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/pisapp.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     mudashco.lightworldtech.com www.mudashco.lightworldtech.com mail.mudashco.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://mudashco.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/mudashco;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/mudashco.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/mudashco.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/mudashco.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     abis.lightworldtech.com www.abis.lightworldtech.com mail.abis.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://abis.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/abis;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/abis.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/abis.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/abis.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     depot1.ghbuildersco.com www.depot1.ghbuildersco.com mail.depot1.ghbuildersco.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://depot1.ghbuildersco.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/depot1;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/depot1.ghbuildersco.com.err;
+        access_log      /usr/local/apps/nginx/var/log/depot1.ghbuildersco.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/depot1.ghbuildersco.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     kispecapp.lightworldtech.com www.kispecapp.lightworldtech.com mail.kispecapp.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://kispecapp.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/kispecapp;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/kispecapp.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/kispecapp.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/kispecapp.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     rochas.lightworldtech.com www.rochas.lightworldtech.com mail.rochas.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://rochas.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/rochas;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/rochas.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/rochas.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/rochas.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     shinystar.lightworldtech.com www.shinystar.lightworldtech.com mail.shinystar.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://shinystar.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/shinystar;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/shinystar.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/shinystar.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/shinystar.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     kris.kingsridgeinternational.com www.kris.kingsridgeinternational.com mail.kris.kingsridgeinternational.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://kris.kingsridgeinternational.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/kris;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/kris.kingsridgeinternational.com.err;
+        access_log      /usr/local/apps/nginx/var/log/kris.kingsridgeinternational.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/kris.kingsridgeinternational.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     ghbuildersco.com www.ghbuildersco.com mail.ghbuildersco.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://ghbuildersco.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/websites/ghbuildersco;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/ghbuildersco.com.err;
+        access_log      /usr/local/apps/nginx/var/log/ghbuildersco.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/ghbuildersco.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     kingsridgeinternational.com www.kingsridgeinternational.com mail.kingsridgeinternational.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://kingsridgeinternational.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/websites/kingsridgeinternational;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/kingsridgeinternational.com.err;
+        access_log      /usr/local/apps/nginx/var/log/kingsridgeinternational.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/kingsridgeinternational.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     padikiartgallery.com www.padikiartgallery.com mail.padikiartgallery.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://padikiartgallery.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/websites/padikiartgallery;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/padikiartgallery.com.err;
+        access_log      /usr/local/apps/nginx/var/log/padikiartgallery.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/padikiartgallery.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     sweetmothersgh.org www.sweetmothersgh.org mail.sweetmothersgh.org;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://sweetmothersgh.org$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/websites/sweetmothersgh;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/sweetmothersgh.org.err;
+        access_log      /usr/local/apps/nginx/var/log/sweetmothersgh.org.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/sweetmothersgh.org.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     twokingslogisticsgh.com www.twokingslogisticsgh.com mail.twokingslogisticsgh.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://twokingslogisticsgh.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/websites/twokingslogisticsgh;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/twokingslogisticsgh.com.err;
+        access_log      /usr/local/apps/nginx/var/log/twokingslogisticsgh.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/twokingslogisticsgh.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     hopeinspiringmission.org www.hopeinspiringmission.org mail.hopeinspiringmission.org;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://hopeinspiringmission.org$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/websites/hopeinspiringmission;
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/hopeinspiringmission.org.err;
+        access_log      /usr/local/apps/nginx/var/log/hopeinspiringmission.org.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/hopeinspiringmission.org.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     iassetspro.lightworldtech.com www.iassetspro.lightworldtech.com mail.iassetspro.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://iassetspro.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/iassetspro;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/iassetspro.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/iassetspro.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/iassetspro.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     fovi.lightworldtech.com www.fovi.lightworldtech.com mail.fovi.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://fovi.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/fovi;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/fovi.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/fovi.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/fovi.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:80;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:80;
+        server_name     vidora.lightworldtech.com www.vidora.lightworldtech.com mail.vidora.lightworldtech.com;
+        if ($request_uri !~ "^/.well-known/acme-challenge/"){
+                return 301 https://vidora.lightworldtech.com$request_uri;
+
+        }
+
+
+
+        # The Document Root
+        root            /home/lightworld/webapps/vidora;
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+
+        }
+        error_log       /usr/local/apps/nginx/var/log/vidora.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/vidora.lightworldtech.com.log main;
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass http://127.0.0.1:2002/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/vidora.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     lightworldtech.com www.lightworldtech.com mail.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/public_html;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     iedupro.lightworldtech.com www.iedupro.lightworldtech.com mail.iedupro.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/iedupro;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/iedupro.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/iedupro.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/iedupro.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/iedupro.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/iedupro.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     ifleetpro.lightworldtech.com www.ifleetpro.lightworldtech.com mail.ifleetpro.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/ifleetpro;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/ifleetpro.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/ifleetpro.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/ifleetpro.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/ifleetpro.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/ifleetpro.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     pisapp.lightworldtech.com www.pisapp.lightworldtech.com mail.pisapp.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/pisapp;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/pisapp.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/pisapp.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/pisapp.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/pisapp.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/pisapp.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     mudashco.lightworldtech.com www.mudashco.lightworldtech.com mail.mudashco.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/mudashco;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/mudashco.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/mudashco.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/mudashco.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/mudashco.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/mudashco.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     abis.lightworldtech.com www.abis.lightworldtech.com mail.abis.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/abis;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/abis.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/abis.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/abis.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/abis.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/abis.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     depot1.ghbuildersco.com www.depot1.ghbuildersco.com mail.depot1.ghbuildersco.com;
+        # The Document Root
+        root            /home/lightworld/webapps/depot1;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/depot1.ghbuildersco.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/depot1.ghbuildersco.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/depot1.ghbuildersco.com.err;
+        access_log      /usr/local/apps/nginx/var/log/depot1.ghbuildersco.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/depot1.ghbuildersco.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     kispecapp.lightworldtech.com www.kispecapp.lightworldtech.com mail.kispecapp.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/kispecapp;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/kispecapp.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/kispecapp.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/kispecapp.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/kispecapp.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/kispecapp.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     rochas.lightworldtech.com www.rochas.lightworldtech.com mail.rochas.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/rochas;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/rochas.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/rochas.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/rochas.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/rochas.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/rochas.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     shinystar.lightworldtech.com www.shinystar.lightworldtech.com mail.shinystar.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/shinystar;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/shinystar.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/shinystar.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/shinystar.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/shinystar.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/shinystar.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     kris.kingsridgeinternational.com www.kris.kingsridgeinternational.com mail.kris.kingsridgeinternational.com;
+        # The Document Root
+        root            /home/lightworld/webapps/kris;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/kris.kingsridgeinternational.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/kris.kingsridgeinternational.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/kris.kingsridgeinternational.com.err;
+        access_log      /usr/local/apps/nginx/var/log/kris.kingsridgeinternational.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/kris.kingsridgeinternational.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     ghbuildersco.com www.ghbuildersco.com mail.ghbuildersco.com;
+        # The Document Root
+        root            /home/lightworld/websites/ghbuildersco;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/ghbuildersco.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/ghbuildersco.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/ghbuildersco.com.err;
+        access_log      /usr/local/apps/nginx/var/log/ghbuildersco.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/ghbuildersco.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     kingsridgeinternational.com www.kingsridgeinternational.com mail.kingsridgeinternational.com;
+        # The Document Root
+        root            /home/lightworld/websites/kingsridgeinternational;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/kingsridgeinternational.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/kingsridgeinternational.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/kingsridgeinternational.com.err;
+        access_log      /usr/local/apps/nginx/var/log/kingsridgeinternational.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/kingsridgeinternational.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     padikiartgallery.com www.padikiartgallery.com mail.padikiartgallery.com;
+        # The Document Root
+        root            /home/lightworld/websites/padikiartgallery;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/padikiartgallery.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/padikiartgallery.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/padikiartgallery.com.err;
+        access_log      /usr/local/apps/nginx/var/log/padikiartgallery.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/padikiartgallery.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     sweetmothersgh.org www.sweetmothersgh.org mail.sweetmothersgh.org;
+        # The Document Root
+        root            /home/lightworld/websites/sweetmothersgh;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/sweetmothersgh.org-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/sweetmothersgh.org.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/sweetmothersgh.org.err;
+        access_log      /usr/local/apps/nginx/var/log/sweetmothersgh.org.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/sweetmothersgh.org.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     twokingslogisticsgh.com www.twokingslogisticsgh.com mail.twokingslogisticsgh.com;
+        # The Document Root
+        root            /home/lightworld/websites/twokingslogisticsgh;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/twokingslogisticsgh.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/twokingslogisticsgh.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/twokingslogisticsgh.com.err;
+        access_log      /usr/local/apps/nginx/var/log/twokingslogisticsgh.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/twokingslogisticsgh.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     hopeinspiringmission.org www.hopeinspiringmission.org mail.hopeinspiringmission.org;
+        # The Document Root
+        root            /home/lightworld/websites/hopeinspiringmission;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/hopeinspiringmission.org-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/hopeinspiringmission.org.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php74/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/hopeinspiringmission.org.err;
+        access_log      /usr/local/apps/nginx/var/log/hopeinspiringmission.org.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/hopeinspiringmission.org.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     iassetspro.lightworldtech.com www.iassetspro.lightworldtech.com mail.iassetspro.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/iassetspro;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/iassetspro.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/iassetspro.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/iassetspro.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/iassetspro.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/iassetspro.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     fovi.lightworldtech.com www.fovi.lightworldtech.com mail.fovi.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/fovi;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/fovi.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/fovi.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/fovi.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/fovi.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/fovi.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
+
+
+server {
+        listen          163.245.212.15:443 ssl;
+        listen          [2604:a00:50:183:216:3eff:fe33:89e4]:443 ssl;
+        server_name     vidora.lightworldtech.com www.vidora.lightworldtech.com mail.vidora.lightworldtech.com;
+        # The Document Root
+        root            /home/lightworld/webapps/vidora;
+        ssl_certificate                         /var/webuzo/users/lightworld/ssl/vidora.lightworldtech.com-combined.pem;
+        ssl_certificate_key                     /var/webuzo/users/lightworld/ssl/vidora.lightworldtech.com.key;
+        ssl_dhparam                                 /etc/ssl/private/dhparam.pem;
+
+        set $fpmsocket /usr/local/apps/php83/var/fpm-lightworld.sock;
+
+
+
+
+
+        location ~ (\.php|phtml|shtml|/)$ {
+                try_files  $uri $uri/index.php $uri/index.php8 $uri/index.php7 $uri/index.php5 $uri/index.perl $uri/index.pl $uri/index.plx $uri/index.ppl $uri/index.cgi $uri/index.jsp $uri/index.jp $uri/index.phtml $uri/index.shtml $uri/index.xhtml $uri/index.html $uri/index.htm $uri/index.js;
+                fastcgi_pass unix:$fpmsocket;
+                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param   SCRIPT_NAME             $fastcgi_script_name;
+                include                 fastcgi_params;
+        }
+        error_log       /usr/local/apps/nginx/var/log/vidora.lightworldtech.com.err;
+        access_log      /usr/local/apps/nginx/var/log/vidora.lightworldtech.com.log main;
+
+
+
+
+
+        #webmail access from /webmail
+        location ^~ /webmail {
+                proxy_set_header Host $host;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header X-Original-URI $request_uri;
+                rewrite ^/webmail$ /webmail/ permanent;
+                proxy_pass https://127.0.0.1:2003/mail/;
+        }
+
+        set $noindex @maintenance;
+        include         /usr/local/apps/nginx/etc/conf.d/common;
+        include /var/webuzo-data/nginx/custom/domains/vidora.lightworldtech.com.conf;
+
+
+        # Stop proxy /.well-known folder
+        location /.well-known {
+
+        }
+}
