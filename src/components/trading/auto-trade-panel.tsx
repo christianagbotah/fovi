@@ -24,6 +24,7 @@ export function AutoTradePanel() {
   const [saving, setSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  const [amountWarning, setAmountWarning] = useState(false);
 
   // Load config on mount
   useEffect(() => {
@@ -68,7 +69,12 @@ export function AutoTradePanel() {
   }, [botConfig.id, setBotConfig]);
 
   const handleToggleBot = async () => {
-    if (botConfig.allocationAmount <= 0) return;
+    if (botConfig.allocationAmount <= 0) {
+      // Show inline feedback instead of silently blocking
+      setAmountWarning(true);
+      setTimeout(() => setAmountWarning(false), 3000);
+      return;
+    }
     const newEnabled = !botConfig.enabled;
     await saveConfig({
       enabled: newEnabled,
@@ -164,15 +170,33 @@ export function AutoTradePanel() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <AnimatePresence>
+                {amountWarning && (
+                  <motion.span
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    className="text-[10px] font-medium text-amber-500 whitespace-nowrap"
+                  >
+                    Enter amount first
+                  </motion.span>
+                )}
+              </AnimatePresence>
               <div className="flex items-center gap-2 bg-muted/80 rounded-full px-3 py-1.5">
                 <span className="text-[11px] text-muted-foreground font-medium">AI Bot</span>
                 <Switch
                   checked={botConfig.enabled}
                   onCheckedChange={handleToggleBot}
-                  disabled={saving || botConfig.allocationAmount <= 0}
+                  disabled={saving}
                   className="cursor-pointer"
                 />
               </div>
+              {isRunning && (
+                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Active
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -322,9 +346,9 @@ export function AutoTradePanel() {
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Risk Tolerance</label>
+                    <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Risk Level</label>
                     <div className="flex gap-1">
-                      {['conservative', 'medium', 'aggressive'].map(r => (
+                      {['low', 'medium', 'high'].map(r => (
                         <button key={r} onClick={() => saveConfig({ riskTolerance: r })}
                           className={`flex-1 py-1.5 text-[10px] font-semibold rounded-lg border cursor-pointer transition-colors ${
                             botConfig.riskTolerance === r

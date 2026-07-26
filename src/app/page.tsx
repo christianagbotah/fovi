@@ -817,6 +817,23 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
                 <Badge variant="outline" className="text-[10px]">4 Brokers</Badge>
               </div>
             </div>
+
+            {/* Login / Sign Up */}
+            <div className="p-4 rounded-xl border border-primary/20 bg-primary/5">
+              <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+                <Briefcase className="h-3.5 w-3.5" />
+                Account
+              </h4>
+              <a
+                href="/auth/signin"
+                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+              >
+                Sign In / Sign Up
+              </a>
+              <p className="text-[10px] text-muted-foreground text-center mt-1.5">
+                Connect your broker accounts after signing in
+              </p>
+            </div>
           </div>
         </ScrollArea>
       </SheetContent>
@@ -863,7 +880,7 @@ function DesktopSidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 px-2 space-y-0.5">
+      <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
         {sidebarItems.map(item => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -902,6 +919,7 @@ export default function TradingDashboard() {
     accounts, livePrices, allSymbols,
   } = useTradingStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
@@ -966,10 +984,14 @@ export default function TradingDashboard() {
             <Button variant="ghost" size="icon" className="h-9 w-9 cursor-pointer" onClick={() => window.location.reload()}>
               <RefreshCw className="h-4 w-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 relative cursor-pointer">
+            <Button variant="ghost" size="icon" className="h-9 w-9 relative cursor-pointer" onClick={() => setAlertsOpen(true)}>
               <Bell className="h-4 w-4" />
               <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">3</span>
             </Button>
+            <a href="/auth/signin" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer hover:bg-primary/90 transition-colors">
+              <Briefcase className="h-3.5 w-3.5" />
+              <span>Account</span>
+            </a>
             <Button variant="ghost" size="icon" className="h-9 w-9 cursor-pointer" onClick={() => setSettingsOpen(true)}>
               <Settings className="h-4 w-4" />
             </Button>
@@ -1174,6 +1196,7 @@ export default function TradingDashboard() {
       <SignalDetailSheet />
       <AiChatSheet />
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <AlertsSheet open={alertsOpen} onOpenChange={setAlertsOpen} />
     </div>
   );
 }

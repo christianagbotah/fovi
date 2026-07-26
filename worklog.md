@@ -1,6 +1,55 @@
 # Worklog
 
 ---
+Task ID: 7
+Agent: main
+Task: Fix 5 user-reported bugs — bell icon, bot toggle, risk labels, login UI, sidebar scroll
+
+Work Log:
+- Diagnosed 5 issues systematically by reading page.tsx, auto-trade-panel.tsx, store, and API routes
+
+1. **Bell icon not working** (page.tsx line 969)
+   - Root cause: Header Bell Button had NO onClick handler
+   - Fix: Added `alertsOpen` state to TradingDashboard, wired `onClick={() => setAlertsOpen(true)}`
+   - Also added `<AlertsSheet>` to the component tree at bottom of page
+
+2. **AI bot mode not enabling** (auto-trade-panel.tsx line 70-77)
+   - Root cause: `handleToggleBot` had guard `if (botConfig.allocationAmount <= 0) return;`
+   - Switch had `disabled={saving || botConfig.allocationAmount <= 0}` — silently blocked with no feedback
+   - Fix: Removed allocation guard from disabled prop (now only disabled during saving)
+   - Added `amountWarning` state — when amount is $0 and user tries toggle, shows animated "Enter amount first" text
+   - Added "Active" pulse badge next to switch when bot is running
+
+3. **Risk level labels repeated** (auto-trade-panel.tsx line 327)
+   - Root cause: Strategy selector shows Conservative/Balanced/Aggressive/Scalping
+   - Risk tolerance also showed Conservative/Medium/Aggressive — overlap of "Conservative" and "Aggressive"
+   - Fix: Changed risk tolerance labels from conservative/medium/aggressive to Low/Medium/High
+   - Changed label from "Risk Tolerance" to "Risk Level"
+
+4. **Missing login/signup UI** (page.tsx)
+   - Root cause: No auth link anywhere in the main UI
+   - Fix: Added "Account" button in header bar (between Bell and Settings) linking to /auth/signin
+   - Added "Sign In / Sign Up" card in Settings Sheet (mobile menu) with primary button
+   - Both visible: desktop header button, mobile settings sheet
+
+5. **Sidebar not scrolling** (page.tsx line 866)
+   - Root cause: `<nav>` had `flex-1` but no overflow handling; 15 sidebar items overflow on shorter screens
+   - Fix: Added `overflow-y-auto` to the `<nav>` element
+
+Verification:
+- ESLint: 0 errors
+- Page compiles: HTTP 200, 64,283 bytes
+- Toggle API test: PUT returns `enabled: true, status: 'running'` correctly
+- Only expected Prisma validation warnings (PostgreSQL vs SQLite in local dev)
+
+Stage Summary:
+- All 5 bugs fixed with minimal, targeted changes
+- Bell now opens Alerts sheet from both header and sidebar
+- Bot toggle works with clear UX feedback (warning text when no amount set)
+- Risk labels no longer duplicate strategy names
+- Login/signup accessible from header (desktop) and settings (mobile)
+- Sidebar scrolls properly with 15+ items
+---
 Task ID: 6
 Agent: main
 Task: Build real-time trade notifications hook + paper trading leaderboard
