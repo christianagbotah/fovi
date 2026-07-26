@@ -15,6 +15,41 @@ import type {
   AssetType,
 } from '../types';
 
+export interface BotConfigState {
+  id: string | null;
+  enabled: boolean;
+  allocationAmount: number;
+  riskTolerance: string;
+  maxPositions: number;
+  maxPositionSize: number;
+  stopLossPercent: number;
+  takeProfitPercent: number;
+  strategy: string;
+  status: string;
+  totalTrades: number;
+  winTrades: number;
+  totalPnl: number;
+  winRate: number;
+  lastTradeAt: string | null;
+  lastError: string | null;
+  accountBalance: number;
+}
+
+export interface AutoTradeActivity {
+  id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  qty: number;
+  filledPrice: number | null;
+  filledQty: number;
+  status: string;
+  signalDirection: string | null;
+  signalConfidence: number | null;
+  signalType: string | null;
+  createdAt: string;
+}
+
 interface TradingState {
   // Accounts
   accounts: TradingAccount[];
@@ -71,6 +106,12 @@ interface TradingState {
   setActiveTab: (tab: string) => void;
   assetFilter: AssetType | 'all';
   setAssetFilter: (filter: AssetType | 'all') => void;
+
+  // AI Auto-Trade
+  botConfig: BotConfigState;
+  setBotConfig: (config: Partial<BotConfigState>) => void;
+  autoTradeActivity: AutoTradeActivity[];
+  setAutoTradeActivity: (activity: AutoTradeActivity[]) => void;
 }
 
 export const useTradingStore = create<TradingState>((set) => ({
@@ -132,4 +173,17 @@ export const useTradingStore = create<TradingState>((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   assetFilter: 'all',
   setAssetFilter: (filter) => set({ assetFilter: filter }),
+
+  // AI Auto-Trade
+  botConfig: {
+    id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
+    maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
+    strategy: 'balanced', status: 'stopped', totalTrades: 0, winTrades: 0,
+    totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 0,
+  },
+  setBotConfig: (config) => set((state) => ({
+    botConfig: { ...state.botConfig, ...config },
+  })),
+  autoTradeActivity: [],
+  setAutoTradeActivity: (activity) => set({ autoTradeActivity: activity }),
 }));

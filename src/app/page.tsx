@@ -7,6 +7,7 @@ import {
   Menu, Wallet, Zap, Sparkles, Plus, RefreshCw, Bell, Settings, MessageSquare, ArrowUpRight,
   ArrowDownRight, Activity, Radio, Briefcase, Clock, Shield, Target, Trophy,
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair, TrendingFlat,
+  Bot,
 } from 'lucide-react';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
@@ -15,6 +16,7 @@ import { PositionsPanel } from '@/components/trading/positions-panel';
 import { SignalsPanel } from '@/components/trading/signals-panel';
 import { OrderForm } from '@/components/trading/order-form';
 import { MarketOverview } from '@/components/trading/market-overview';
+import { AutoTradePanel } from '@/components/trading/auto-trade-panel';
 import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,10 +31,10 @@ import { useMarketSocket } from '@/hooks/use-market-socket';
 // ============================================================
 const MOBILE_TABS = [
   { id: 'dashboard', label: 'Trade', icon: LayoutDashboard },
+  { id: 'autotrade', label: 'AI Bot', icon: Bot },
   { id: 'signals', label: 'Signals', icon: Sparkles },
   { id: 'positions', label: 'Positions', icon: Wallet },
   { id: 'history', label: 'History', icon: Clock },
-  { id: 'markets', label: 'Markets', icon: Search },
 ];
 
 function MobileTabBar() {
@@ -822,6 +824,7 @@ function DesktopSidebar() {
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'autotrade', label: 'AI Auto-Trade', icon: Bot },
     { id: 'markets', label: 'Markets', icon: Search },
     { id: 'positions', label: 'Positions', icon: Wallet },
     { id: 'history', label: 'History', icon: Clock },
@@ -970,6 +973,9 @@ export default function TradingDashboard() {
                 <div className="px-4 pb-2">
                   <PerformanceMetrics portfolio={{ totalBalance: 100000, totalPnl: 2340.5, totalPnlPercent: 2.34, dayPnl: 567.8, dayPnlPercent: 0.57, openPositions: 3, activeSignals: 5, winRate: 68, totalTrades: 47 }} />
                 </div>
+                <div className="px-4 pb-2">
+                  <AutoTradePanel />
+                </div>
                 <div className="flex flex-col lg:flex-row gap-3 p-4 pt-2">
                   <Card className="flex-1 min-h-[400px] lg:min-h-[500px] overflow-hidden">
                     <PriceChart />
@@ -1004,6 +1010,25 @@ export default function TradingDashboard() {
                       <PositionsPanel />
                     </div>
                   </Card>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ====== AI AUTO-TRADE TAB ====== */}
+            {activeTab === 'autotrade' && (
+              <motion.div key="autotrade" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4 space-y-4" style={{ paddingBottom: '100px' }}>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                      <Bot className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold">AI Auto-Trade</h2>
+                      <p className="text-xs text-muted-foreground">Configure your AI trading bot</p>
+                    </div>
+                  </div>
+                  <AutoTradePanel />
                 </div>
               </motion.div>
             )}

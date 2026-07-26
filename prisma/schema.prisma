@@ -53,6 +53,7 @@ model TradingAccount {
   positions       Position[]
   orders          Order[]
   signals         TradingSignal[]
+  botConfigs      BotConfig[]
 }
 
 model Position {
@@ -168,4 +169,27 @@ model AiMessage {
   content         String
   metadata        String?  // JSON string for extra data
   createdAt       DateTime @default(now())
+}
+
+model BotConfig {
+  id                String   @id @default(cuid())
+  userId            String
+  accountId         String
+  account           TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  enabled           Boolean  @default(false)
+  allocationAmount  Float    @default(0)       // total amount the AI can use to trade
+  riskTolerance     String   @default("medium") // conservative, medium, aggressive
+  maxPositions      Int      @default(5)
+  maxPositionSize   Float    @default(0)        // max per-trade amount (0 = no limit, uses % of allocation)
+  stopLossPercent   Float    @default(2.0)      // default stop-loss %
+  takeProfitPercent Float    @default(4.0)      // default take-profit %
+  strategy          String   @default("balanced") // conservative, balanced, aggressive, scalping
+  status            String   @default("stopped") // running, paused, stopped
+  totalTrades       Int      @default(0)
+  winTrades         Int      @default(0)
+  totalPnl          Float    @default(0)
+  lastTradeAt       DateTime?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
