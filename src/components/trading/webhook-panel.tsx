@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Webhook,
@@ -14,6 +14,8 @@ import {
   Link2,
   ShieldCheck,
   ShieldOff,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Card,
@@ -65,13 +67,6 @@ const STRATEGIES = [
 ];
 
 // ── Helpers ─────────────────────────────────────────────
-function randomId(len = 12): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let out = '';
-  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-}
-
 function fmtRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const s = Math.floor(diff / 1000);
@@ -106,75 +101,9 @@ function statusColor(s: WebhookCall['status']): string {
   }
 }
 
-// ── Initial mock data ───────────────────────────────────
-function buildInitialWebhooks(): WebhookItem[] {
-  const now = Date.now();
-  return [
-    {
-      id: 'wh_1a2b3c',
-      name: 'TradingView Alerts',
-      url: `${typeof window !== 'undefined' ? window.location.origin : 'https://your-app.example'}/api/trading/webhook?token=wh_1a2b3c`,
-      secret: 'sk_live_8f2c9a1b',
-      autoExecute: true,
-      defaultStrategy: 'breakout',
-      createdAt: new Date(now - 1000 * 60 * 60 * 26).toISOString(),
-    },
-    {
-      id: 'wh_4d5e6f',
-      name: 'Pine Script Bot',
-      url: `${typeof window !== 'undefined' ? window.location.origin : 'https://your-app.example'}/api/trading/webhook?token=wh_4d5e6f`,
-      secret: 'sk_live_3d7e2c9f',
-      autoExecute: false,
-      defaultStrategy: 'manual',
-      createdAt: new Date(now - 1000 * 60 * 60 * 5).toISOString(),
-    },
-  ];
-}
-
-function buildInitialCalls(): WebhookCall[] {
-  const now = Date.now();
-  return [
-    {
-      id: 'c1',
-      webhookId: 'wh_1a2b3c',
-      timestamp: new Date(now - 1000 * 60 * 2).toISOString(),
-      symbol: 'BTC',
-      action: 'buy',
-      status: 'success',
-    },
-    {
-      id: 'c2',
-      webhookId: 'wh_1a2b3c',
-      timestamp: new Date(now - 1000 * 60 * 18).toISOString(),
-      symbol: 'NVDA',
-      action: 'sell',
-      status: 'success',
-    },
-    {
-      id: 'c3',
-      webhookId: 'wh_4d5e6f',
-      timestamp: new Date(now - 1000 * 60 * 47).toISOString(),
-      symbol: 'ETH',
-      action: 'short',
-      status: 'pending',
-    },
-    {
-      id: 'c4',
-      webhookId: 'wh_1a2b3c',
-      timestamp: new Date(now - 1000 * 60 * 95).toISOString(),
-      symbol: 'TSLA',
-      action: 'buy',
-      status: 'failed',
-    },
-    {
-      id: 'c5',
-      webhookId: 'wh_4d5e6f',
-      timestamp: new Date(now - 1000 * 60 * 60 * 3).toISOString(),
-      symbol: 'AAPL',
-      action: 'cover',
-      status: 'success',
-    },
-  ];
+function buildUrl(id: string): string {
+  if (typeof window === 'undefined') return `https://your-app.example/api/trading/webhook?token=${id}`;
+  return `${window.location.origin}/api/trading/webhook?token=${id}`;
 }
 
 // ── Copy button ─────────────────────────────────────────
@@ -186,7 +115,6 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Fallback for environments without clipboard API
       setCopied(false);
     }
   }, [text]);
@@ -291,14 +219,41 @@ function WebhookCard({
 
 // ── Main Component ──────────────────────────────────────
 export function WebhookPanel() {
-  const [webhooks, setWebhooks] = useState<WebhookItem[]>(buildInitialWebhooks);
-  const [calls, setCalls] = useState<WebhookCall[]>(buildInitialCalls);
+  const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
+  const [calls, setCalls] = useState<WebhookCall[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
 
   // Form state
   const [name, setName] = useState('');
   const [autoExecute, setAutoExecute] = useState(false);
   const [defaultStrategy, setDefaultStrategy] = useState('manual');
   const [lastCreated, setLastCreated] = useState<WebhookItem | null>(null);
+
+  // Fetch webhooks from API
+  const fetchWebhooks = useCallback(async () => {
+    try {
+      const res = await fetch('/api/trading/webhooks', { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch');
+      const items: Array<{ id: string; name: string; secret: string; autoExecute: boolean; defaultStrategy: string; createdAt: string }> = json.webhooks || [];
+      setWebhooks(
+        items.map((w) => ({
+          ...w,
+          url: buildUrl(w.id),
+        }))
+      );
+      setCalls(json.calls || []);
+    } catch {
+      // Keep existing state on error
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchWebhooks();
+  }, [fetchWebhooks]);
 
   const recentCalls = useMemo(
     () =>
@@ -308,41 +263,81 @@ export function WebhookPanel() {
     [calls],
   );
 
-  const handleCreate = useCallback(() => {
+  const handleCreate = useCallback(async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
-    const id = `wh_${randomId(8)}`;
-    const secret = `sk_live_${randomId(10)}`;
-    const origin =
-      typeof window !== 'undefined' ? window.location.origin : 'https://your-app.example';
-    const item: WebhookItem = {
-      id,
-      name: trimmed,
-      url: `${origin}/api/trading/webhook?token=${id}`,
-      secret,
-      autoExecute,
-      defaultStrategy,
-      createdAt: new Date().toISOString(),
-    };
-    setWebhooks((prev) => [item, ...prev]);
-    setLastCreated(item);
-    setName('');
-    setAutoExecute(false);
-    setDefaultStrategy('manual');
-  }, [name, autoExecute, defaultStrategy]);
+    if (!trimmed || creating) return;
+    setCreating(true);
+    try {
+      const res = await fetch('/api/trading/webhooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed, autoExecute, defaultStrategy }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to create');
+      const item: WebhookItem = {
+        ...json,
+        url: buildUrl(json.id),
+      };
+      setWebhooks((prev) => [item, ...prev]);
+      setLastCreated(item);
+      setName('');
+      setAutoExecute(false);
+      setDefaultStrategy('manual');
+    } catch {
+      // Keep state on error
+    } finally {
+      setCreating(false);
+    }
+  }, [name, autoExecute, defaultStrategy, creating]);
 
-  const handleDelete = useCallback((id: string) => {
-    setWebhooks((prev) => prev.filter((w) => w.id !== id));
-    setCalls((prev) => prev.filter((c) => c.webhookId !== id));
-    setLastCreated((prev) => (prev?.id === id ? null : prev));
+  const handleDelete = useCallback(async (id: string) => {
+    try {
+      await fetch(`/api/trading/webhooks?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setWebhooks((prev) => prev.filter((w) => w.id !== id));
+      setCalls((prev) => prev.filter((c) => c.webhookId !== id));
+      setLastCreated((prev) => (prev?.id === id ? null : prev));
+    } catch {
+      // Keep state on error
+    }
   }, []);
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {[1, 2].map((i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-6 space-y-4">
+                <div className="h-4 w-32 bg-muted rounded" />
+                <div className="h-10 bg-muted rounded" />
+                <div className="h-10 bg-muted rounded" />
+                <div className="h-10 bg-muted rounded" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-        <Webhook className="h-4 w-4" />
-        Webhook Manager
+      <div className="flex items-center justify-between">
+        <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <Webhook className="h-4 w-4" />
+          Webhook Manager
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1.5"
+          onClick={fetchWebhooks}
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -410,9 +405,13 @@ export function WebhookPanel() {
             <Button
               className="w-full gap-1.5"
               onClick={handleCreate}
-              disabled={!name.trim()}
+              disabled={!name.trim() || creating}
             >
-              <Plus className="h-4 w-4" />
+              {creating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
               Generate Webhook URL
             </Button>
 
@@ -428,7 +427,7 @@ export function WebhookPanel() {
                 >
                   <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
                     <Check className="h-3.5 w-3.5" />
-                    Webhook “{lastCreated.name}” created
+                    Webhook "{lastCreated.name}" created
                   </div>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 min-w-0 truncate text-[11px] font-mono bg-background/60 rounded px-2 py-1 border">
