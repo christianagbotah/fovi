@@ -4,6 +4,9 @@ import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { getDemoPrice, getAssetType } from '@/lib/broker/demo';
 
 export async function GET(req: NextRequest) {
+  if (!db) {
+    return NextResponse.json([]);
+  }
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
@@ -53,6 +56,10 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(positions);
   } catch (error: unknown) {
+    if (error instanceof Error && error.message.includes('validating datasource')) {
+      // Prisma validation error (e.g., wrong DB URL) — return same fallback as !db check
+      return NextResponse.json([]);
+    }
     const msg = error instanceof Error ? error.message : 'Failed to fetch positions';
     return NextResponse.json({ error: msg }, { status: 500 });
   }

@@ -174,26 +174,34 @@ export async function POST(req: NextRequest) {
     }
 
     // Save to DB for persistence (non-critical)
-    try {
-      const userId = 'usr_demo_1';
-      let conversation = await db.aiConversation.findFirst({
-        where: { userId, id: sessionId },
-      });
-
-      if (!conversation) {
-        conversation = await db.aiConversation.create({
-          data: { id: sessionId, userId, title: message.slice(0, 50) },
+    if (db) {
+      try {
+        const userId = 'usr_demo_1';
+        let conversation = await db.aiConversation.findFirst({
+          where: { userId, id: sessionId },
         });
-      }
 
-      await db.aiMessage.createMany({
-        data: [
-          { conversationId: conversation.id, role: 'user', content: message },
-          { conversationId: conversation.id, role: 'assistant', content: aiResponse },
-        ],
-      });
-    } catch {
-      // DB save is non-critical
+        if (!conversation) {
+          conversation = await db.aiConversation.create({
+            data: { id: sessionId, userId, title: message.slice(0, 50) },
+          });
+        }
+
+        await db.aiMessage.createMany({
+          data: [
+            { conversationId: conversation.id, role: 'user', content: message },
+            { conversationId: conversation.id, role: 'assistant', content: aiResponse },
+          ],
+        });
+      } catch (error) {
+        // DB save is non-critical — keep returning the AI response as fallback.
+        // Includes Prisma validation errors (e.g., "Error validating datasource `db`:
+        // the URL must start with the protocol `postgresql://`") which happen when
+        // PrismaClient construction succeeded but the DB URL is misconfigured.
+        if (error instanceof Error && error.message.includes('validating datasource')) {
+          console.warn('[AI Chat] DB unavailable (Prisma validation error) — skipping persistence');
+        }
+      }
     }
 
     // Update history (store the original message, not the enhanced one)

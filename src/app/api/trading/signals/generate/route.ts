@@ -6,6 +6,9 @@ import { getDemoCandles, getAssetType } from '@/lib/broker/demo';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(req: NextRequest) {
+  if (!db) {
+    return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
+  }
   try {
     const body = await req.json();
     const userId = 'usr_demo_1';
@@ -56,6 +59,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(savedSignals);
   } catch (error: unknown) {
+    if (error instanceof Error && error.message.includes('validating datasource')) {
+      // Prisma validation error (e.g., wrong DB URL) — return same fallback as !db check
+      return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
+    }
     const msg = error instanceof Error ? error.message : 'Failed to generate signals';
     return NextResponse.json({ error: msg }, { status: 500 });
   }

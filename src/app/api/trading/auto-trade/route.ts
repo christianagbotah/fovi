@@ -1,83 +1,90 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
-// GET /api/trading/auto-trade — fetch bot config for the default account
+const DEFAULT_CONFIG = {
+  id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
+  maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
+  strategy: 'balanced', status: 'stopped', totalTrades: 0, winTrades: 0,
+  totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 100000,
+};
+
+// GET /api/trading/auto-trade
 export async function GET() {
   try {
+    if (!db) {
+      return NextResponse.json(DEFAULT_CONFIG);
+    }
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { isDefault: true },
     });
-
-    if (!defaultAccount) {
-      // Return empty config if no account exists
-      return NextResponse.json({
-        id: null,
-        enabled: false,
-        allocationAmount: 0,
-        riskTolerance: 'medium',
-        maxPositions: 5,
-        maxPositionSize: 0,
-        stopLossPercent: 2.0,
-        takeProfitPercent: 4.0,
-        strategy: 'balanced',
-        status: 'stopped',
-        totalTrades: 0,
-        winTrades: 0,
-        totalPnl: 0,
-        winRate: 0,
-        lastTradeAt: null,
-        lastError: null,
-        accountBalance: 0,
-      });
-    }
+    if (!defaultAccount) return NextResponse.json(DEFAULT_CONFIG);
 
     let config = await db.botConfig.findFirst({
       where: { accountId: defaultAccount.id },
     });
-
-    // Auto-create config if it doesn't exist
     if (!config) {
       config = await db.botConfig.create({
         data: { userId: defaultAccount.userId, accountId: defaultAccount.id },
       });
     }
-
     const winRate = config.totalTrades > 0
       ? Math.round((config.winTrades / config.totalTrades) * 100)
       : 0;
-
-    return NextResponse.json({
-      ...config,
-      winRate,
-      accountBalance: defaultAccount.balance,
-    });
+    return NextResponse.json({ ...config, winRate, accountBalance: defaultAccount.balance });
   } catch (error) {
-    console.error('GET /api/trading/auto-trade error:', error);
-    return NextResponse.json({
-      id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
-      maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
-      strategy: 'balanced', status: 'stopped', totalTrades: 0, winTrades: 0,
-      totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 0,
-    });
+    if (error instanceof Error && error.message.includes('validating datasource')) {
+      return NextResponse.json(DEFAULT_CONFIG);
+    }
+    return NextResponse.json(DEFAULT_CONFIG);
   }
 }
 
-// PUT /api/trading/auto-trade — update bot config
+// PUT /api/trading/auto-trade
 export async function PUT(request: Request) {
+  let body: any;
+  let enabled: any, allocationAmount: any, riskTolerance: any, maxPositions: any,
+    maxPositionSize: any, stopLossPercent: any, takeProfitPercent: any,
+    strategy: any, status: any;
   try {
-    const body = await request.json();
-    const { enabled, allocationAmount, riskTolerance, maxPositions, maxPositionSize,
-      stopLossPercent, takeProfitPercent, strategy, status } = body;
+    body = await request.json();
+    ({ enabled, allocationAmount, riskTolerance, maxPositions, maxPositionSize,
+      stopLossPercent, takeProfitPercent, strategy, status } = body);
+  } catch (error) {
+    console.error('PUT /api/trading/auto-trade JSON parse error:', error);
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
 
+  // Build the demo-mode fallback response (used when !db or DB unavailable)
+  const buildDemoResponse = () => {
+    let newStatus = status || 'stopped';
+    if (enabled && !status) newStatus = 'running';
+    if (enabled === false) newStatus = 'stopped';
+    return NextResponse.json({
+      ...DEFAULT_CONFIG,
+      enabled: enabled ?? false,
+      allocationAmount: allocationAmount ?? 0,
+      riskTolerance: riskTolerance ?? 'medium',
+      maxPositions: maxPositions ?? 5,
+      stopLossPercent: stopLossPercent ?? 2.0,
+      takeProfitPercent: takeProfitPercent ?? 4.0,
+      strategy: strategy ?? 'balanced',
+      status: newStatus,
+    });
+  };
+
+  if (!db) {
+    // Return updated config without persisting (demo mode)
+    return buildDemoResponse();
+  }
+
+  try {
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { isDefault: true },
     });
-
     if (!defaultAccount) {
       return NextResponse.json({ error: 'No default account found' }, { status: 404 });
     }
 
-    // Determine new status
     let newStatus = status || 'stopped';
     if (enabled && !status) newStatus = 'running';
     if (enabled === false) newStatus = 'stopped';
@@ -85,16 +92,11 @@ export async function PUT(request: Request) {
     const config = await db.botConfig.upsert({
       where: { id: body.id || 'nonexistent' },
       create: {
-        userId: defaultAccount.userId,
-        accountId: defaultAccount.id,
-        enabled: enabled ?? false,
-        allocationAmount: allocationAmount ?? 0,
-        riskTolerance: riskTolerance ?? 'medium',
-        maxPositions: maxPositions ?? 5,
-        maxPositionSize: maxPositionSize ?? 0,
-        stopLossPercent: stopLossPercent ?? 2.0,
-        takeProfitPercent: takeProfitPercent ?? 4.0,
-        strategy: strategy ?? 'balanced',
+        userId: defaultAccount.userId, accountId: defaultAccount.id,
+        enabled: enabled ?? false, allocationAmount: allocationAmount ?? 0,
+        riskTolerance: riskTolerance ?? 'medium', maxPositions: maxPositions ?? 5,
+        maxPositionSize: maxPositionSize ?? 0, stopLossPercent: stopLossPercent ?? 2.0,
+        takeProfitPercent: takeProfitPercent ?? 4.0, strategy: strategy ?? 'balanced',
         status: newStatus,
       },
       update: {
@@ -110,15 +112,10 @@ export async function PUT(request: Request) {
       },
     });
 
-    // Also update UserSettings autoTradeEnabled
     try {
       await db.userSettings.upsert({
         where: { userId: defaultAccount.userId },
-        create: {
-          userId: defaultAccount.userId,
-          autoTradeEnabled: enabled ?? false,
-          riskTolerance: riskTolerance ?? 'medium',
-        },
+        create: { userId: defaultAccount.userId, autoTradeEnabled: enabled ?? false, riskTolerance: riskTolerance ?? 'medium' },
         update: {
           ...(enabled !== undefined && { autoTradeEnabled: enabled }),
           ...(riskTolerance !== undefined && { riskTolerance }),
@@ -127,11 +124,13 @@ export async function PUT(request: Request) {
     } catch { /* non-critical */ }
 
     const winRate = config.totalTrades > 0
-      ? Math.round((config.winTrades / config.totalTrades) * 100)
-      : 0;
-
+      ? Math.round((config.winTrades / config.totalTrades) * 100) : 0;
     return NextResponse.json({ ...config, winRate });
   } catch (error) {
+    if (error instanceof Error && error.message.includes('validating datasource')) {
+      // Prisma validation error (e.g., wrong DB URL) — return demo config like the !db path
+      return buildDemoResponse();
+    }
     console.error('PUT /api/trading/auto-trade error:', error);
     return NextResponse.json({ error: 'Failed to update config' }, { status: 500 });
   }

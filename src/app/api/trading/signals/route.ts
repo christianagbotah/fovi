@@ -3,6 +3,8 @@ import { db } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
+    if (!db) return NextResponse.json([]);
+
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
     const userId = 'usr_demo_1';
@@ -19,7 +21,10 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(signals);
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Failed to fetch signals';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const msg = error instanceof Error ? error.message : '';
+    if (msg.includes('validating datasource') || msg.includes('postgresql://')) {
+      return NextResponse.json([]);
+    }
+    return NextResponse.json({ error: msg || 'Failed' }, { status: 500 });
   }
 }
