@@ -4,6 +4,8 @@
 
 import type { BrokerConfig } from '../types';
 import { DemoBroker } from './demo';
+import { AlpacaBroker } from './alpaca';
+import { BinanceBroker } from './binance';
 
 // Broker interface that all providers implement
 export interface IBroker {
@@ -64,10 +66,13 @@ export interface IBroker {
 
 export function createBroker(config: BrokerConfig): IBroker {
   switch (config.provider) {
+    case 'alpaca':
+      return new AlpacaBroker(config);
+    case 'binance':
+      return new BinanceBroker(config);
     case 'demo':
     default:
       return new DemoBroker(config);
-    // Future: alpaca, binance, deriv cases
   }
 }
 

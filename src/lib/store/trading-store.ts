@@ -48,6 +48,12 @@ interface TradingState {
   portfolio: PortfolioSummary | null;
   setPortfolio: (summary: PortfolioSummary) => void;
 
+  // Live WebSocket prices
+  livePrices: MarketSymbol[];
+  setLivePrices: (prices: MarketSymbol[]) => void;
+  wsConnected: boolean;
+  setWsConnected: (connected: boolean) => void;
+
   // UI State
   orderSheetOpen: boolean;
   setOrderSheetOpen: (open: boolean) => void;
@@ -102,6 +108,12 @@ export const useTradingStore = create<TradingState>((set) => ({
   // Portfolio
   portfolio: null,
   setPortfolio: (summary) => set({ portfolio: summary }),
+
+  // Live WebSocket prices
+  livePrices: [],
+  setLivePrices: (prices) => set({ livePrices: prices }),
+  wsConnected: false,
+  setWsConnected: (connected) => set({ wsConnected: connected }),
 
   // UI
   orderSheetOpen: false,
