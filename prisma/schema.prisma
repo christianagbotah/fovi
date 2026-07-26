@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,19 +8,164 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String?
+  passwordHash   String
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  accounts       TradingAccount[]
+  settings       UserSettings?
+  aiConversations AiConversation[]
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model UserSettings {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultAccountId String?
+  riskTolerance   String   @default("medium") // conservative, medium, aggressive
+  autoTradeEnabled Boolean @default(false)
+  notificationsEnabled Boolean @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model TradingAccount {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  broker          String   // alpaca, binance, deriv, demo
+  accountType     String   @default("demo") // live, demo
+  accountId       String?  // broker's account ID
+  apiKey          String?  // encrypted broker API key
+  apiSecret       String?  // encrypted broker API secret
+  isDefault       Boolean  @default(false)
+  balance         Float    @default(100000.0)
+  currency        String   @default("USD")
+  isActive        Boolean  @default(true)
+  lastSyncedAt    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  positions       Position[]
+  orders          Order[]
+  signals         TradingSignal[]
+}
+
+model Position {
+  id              String   @id @default(cuid())
+  accountId       String
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  symbol          String
+  name            String?
+  assetType       String   @default("stock") // stock, crypto, forex, synthetic
+  side            String   // long, short
+  qty             Float
+  avgEntryPrice   Float
+  currentPrice    Float    @default(0)
+  unrealizedPnl   Float    @default(0)
+  realizedPnl     Float    @default(0)
+  stopLoss        Float?
+  takeProfit      Float?
+  status          String   @default("open") // open, closed
+  openedAt        DateTime @default(now())
+  closedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Order {
+  id              String   @id @default(cuid())
+  accountId       String
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  brokerOrderId   String?
+  symbol          String
+  assetType       String   @default("stock")
+  side            String   // buy, sell
+  type            String   @default("market") // market, limit, stop, stop_limit
+  qty             Float
+  limitPrice      Float?
+  stopPrice       Float?
+  filledQty       Float    @default(0)
+  filledPrice     Float?
+  status          String   @default("pending") // pending, filled, partially_filled, cancelled, rejected
+  aiGenerated     Boolean  @default(false)
+  signalId        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  signal          TradingSignal? @relation(fields: [signalId], references: [id])
+}
+
+model TradingSignal {
+  id              String   @id @default(cuid())
+  accountId       String
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  symbol          String
+  assetType       String   @default("stock")
+  direction       String   // bullish, bearish, neutral
+  confidence      Float    // 0-100
+  signalType      String   // rsi_divergence, macd_crossover, bollinger_squeeze, breakout, ai_predicted
+  timeframe       String   @default("1h") // 1m, 5m, 15m, 1h, 4h, 1d
+  entryPrice      Float?
+  stopLoss        Float?
+  takeProfit      Float?
+  targetPnl       Float?
+  reasoning       String?  // AI explanation
+  status          String   @default("active") // active, executed, expired, cancelled
+  executedAt      DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  orders          Order[]
+}
+
+model MarketData {
+  id              String   @id @default(cuid())
+  symbol          String
+  assetType       String   @default("stock")
+  timeframe       String   @default("1d")
+  open            Float
+  high            Float
+  low             Float
+  close           Float
+  volume          Float    @default(0)
+  timestamp       DateTime
+
+  @@unique([symbol, timeframe, timestamp])
+}
+
+model WatchlistItem {
+  id              String   @id @default(cuid())
+  userId          String
+  symbol          String
+  name            String?
+  assetType       String   @default("stock")
+  addedAt         DateTime @default(now())
+
+  @@unique([userId, symbol])
+}
+
+model AiConversation {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String?
+  messages        AiMessage[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model AiMessage {
+  id              String   @id @default(cuid())
+  conversationId  String
+  conversation    AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role            String   // user, assistant
+  content         String
+  metadata        String?  // JSON string for extra data
+  createdAt       DateTime @default(now())
 }
