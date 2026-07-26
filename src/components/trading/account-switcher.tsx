@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftRight, Plus, Trash2, ChevronDown, Check, Wallet,
-  Briefcase, Zap,
+  Briefcase, Zap, Landmark,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -136,6 +136,9 @@ export function AccountSwitcher() {
                             </SelectItem>
                             <SelectItem value="binance">
                               <span className="flex items-center gap-2"><Wallet className="h-4 w-4" /> Binance (Crypto)</span>
+                            </SelectItem>
+                            <SelectItem value="okx">
+                              <span className="flex items-center gap-2"><Landmark className="h-4 w-4" /> OKX (Crypto)</span>
                             </SelectItem>
                             <SelectItem value="deriv">
                               <span className="flex items-center gap-2"><ArrowLeftRight className="h-4 w-4" /> Deriv (Forex/Synthetic)</span>

@@ -6,6 +6,7 @@ import type { BrokerConfig } from '../types';
 import { DemoBroker } from './demo';
 import { AlpacaBroker } from './alpaca';
 import { BinanceBroker } from './binance';
+import { OkxBroker } from './okx';
 
 // Broker interface that all providers implement
 export interface IBroker {
@@ -70,6 +71,8 @@ export function createBroker(config: BrokerConfig): IBroker {
       return new AlpacaBroker(config);
     case 'binance':
       return new BinanceBroker(config);
+    case 'okx':
+      return new OkxBroker(config);
     case 'demo':
     default:
       return new DemoBroker(config);

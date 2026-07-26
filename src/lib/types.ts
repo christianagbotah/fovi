@@ -2,7 +2,7 @@
 // Fovi AI Trading Platform - Shared Type Definitions
 // ============================================================
 
-export type BrokerProvider = 'alpaca' | 'binance' | 'deriv' | 'demo';
+export type BrokerProvider = 'alpaca' | 'binance' | 'okx' | 'deriv' | 'demo';
 export type AccountType = 'live' | 'demo';
 export type AssetType = 'stock' | 'crypto' | 'forex' | 'synthetic';
 export type Side = 'long' | 'short';
@@ -142,6 +142,13 @@ export interface BrokerConfig {
   accountId?: string;
   apiKey?: string;
   apiSecret?: string;
+  /**
+   * OKX requires an API passphrase in addition to key/secret.
+   * Optional — only used by the OKX broker. If absent, OKX will
+   * attempt to parse the passphrase from `apiSecret` (encoded as
+   * `secret|passphrase`).
+   */
+  passphrase?: string;
   isDemo: boolean;
 }
 
