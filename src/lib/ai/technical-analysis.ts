@@ -5,6 +5,170 @@
 import { SMA, EMA, RSI, MACD, BollingerBands, Stochastic, ATR, ADX, VWAP } from 'technicalindicators';
 import type { CandleData } from '../types';
 
+// ============================================================
+// Signal types
+// ============================================================
+
+export interface Signal {
+  type: string;
+  direction: 'bullish' | 'bearish' | 'neutral';
+  confidence: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  price?: number;
+  reason?: string;
+}
+
+// ============================================================
+// Signal generator — derives trade signals from TA output
+// ============================================================
+
+export function generateSignals(candles: CandleData[]): Signal[] {
+  if (candles.length < 35) return [];
+  const signals: Signal[] = [];
+  const last = candles[candles.length - 1];
+  const price = last.close;
+
+  const rsi = computeRSI(candles);
+  const macd = computeMACD(candles);
+  const stoch = computeStochastic(candles);
+  const bb = computeBollingerBands(candles);
+  const atr = computeATR(candles) || price * 0.01;
+  const adx = computeADX(candles);
+
+  // RSI signals
+  if (rsi !== null) {
+    if (rsi < 30) {
+      signals.push({
+        type: 'rsi_oversold',
+        direction: 'bullish',
+        confidence: Math.min(95, 60 + (30 - rsi) * 2),
+        stopLoss: price - atr * 1.5,
+        takeProfit: price + atr * 2.5,
+        price,
+        reason: `RSI oversold (${rsi.toFixed(1)})`,
+      });
+    } else if (rsi > 70) {
+      signals.push({
+        type: 'rsi_overbought',
+        direction: 'bearish',
+        confidence: Math.min(95, 60 + (rsi - 70) * 2),
+        stopLoss: price + atr * 1.5,
+        takeProfit: price - atr * 2.5,
+        price,
+        reason: `RSI overbought (${rsi.toFixed(1)})`,
+      });
+    }
+  }
+
+  // MACD crossover
+  if (macd) {
+    if (macd.histogram > 0 && macd.macd > macd.signal) {
+      signals.push({
+        type: 'macd_crossover',
+        direction: 'bullish',
+        confidence: Math.min(90, 55 + Math.abs(macd.histogram) * 1000),
+        stopLoss: price - atr * 1.5,
+        takeProfit: price + atr * 3,
+        price,
+        reason: 'MACD bullish crossover',
+      });
+    } else if (macd.histogram < 0 && macd.macd < macd.signal) {
+      signals.push({
+        type: 'macd_crossover',
+        direction: 'bearish',
+        confidence: Math.min(90, 55 + Math.abs(macd.histogram) * 1000),
+        stopLoss: price + atr * 1.5,
+        takeProfit: price - atr * 3,
+        price,
+        reason: 'MACD bearish crossover',
+      });
+    }
+  }
+
+  // Stochastic crossover
+  if (stoch) {
+    if (stoch.k < 20 && stoch.k > stoch.d) {
+      signals.push({
+        type: 'stochastic_crossover',
+        direction: 'bullish',
+        confidence: 65,
+        stopLoss: price - atr * 1.2,
+        takeProfit: price + atr * 2,
+        price,
+        reason: 'Stochastic oversold crossover',
+      });
+    } else if (stoch.k > 80 && stoch.k < stoch.d) {
+      signals.push({
+        type: 'stochastic_crossover',
+        direction: 'bearish',
+        confidence: 65,
+        stopLoss: price + atr * 1.2,
+        takeProfit: price - atr * 2,
+        price,
+        reason: 'Stochastic overbought crossover',
+      });
+    }
+  }
+
+  // Bollinger Bands breakout/reversion
+  if (bb) {
+    if (price <= bb.lower) {
+      signals.push({
+        type: 'breakout',
+        direction: 'bullish',
+        confidence: 70,
+        stopLoss: bb.lower - atr,
+        takeProfit: bb.middle,
+        price,
+        reason: 'Price at/below lower Bollinger Band',
+      });
+    } else if (price >= bb.upper) {
+      signals.push({
+        type: 'breakout',
+        direction: 'bearish',
+        confidence: 70,
+        stopLoss: bb.upper + atr,
+        takeProfit: bb.middle,
+        price,
+        reason: 'Price at/above upper Bollinger Band',
+      });
+    }
+  }
+
+  // Volume spike (last bar volume > 1.8x average of prior 20 bars)
+  if (candles.length >= 21) {
+    const recent = candles.slice(-21, -1);
+    const avgVol = recent.reduce((s, c) => s + c.volume, 0) / recent.length;
+    if (avgVol > 0 && last.volume > avgVol * 1.8) {
+      signals.push({
+        type: 'volume_spike',
+        direction: last.close >= last.open ? 'bullish' : 'bearish',
+        confidence: 72,
+        stopLoss: price - atr * 1.5,
+        takeProfit: price + atr * 2.5,
+        price,
+        reason: `Volume spike (${(last.volume / avgVol).toFixed(2)}x avg)`,
+      });
+    }
+  }
+
+  // Trend strength bonus
+  if (adx !== null && adx > 25) {
+    // Bias confidence up for signals aligned with strong trend
+    const sma20 = computeSMA(candles, 20);
+    const sma50 = computeSMA(candles, 50);
+    if (sma20 && sma50) {
+      const trendDir: 'bullish' | 'bearish' = sma20 > sma50 ? 'bullish' : 'bearish';
+      for (const s of signals) {
+        if (s.direction === trendDir) s.confidence = Math.min(95, s.confidence + 10);
+      }
+    }
+  }
+
+  return signals;
+}
+
 export function computeRSI(candles: CandleData[], period: number = 14): number | null {
   if (candles.length < period + 1) return null;
   const closes = candles.map(c => c.close);
@@ -25,7 +189,11 @@ export function computeMACD(candles: CandleData[]): { macd: number; signal: numb
   });
   if (macd.length === 0) return null;
   const last = macd[macd.length - 1];
-  return { macd: last.MACD, signal: last.signal, histogram: last.histogram };
+  return {
+    macd: last.MACD ?? 0,
+    signal: last.signal ?? 0,
+    histogram: last.histogram ?? 0,
+  };
 }
 
 export function computeBollingerBands(candles: CandleData[], period: number = 20, stdDev: number = 2): {

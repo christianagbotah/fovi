@@ -19,6 +19,8 @@ model User {
   accounts       TradingAccount[]
   settings       UserSettings?
   aiConversations AiConversation[]
+  bots           Bot[]
+  backtests      Backtest[]
 }
 
 model UserSettings {
@@ -26,7 +28,7 @@ model UserSettings {
   userId          String   @unique
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   defaultAccountId String?
-  riskTolerance   String   @default("medium") // conservative, medium, aggressive
+  riskTolerance   String   @default("medium")
   autoTradeEnabled Boolean @default(false)
   notificationsEnabled Boolean @default(true)
   createdAt       DateTime @default(now())
@@ -37,11 +39,11 @@ model TradingAccount {
   id              String   @id @default(cuid())
   userId          String
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  broker          String   // alpaca, binance, deriv, demo
-  accountType     String   @default("demo") // live, demo
-  accountId       String?  // broker's account ID
-  apiKey          String?  // encrypted broker API key
-  apiSecret       String?  // encrypted broker API secret
+  broker          String
+  accountType     String   @default("demo")
+  accountId       String?
+  apiKey          String?
+  apiSecret       String?
   isDefault       Boolean  @default(false)
   balance         Float    @default(100000.0)
   currency        String   @default("USD")
@@ -54,16 +56,18 @@ model TradingAccount {
   orders          Order[]
   signals         TradingSignal[]
   botConfigs      BotConfig[]
+  bots            Bot[]
 }
 
 model Position {
   id              String   @id @default(cuid())
   accountId       String
   account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  botId           String?
   symbol          String
   name            String?
-  assetType       String   @default("stock") // stock, crypto, forex, synthetic
-  side            String   // long, short
+  assetType       String   @default("stock")
+  side            String
   qty             Float
   avgEntryPrice   Float
   currentPrice    Float    @default(0)
@@ -71,58 +75,202 @@ model Position {
   realizedPnl     Float    @default(0)
   stopLoss        Float?
   takeProfit      Float?
-  status          String   @default("open") // open, closed
+  trailingStop    Float?
+  trailingStopPct Float?   // trailing stop %
+  status          String   @default("open")
   openedAt        DateTime @default(now())
   closedAt        DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  bot             Bot?       @relation(fields: [botId], references: [id])
 }
 
 model Order {
   id              String   @id @default(cuid())
   accountId       String
   account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  botId           String?
   brokerOrderId   String?
   symbol          String
   assetType       String   @default("stock")
-  side            String   // buy, sell
-  type            String   @default("market") // market, limit, stop, stop_limit
+  side            String
+  type            String   @default("market")
   qty             Float
   limitPrice      Float?
   stopPrice       Float?
   filledQty       Float    @default(0)
   filledPrice     Float?
-  status          String   @default("pending") // pending, filled, partially_filled, cancelled, rejected
+  status          String   @default("pending")
   aiGenerated     Boolean  @default(false)
   signalId        String?
+  reason          String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   signal          TradingSignal? @relation(fields: [signalId], references: [id])
+  bot             Bot?       @relation(fields: [botId], references: [id])
 }
 
 model TradingSignal {
   id              String   @id @default(cuid())
   accountId       String
   account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  botId           String?
   symbol          String
   assetType       String   @default("stock")
-  direction       String   // bullish, bearish, neutral
-  confidence      Float    // 0-100
-  signalType      String   // rsi_divergence, macd_crossover, bollinger_squeeze, breakout, ai_predicted
-  timeframe       String   @default("1h") // 1m, 5m, 15m, 1h, 4h, 1d
+  direction       String
+  confidence      Float
+  signalType      String
+  timeframe       String   @default("1h")
   entryPrice      Float?
   stopLoss        Float?
   takeProfit      Float?
   targetPnl       Float?
-  reasoning       String?  // AI explanation
-  status          String   @default("active") // active, executed, expired, cancelled
+  reasoning       String?
+  status          String   @default("active")
   executedAt      DateTime?
   expiresAt       DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   orders          Order[]
+  bot             Bot?       @relation(fields: [botId], references: [id])
+}
+
+model BotConfig {
+  id                String   @id @default(cuid())
+  userId            String
+  accountId         String
+  account           TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  enabled           Boolean  @default(false)
+  allocationAmount  Float    @default(0)
+  riskTolerance     String   @default("medium")
+  maxPositions      Int      @default(5)
+  maxPositionSize   Float    @default(0)
+  stopLossPercent   Float    @default(2.0)
+  takeProfitPercent Float    @default(4.0)
+  strategy          String   @default("balanced")
+  status            String   @default("stopped")
+  totalTrades       Int      @default(0)
+  winTrades         Int      @default(0)
+  totalPnl          Float    @default(0)
+  lastTradeAt       DateTime?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// Multiple Bots - each with its own strategy, allocation, and stats
+model Bot {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId         String
+  account           TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name              String
+  strategy          String   // signal_based, dca, grid, scalping, momentum
+  symbols           String   // comma-separated symbols
+  timeframe         String   @default("1h")
+  allocationAmount  Float    @default(0)
+  enabled           Boolean  @default(false)
+  status            String   @default("stopped") // running, paused, stopped
+  // Strategy-specific config (JSON)
+  config            String   @default("{}")
+  // Risk management
+  positionSizing    String   @default("fixed_fractional") // kelly, fixed_fractional, volatility, fixed
+  riskPerTrade      Float    @default(2.0) // % of allocation per trade
+  maxPositions      Int      @default(3)
+  stopLossPercent   Float    @default(2.0)
+  takeProfitPercent Float    @default(4.0)
+  trailingStopPct   Float    @default(0)
+  // Session scheduling
+  tradingSessions   String   @default("all") // all, london, newyork, asia, custom
+  customSessionStart String? // HH:mm
+  customSessionEnd   String? // HH:mm
+  // Stats
+  totalTrades       Int      @default(0)
+  winTrades         Int      @default(0)
+  lossTrades        Int      @default(0)
+  totalPnl          Float    @default(0)
+  bestTrade         Float    @default(0)
+  worstTrade        Float    @default(0)
+  currentStreak     Int      @default(0)
+  lastTradeAt       DateTime?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  positions         Position[]
+  orders            Order[]
+  signals           TradingSignal[]
+}
+
+// Backtest results
+model Backtest {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  strategy        String
+  symbol          String
+  timeframe       String   @default("1d")
+  startDate       DateTime
+  endDate         DateTime
+  initialBalance  Float
+  finalBalance    Float
+  totalPnl        Float    @default(0)
+  pnlPercent      Float    @default(0)
+  totalTrades     Int      @default(0)
+  winTrades       Int      @default(0)
+  lossTrades      Int      @default(0)
+  maxDrawdown     Float    @default(0)
+  sharpeRatio     Float    @default(0)
+  sortinoRatio    Float    @default(0)
+  profitFactor    Float    @default(0)
+  avgWin          Float    @default(0)
+  avgLoss         Float    @default(0)
+  config          String   @default("{}") // JSON strategy config used
+  tradesJson      String   @default("[]") // JSON array of simulated trades
+  equityCurveJson String   @default("[]") // JSON array of balance snapshots
+  createdAt       DateTime @default(now())
+}
+
+// Trade journal entries (AI-generated insights)
+model TradeJournal {
+  id              String   @id @default(cuid())
+  userId          String
+  positionId      String?
+  orderId         String?
+  symbol          String
+  side            String
+  entryPrice      Float
+  exitPrice       Float?
+  qty             Float
+  pnl             Float?
+  pnlPercent      Float?
+  entryReason     String?  // why the trade was opened
+  exitReason      String?  // why it was closed
+  aiInsight       String?  // AI analysis of the trade
+  lessons         String?  // what to learn
+  rating          Int?     // 1-5 user rating
+  tags            String?  // comma-separated tags
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Webhook configurations for external signals
+model WebhookConfig {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  url             String   // incoming webhook URL path (unique per user)
+  secret          String?  // HMAC secret for verification
+  enabled         Boolean  @default(true)
+  autoExecute     Boolean  @default(false) // auto-execute or just create signal
+  defaultStrategy String   @default("signal_based")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model MarketData {
@@ -165,31 +313,8 @@ model AiMessage {
   id              String   @id @default(cuid())
   conversationId  String
   conversation    AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  role            String   // user, assistant
+  role            String
   content         String
-  metadata        String?  // JSON string for extra data
+  metadata        String?
   createdAt       DateTime @default(now())
-}
-
-model BotConfig {
-  id                String   @id @default(cuid())
-  userId            String
-  accountId         String
-  account           TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  enabled           Boolean  @default(false)
-  allocationAmount  Float    @default(0)       // total amount the AI can use to trade
-  riskTolerance     String   @default("medium") // conservative, medium, aggressive
-  maxPositions      Int      @default(5)
-  maxPositionSize   Float    @default(0)        // max per-trade amount (0 = no limit, uses % of allocation)
-  stopLossPercent   Float    @default(2.0)      // default stop-loss %
-  takeProfitPercent Float    @default(4.0)      // default take-profit %
-  strategy          String   @default("balanced") // conservative, balanced, aggressive, scalping
-  status            String   @default("stopped") // running, paused, stopped
-  totalTrades       Int      @default(0)
-  winTrades         Int      @default(0)
-  totalPnl          Float    @default(0)
-  lastTradeAt       DateTime?
-  lastError         String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
 }

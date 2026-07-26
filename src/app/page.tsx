@@ -6,8 +6,8 @@ import {
   LayoutDashboard, TrendingUp, TrendingDown, BarChart3, Search,
   Menu, Wallet, Zap, Sparkles, Plus, RefreshCw, Bell, Settings, MessageSquare, ArrowUpRight,
   ArrowDownRight, Activity, Radio, Briefcase, Clock, Shield, Target, Trophy,
-  Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair, TrendingFlat,
-  Bot,
+  Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
+  Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
 } from 'lucide-react';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
@@ -17,6 +17,14 @@ import { SignalsPanel } from '@/components/trading/signals-panel';
 import { OrderForm } from '@/components/trading/order-form';
 import { MarketOverview } from '@/components/trading/market-overview';
 import { AutoTradePanel } from '@/components/trading/auto-trade-panel';
+import { BotsPanel } from '@/components/trading/bots-panel';
+import { BacktestPanel } from '@/components/trading/backtest-panel';
+import { AnalyticsPanel } from '@/components/trading/analytics-panel';
+import { JournalPanel } from '@/components/trading/journal-panel';
+import { SentimentPanel } from '@/components/trading/sentiment-panel';
+import { CorrelationPanel } from '@/components/trading/correlation-panel';
+import { SessionsPanel } from '@/components/trading/sessions-panel';
+import { WebhookPanel } from '@/components/trading/webhook-panel';
 import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,9 +40,8 @@ import { useMarketSocket } from '@/hooks/use-market-socket';
 const MOBILE_TABS = [
   { id: 'dashboard', label: 'Trade', icon: LayoutDashboard },
   { id: 'autotrade', label: 'AI Bot', icon: Bot },
-  { id: 'signals', label: 'Signals', icon: Sparkles },
-  { id: 'positions', label: 'Positions', icon: Wallet },
-  { id: 'history', label: 'History', icon: Clock },
+  { id: 'bots', label: 'Bots', icon: LineChart },
+  { id: 'analytics', label: 'Stats', icon: BarChart3 },
 ];
 
 function MobileTabBar() {
@@ -825,8 +832,16 @@ function DesktopSidebar() {
   const sidebarItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'autotrade', label: 'AI Auto-Trade', icon: Bot },
+    { id: 'bots', label: 'Bot Manager', icon: LineChart },
+    { id: 'backtest', label: 'Backtesting', icon: FlaskConical },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'markets', label: 'Markets', icon: Search },
     { id: 'positions', label: 'Positions', icon: Wallet },
+    { id: 'journal', label: 'Trade Journal', icon: BookOpen },
+    { id: 'sentiment', label: 'Sentiment', icon: Globe },
+    { id: 'correlation', label: 'Correlation', icon: GitBranch },
+    { id: 'sessions', label: 'Sessions', icon: Timer },
+    { id: 'webhook', label: 'Webhooks', icon: Activity },
     { id: 'history', label: 'History', icon: Clock },
     { id: 'signals', label: 'AI Signals', icon: Sparkles },
   ];
@@ -1033,64 +1048,105 @@ export default function TradingDashboard() {
               </motion.div>
             )}
 
-            {/* ====== SIGNALS TAB (Mobile) ====== */}
-            {activeTab === 'signals' && (
-              <motion.div key="signals" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="lg:hidden h-full">
-                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
-                  <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-amber-500" />
-                    <h3 className="text-sm font-semibold">AI Trading Signals</h3>
-                  </div>
-                  <SignalsPanel />
-                </Card>
+            {/* ====== BOT MANAGER TAB ====== */}
+            {activeTab === 'bots' && (
+              <motion.div key="bots" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><BotsPanel /></div>
               </motion.div>
             )}
 
-            {/* ====== POSITIONS TAB (Mobile) ====== */}
+            {/* ====== BACKTESTING TAB ====== */}
+            {activeTab === 'backtest' && (
+              <motion.div key="backtest" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><BacktestPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== ANALYTICS TAB ====== */}
+            {activeTab === 'analytics' && (
+              <motion.div key="analytics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><AnalyticsPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== JOURNAL TAB ====== */}
+            {activeTab === 'journal' && (
+              <motion.div key="journal" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><JournalPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== SENTIMENT TAB ====== */}
+            {activeTab === 'sentiment' && (
+              <motion.div key="sentiment" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><SentimentPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== CORRELATION TAB ====== */}
+            {activeTab === 'correlation' && (
+              <motion.div key="correlation" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><CorrelationPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== SESSIONS TAB ====== */}
+            {activeTab === 'sessions' && (
+              <motion.div key="sessions" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><SessionsPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== WEBHOOK TAB ====== */}
+            {activeTab === 'webhook' && (
+              <motion.div key="webhook" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><WebhookPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== SIGNALS TAB ====== */}
+            {activeTab === 'signals' && (
+              <motion.div key="signals" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== POSITIONS TAB ====== */}
             {activeTab === 'positions' && (
               <motion.div key="positions" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="lg:hidden h-full">
-                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
-                  <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Wallet className="h-4 w-4" />
-                      <h3 className="text-sm font-semibold">Positions</h3>
-                    </div>
-                    <Button size="sm" className="h-7 gap-1 cursor-pointer" onClick={() => useTradingStore.getState().setOrderSheetOpen(true)}>
-                      <Plus className="h-3 w-3" /> New
-                    </Button>
-                  </div>
-                  <PositionsPanel />
-                </Card>
+                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><PositionsPanel /></div>
               </motion.div>
             )}
 
             {/* ====== HISTORY TAB ====== */}
             {activeTab === 'history' && (
-              <motion.div key="history" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full">
-                <Card className={activeTab === 'history' ? 'm-4 overflow-hidden' : 'hidden lg:block m-4 overflow-hidden'}
-                  style={{ height: 'calc(100vh - 160px)' }}>
+              <motion.div key="history" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
                   <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    <h3 className="text-sm font-semibold">Order History</h3>
+                    <Clock className="h-4 w-4" /><h3 className="text-sm font-semibold">Order History</h3>
                     <Badge variant="outline" className="text-[10px] ml-auto">6 orders</Badge>
                   </div>
-                  <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 220px)' }}>
-                    <OrderHistoryPanel />
-                  </div>
+                  <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 220px)' }}><OrderHistoryPanel /></div>
                 </Card>
               </motion.div>
             )}
 
             {/* ====== MARKETS TAB ====== */}
             {activeTab === 'markets' && (
-              <motion.div key="markets" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="lg:hidden h-full">
-                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
-                  <MarketOverview />
-                </Card>
+              <motion.div key="markets" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><MarketOverview /></div>
               </motion.div>
             )}
           </AnimatePresence>
