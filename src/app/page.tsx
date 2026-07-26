@@ -25,6 +25,7 @@ import { SentimentPanel } from '@/components/trading/sentiment-panel';
 import { CorrelationPanel } from '@/components/trading/correlation-panel';
 import { SessionsPanel } from '@/components/trading/sessions-panel';
 import { WebhookPanel } from '@/components/trading/webhook-panel';
+import { LeaderboardPanel } from '@/components/trading/leaderboard-panel';
 import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +34,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { formatPnl, formatPrice, formatVolume } from '@/lib/market-sim';
 import { useMarketSocket } from '@/hooks/use-market-socket';
+import { useTradeNotifications } from '@/hooks/use-trade-notifications';
 
 // ============================================================
 // Mobile Bottom Tab Bar
@@ -835,6 +837,7 @@ function DesktopSidebar() {
     { id: 'bots', label: 'Bot Manager', icon: LineChart },
     { id: 'backtest', label: 'Backtesting', icon: FlaskConical },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
     { id: 'markets', label: 'Markets', icon: Search },
     { id: 'positions', label: 'Positions', icon: Wallet },
     { id: 'journal', label: 'Trade Journal', icon: BookOpen },
@@ -901,6 +904,11 @@ export default function TradingDashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
+
+  // Real-time trade-notification toasts — polls
+  // /api/trading/auto-trade/activity every 15s and fires a Sonner
+  // toast for each newly detected AI trade while the page is visible.
+  useTradeNotifications();
 
   useEffect(() => {
     if (wsPrices.length > 0) {
@@ -1069,6 +1077,14 @@ export default function TradingDashboard() {
               <motion.div key="analytics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
                 <div className="p-4" style={{ paddingBottom: '100px' }}><AnalyticsPanel /></div>
+              </motion.div>
+            )}
+
+            {/* ====== LEADERBOARD TAB ====== */}
+            {activeTab === 'leaderboard' && (
+              <motion.div key="leaderboard" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><LeaderboardPanel /></div>
               </motion.div>
             )}
 

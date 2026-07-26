@@ -1,6 +1,75 @@
 # Worklog
 
 ---
+Task ID: 6
+Agent: main
+Task: Build real-time trade notifications hook + paper trading leaderboard
+
+Work Log:
+- Read worklog.md, existing API routes (auto-trade/activity, sessions),
+  trading store, sessions-panel, journal-panel, layout.tsx (Sonner Toaster)
+  for code-style context
+- Created src/hooks/use-trade-notifications.ts
+  - Polls /api/trading/auto-trade/activity every 15s
+  - Uses refs (seenIds Set, hasInitialized, isVisible) to avoid re-render storms
+  - visibilitychange listener updates isVisibleRef
+  - First poll seeds seen-set silently (no toast flood on page load)
+  - Subsequent polls fire Sonner toasts ONLY when document.visibilityState === 'visible'
+  - Variant picker: pending→info, buy/cover→success, sell/short→error
+  - Custom Lucide icons: Clock (pending), ArrowUpRight emerald (buy/cover),
+    ArrowDownRight red (sell/short)
+  - Used createElement instead of JSX so the file stays .ts (ESLint rejects
+    JSX in .ts files)
+  - Imports toast from 'sonner' directly; imports AutoTradeActivity type
+    from @/lib/store/trading-store
+- Created src/app/api/trading/leaderboard/route.ts
+  - GET endpoint returning 10 simulated traders + userRank
+  - Deterministic seeded RNG (mulberry32) keyed by day-of-year so the
+    leaderboard rotates daily but stays stable within a UTC day
+  - 15-name pool (AlphaWolf, QuantumFox, DeltaSurge, etc.) Fisher-Yates
+    shuffled → take 10 → assign stats → sort by totalPnl desc → ranks 1..10
+  - All 6 strategies appear: signal_based, dca, grid, scalping, momentum, breakout
+  - User rank picked in middle (3..7); user's totalPnl interpolated between
+    the bracketing leaderboard entries so the rank is internally consistent
+  - DB resilience pattern: !db fast path + try/catch matching
+    'validating datasource' errors (data doesn't actually need the DB)
+- Created src/components/trading/leaderboard-panel.tsx
+  - 'use client', Framer Motion staggered entrance (delay: index * 0.05)
+  - Top bar: UserRankCard highlighted with ring-2 ring-primary/30 bg-primary/5
+  - Top-3 podium uses PURE CSS ring borders (NO emojis):
+    gold #f59e0b, silver #94a3b8, bronze #d97706 + matching glow shadows
+  - Each row: rank cell, colored avatar circle with initials (10-color
+    palette, NO indigo/blue), name + streak flame icon, strategy badge,
+    P&L green/red + percent, win rate, total trades (hidden < md),
+    Sharpe ratio (hidden < md)
+  - Loading skeleton matches row layout
+  - Refresh button + 60s background poll
+  - Error state with retry button
+  - Avatar colors from emerald/amber/rose/orange/fuchsia/lime/teal/purple/red/yellow
+- Wired up in src/app/page.tsx:
+  - Imported LeaderboardPanel and useTradeNotifications
+  - Called useTradeNotifications() inside TradingDashboard component
+  - Added 'leaderboard' tab (Trophy icon, already imported) to desktop sidebar
+  - Added render block for the leaderboard tab
+- Verified: bun run lint → 0 errors; GET /api/trading/leaderboard → 200
+  with valid 10-entry + userRank JSON (1850 bytes); GET / → 200 (63677 bytes);
+  activity endpoint still returns 200 (DB resilience catches prisma errors)
+- Wrote work record at /agent-ctx/6-main.md
+
+Stage Summary:
+- Two new features fully implemented, lint-clean, and verified against the
+  running dev server:
+  1. Real-time AI trade toasts — fires Sonner success/error/info toasts
+     for every new bot trade while the user is looking at the page
+  2. Paper Trading Leaderboard — daily-rotating deterministic data,
+     polished UI with gold/silver/bronze podium rings, primary-highlighted
+     user rank card, mobile-responsive (Sharpe + trades hidden on mobile),
+     refresh button, skeleton loading state, error retry
+- All 3 required files written; leaderboard tab wired into sidebar;
+  hook called from page.tsx as specified
+- DB resilience pattern, trading-store import convention, shadcn/ui Card/Badge
+  usage, Framer Motion staggered entrance, and "no indigo/blue" rule all honored
+---
 Task ID: 5
 Agent: main
 Task: Complete all 15 advanced AI trading features - verify, fix, and connect
