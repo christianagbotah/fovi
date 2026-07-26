@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
 import { db } from '@/lib/db';
 import { getAllDemoSymbols } from '@/lib/broker/demo';
 import { generateAnalysisSummary } from '@/lib/ai/signals';
@@ -22,13 +21,22 @@ Important: You are powered by AI and should always add appropriate disclaimers a
 const conversations = new Map<string, { role: string; content: string }[]>();
 const MAX_HISTORY = 20;
 
-let zaiInstance: Awaited<ReturnType<typeof ZAI.create>> | null = null;
+// Lazy ZAI SDK initialization with error tolerance
+let zaiInstance: Awaited<ReturnType<typeof import('z-ai-web-dev-sdk').default.create>> | null = null;
+let zaiInitFailed = false;
 
 async function getZAI() {
-  if (!zaiInstance) {
+  if (zaiInitFailed) return null;
+  if (zaiInstance) return zaiInstance;
+  try {
+    const ZAI = (await import('z-ai-web-dev-sdk')).default;
     zaiInstance = await ZAI.create();
+    return zaiInstance;
+  } catch (err) {
+    console.error('[ZAI SDK] Failed to initialize (AI chat unavailable):', err instanceof Error ? err.message : err);
+    zaiInitFailed = true;
+    return null;
   }
-  return zaiInstance;
 }
 
 function getConversation(sessionId: string) {
@@ -78,6 +86,35 @@ function buildSymbolAnalysis(symbol: string): string {
   return '';
 }
 
+// Fallback AI response using simple rule-based analysis when SDK is unavailable
+function generateFallbackResponse(message: string, marketContext: string, symbolContext: string): string {
+  const lower = message.toLowerCase();
+  
+  // Check for specific symbol queries
+  const symbolMatch = message.match(/\b([A-Z]{2,6})\b/);
+  const symbol = symbolMatch ? symbolMatch[1] : null;
+  
+  if (lower.includes('help') || lower.includes('what can')) {
+    return `**Fovi AI Trading Assistant** 🤖\n\nI can help you with:\n- **Market Analysis** — Ask about any symbol (e.g., "Analyze AAPL" or "What's happening with BTC?")\n- **Trading Signals** — I provide AI-generated signals based on technical analysis\n- **Risk Management** — Position sizing and portfolio advice\n- **Market Overview** — Current market conditions and trends\n\n*Note: AI chat is currently running in offline mode. Full AI capabilities require network connectivity.*`;
+  }
+  
+  if (symbol && (lower.includes('analyze') || lower.includes('analysis') || lower.includes('what') || lower.includes('how') || lower.includes('price') || lower.includes('buy') || lower.includes('sell'))) {
+    const symbols = getAllDemoSymbols();
+    const sym = symbols.find(s => s.symbol === symbol.toUpperCase());
+    if (sym) {
+      const trend = sym.changePercent >= 0 ? 'bullish' : 'bearish';
+      const arrow = sym.changePercent >= 0 ? '↑' : '↓';
+      return `**${sym.symbol} Analysis** (${sym.assetType})\n\n**Current Price:** $${sym.price.toFixed(2)} ${arrow} ${sym.changePercent >= 0 ? '+' : ''}${sym.changePercent.toFixed(2)}%\n**Trend:** ${trend.charAt(0).toUpperCase() + trend.slice(1)}\n\n${symbolContext ? '**Technical Indicators:**' + symbolContext : ''}\n\n*⚠️ AI chat is in offline mode. Full technical analysis requires network connectivity. Connect Alpaca or Binance for live data.*`;
+    }
+  }
+  
+  if (lower.includes('market') || lower.includes('overview') || lower.includes('summary')) {
+    return `**Market Overview**\n\n${marketContext}\n*⚠️ Running in offline mode. Real-time AI analysis requires network connectivity.*`;
+  }
+  
+  return `I'm currently running in **offline mode** — full AI capabilities require network connectivity to the Fovi AI backend.\n\nYou can still:\n- View real-time prices and charts\n- Place and manage trades\n- Receive AI trading signals\n- Connect your broker accounts\n\nTry asking me to **analyze a specific symbol** (e.g., "Analyze NVDA") for a quick technical overview, or check the **Markets** tab for live data.`;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { message, sessionId = 'default' } = await req.json();
@@ -100,28 +137,43 @@ export async function POST(req: NextRequest) {
       symbolContext = buildSymbolAnalysis(possibleSymbol);
     }
 
-    // Add user message with context
-    const enhancedMessage = symbolContext
-      ? `${message}\n\n[Here is the current technical analysis data for context:]${symbolContext}${marketContext}`
-      : `${message}${marketContext}`;
+    let aiResponse: string;
 
-    history.push({ role: 'user', content: enhancedMessage });
+    if (zai) {
+      // Full AI mode — SDK is available
+      const enhancedMessage = symbolContext
+        ? `${message}\n\n[Here is the current technical analysis data for context:]${symbolContext}${marketContext}`
+        : `${message}${marketContext}`;
 
-    // Trim if too long
-    const trimmedHistory = trimConversation(history);
+      history.push({ role: 'user', content: enhancedMessage });
+      const trimmedHistory = trimConversation(history);
 
-    const completion = await zai.chat.completions.create({
-      messages: trimmedHistory.map(m => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
-      thinking: { type: 'disabled' },
-    });
+      try {
+        const completion = await zai.chat.completions.create({
+          messages: trimmedHistory.map(m => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          })),
+          thinking: { type: 'disabled' },
+        });
 
-    const aiResponse = completion.choices[0]?.message?.content ||
-      'I apologize, but I was unable to generate a response. Please try again.';
+        aiResponse = completion.choices[0]?.message?.content ||
+          'I apologize, but I was unable to generate a response. Please try again.';
+      } catch (sdkErr) {
+        console.error('[ZAI SDK] Chat completion failed:', sdkErr instanceof Error ? sdkErr.message : sdkErr);
+        zaiInitFailed = true;
+        zaiInstance = null;
+        // Fallback to offline response
+        history.push({ role: 'user', content: message });
+        aiResponse = generateFallbackResponse(message, marketContext, symbolContext);
+      }
+    } else {
+      // Offline mode — SDK unavailable
+      history.push({ role: 'user', content: message });
+      aiResponse = generateFallbackResponse(message, marketContext, symbolContext);
+    }
 
-    // Save to DB for persistence
+    // Save to DB for persistence (non-critical)
     try {
       const userId = 'usr_demo_1';
       let conversation = await db.aiConversation.findFirst({
@@ -151,6 +203,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       response: aiResponse,
+      offline: !zai,
       messageCount: history.length - 1,
     });
   } catch (error: unknown) {
