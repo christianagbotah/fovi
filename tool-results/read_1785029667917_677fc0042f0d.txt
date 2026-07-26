@@ -1,0 +1,752 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import * as React from "react";
+     4→     4→import { useRouter } from "next/navigation";
+     5→     5→import { signOut, useSession } from "next-auth/react";
+     6→     6→import { toast } from "sonner";
+     7→     7→import { MarketProvider, useMarket } from "@/components/market-provider";
+     8→     8→import { ThemeToggle } from "@/components/theme-toggle";
+     9→     9→import { AccountLinking, type LinkedAccount } from "@/components/trading/account-linking";
+    10→    10→import { BotPanel, type BotConfig } from "@/components/trading/bot-panel";
+    11→    11→import { StatCards, type Stats } from "@/components/trading/stat-cards";
+    12→    12→import { PositionsTable, type Position } from "@/components/trading/positions-table";
+    13→    13→import { HistoryTable, type ClosedTrade } from "@/components/trading/history-table";
+    14→    14→import {
+    15→    15→  DecisionFeed,
+    16→    16→  DecisionSummaryCard,
+    17→    17→  type AiDecision,
+    18→    18→} from "@/components/trading/decision-feed";
+    19→    19→import { MarketWatch } from "@/components/trading/market-watch";
+    20→    20→import { PriceChart } from "@/components/trading/price-chart";
+    21→    21→import { FeeCard, type FeeStats } from "@/components/trading/fee-card";
+    22→    22→import { TestingPanel } from "@/components/trading/testing-panel";
+    23→    23→import { AdminDashboard } from "@/components/trading/admin-dashboard";
+    24→    24→import { ComplianceGate, useCompliance } from "@/components/trading/compliance-gate";
+    25→    25→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    26→    26→import {
+    27→    27→  AlertDialog,
+    28→    28→  AlertDialogAction,
+    29→    29→  AlertDialogCancel,
+    30→    30→  AlertDialogContent,
+    31→    31→  AlertDialogDescription,
+    32→    32→  AlertDialogFooter,
+    33→    33→  AlertDialogHeader,
+    34→    34→  AlertDialogTitle,
+    35→    35→} from "@/components/ui/alert-dialog";
+    36→    36→import { Badge } from "@/components/ui/badge";
+    37→    37→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+    38→    38→import { Button } from "@/components/ui/button";
+    39→    39→import {
+    40→    40→  Activity,
+    41→    41→  Bot,
+    42→    42→  CandlestickChart,
+    43→    43→  Coins,
+    44→    44→  FlaskConical,
+    45→    45→  Github,
+    46→    46→  History,
+    47→    47→  LineChart,
+    48→    48→  Link2,
+    49→    49→  Loader2,
+    50→    50→  LogOut,
+    51→    51→  OctagonAlert,
+    52→    52→  Radio,
+    53→    53→  ShieldCheck,
+    54→    54→  Wallet,
+    55→    55→  Wifi,
+    56→    56→  WifiOff,
+    57→    57→} from "lucide-react";
+    58→    58→import { SYMBOLS, formatCurrency } from "@/lib/symbols";
+    59→    59→
+    60→    60→const DEFAULT_STATS: Stats = {
+    61→    61→  balance: 0,
+    62→    62→  equity: 0,
+    63→    63→  unrealized: 0,
+    64→    64→  realized: 0,
+    65→    65→  wins: 0,
+    66→    66→  losses: 0,
+    67→    67→  winRate: 0,
+    68→    68→  openCount: 0,
+    69→    69→  closedCount: 0,
+    70→    70→};
+    71→    71→
+    72→    72→function TerminalInner() {
+    73→    73→  const router = useRouter();
+    74→    74→  const { symbols, lastTickAt } = useMarket();
+    75→    75→  const dataLive = !!lastTickAt && Date.now() - lastTickAt < 6000;
+    76→    76→  const { authenticated, loading: authLoading, user, needsCompliance, refresh: refreshCompliance } = useCompliance();
+    77→    77→
+    78→    78→  const [account, setAccount] = React.useState<LinkedAccount | null>(null);
+    79→    79→  const [config, setConfig] = React.useState<BotConfig | null>(null);
+    80→    80→  const [stats, setStats] = React.useState<Stats>(DEFAULT_STATS);
+    81→    81→  const [positions, setPositions] = React.useState<Position[]>([]);
+    82→    82→  const [history, setHistory] = React.useState<ClosedTrade[]>([]);
+    83→    83→  const [decisions, setDecisions] = React.useState<AiDecision[]>([]);
+    84→    84→  const [selected, setSelected] = React.useState("BTC/USD");
+    85→    85→  const [loaded, setLoaded] = React.useState(false);
+    86→    86→  const [killSwitchOpen, setKillSwitchOpen] = React.useState(false);
+    87→    87→
+    88→    88→  const livePrices = React.useMemo(() => {
+    89→    89→    const map: Record<string, number> = {};
+    90→    90→    for (const s of symbols) map[s.symbol] = s.price;
+    91→    91→    return map;
+    92→    92→  }, [symbols]);
+    93→    93→
+    94→    94→  // Live unrealized P&L from socket prices (snappy UI)
+    95→    95→  const liveUnrealized = React.useMemo(() => {
+    96→    96→    return positions.reduce((acc, p) => {
+    97→    97→      const live = livePrices[p.symbol] ?? p.currentPrice;
+    98→    98→      const pnl =
+    99→    99→        p.side === "LONG"
+   100→   100→          ? (live - p.entryPrice) * p.size
+   101→   101→          : (p.entryPrice - live) * p.size;
+   102→   102→      return acc + pnl;
+   103→   103→    }, 0);
+   104→   104→  }, [positions, livePrices]);
+   105→   105→
+   106→   106→  async function refreshAll() {
+   107→   107→    const [statsRes, posRes, decRes, histRes, accRes, cfgRes] = await Promise.all([
+   108→   108→      fetch("/api/stats").then((r) => r.json()),
+   109→   109→      fetch("/api/positions").then((r) => r.json()),
+   110→   110→      fetch("/api/decisions").then((r) => r.json()),
+   111→   111→      fetch("/api/history").then((r) => r.json()),
+   112→   112→      fetch("/api/account").then((r) => r.json()),
+   113→   113→      fetch("/api/bot").then((r) => r.json()),
+   114→   114→    ]);
+   115→   115→    setStats(statsRes ?? DEFAULT_STATS);
+   116→   116→    setPositions(posRes?.positions ?? []);
+   117→   117→    setDecisions(decRes?.decisions ?? []);
+   118→   118→    setHistory(histRes?.trades ?? []);
+   119→   119→    setAccount(accRes?.account ?? null);
+   120→   120→    setConfig(cfgRes?.config ?? null);
+   121→   121→    setLoaded(true);
+   122→   122→  }
+   123→   123→
+   124→   124→  // Initial load
+   125→   125→  React.useEffect(() => {
+   126→   126→    refreshAll();
+   127→   127→  }, []);
+   128→   128→
+   129→   129→  // Bot tick loop — always runs (manages TP/SL on open positions; runs AI when enabled + throttled)
+   130→   130→  React.useEffect(() => {
+   131→   131→    let cancelled = false;
+   132→   132→    let timer: ReturnType<typeof setTimeout>;
+   133→   133→
+   134→   134→    async function tick() {
+   135→   135→      try {
+   136→   136→        const res = await fetch("/api/bot/tick", { method: "POST" });
+   137→   137→        const data = await res.json();
+   138→   138→        if (cancelled) return;
+   139→   139→        if (data?.closedPositions?.length) {
+   140→   140→          for (const c of data.closedPositions) {
+   141→   141→            toast(
+   142→   142→              `${c.symbol} closed (${c.reason}): ${c.pnl >= 0 ? "+" : ""}$${c.pnl.toFixed(2)}`,
+   143→   143→              {
+   144→   144→                description:
+   145→   145→                  c.reason === "TP"
+   146→   146→                    ? "Take profit hit"
+   147→   147→                    : c.reason === "SL"
+   148→   148→                      ? "Stop loss hit"
+   149→   149→                      : "Position exited",
+   150→   150→              },
+   151→   151→            );
+   152→   152→          }
+   153→   153→        }
+   154→   154→        if (data?.decision && data.decision.executed && data.decision.action !== "HOLD") {
+   155→   155→          toast.success(
+   156→   156→            `AI ${data.decision.action} ${data.decision.symbol} (${data.decision.confidence}% confidence)`,
+   157→   157→          );
+   158→   158→        }
+   159→   159→        await refreshAll();
+   160→   160→      } catch {
+   161→   161→        // silent — will retry
+   162→   162→      } finally {
+   163→   163→        if (!cancelled) timer = setTimeout(tick, 15000); // 15s — TP/SL still managed promptly, LLM is throttled server-side
+   164→   164→      }
+   165→   165→    }
+   166→   166→
+   167→   167→    timer = setTimeout(tick, 6000);
+   168→   168→    return () => {
+   169→   169→      cancelled = true;
+   170→   170→      clearTimeout(timer);
+   171→   171→    };
+   172→   172→  }, []);
+   173→   173→
+   174→   174→  // Re-render safe: refresh stats periodically too (independent of tick)
+   175→   175→  React.useEffect(() => {
+   176→   176→    const id = setInterval(refreshAll, 8000);
+   177→   177→    return () => clearInterval(id);
+   178→   178→  }, []);
+   179→   179→
+   180→   180→  const hasAccount = !!account;
+   181→   181→  const botActive = !!config?.enabled;
+   182→   182→
+   183→   183→  return (
+   184→   184→    <div className="flex min-h-screen flex-col overflow-x-clip bg-background">
+   185→   185→      {/* Header */}
+   186→   186→      <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+   187→   187→        <div className="mx-auto flex min-h-14 max-w-7xl flex-nowrap items-center gap-x-1 px-3 py-1.5 sm:min-h-16 sm:flex-wrap sm:gap-x-3 sm:gap-y-2 sm:px-4 sm:py-2">
+   188→   188→          <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+   189→   189→            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground sm:h-9 sm:w-9">
+   190→   190→              <Bot className="h-4 w-4 sm:h-5 sm:w-5" />
+   191→   191→            </div>
+   192→   192→            <div className="leading-tight">
+   193→   193→              <div className="flex items-center gap-2">
+   194→   194→                <span className="text-sm font-bold tracking-tight sm:text-base">Fovi</span>
+   195→   195→                <Badge variant="secondary" className="hidden text-[10px] uppercase sm:inline-flex">
+   196→   196→                  AI Terminal
+   197→   197→                </Badge>
+   198→   198→              </div>
+   199→   199→              <span className="hidden text-[11px] text-muted-foreground sm:block">
+   200→   200→                Autonomous trading strategist
+   201→   201→              </span>
+   202→   202→            </div>
+   203→   203→          </div>
+   204→   204→
+   205→   205→          <div className="hidden items-center gap-1.5 md:flex">
+   206→   206→            <Badge
+   207→   207→              variant="outline"
+   208→   208→              className="gap-1 rounded-md"
+   209→   209→              title={dataLive ? "Market feed live" : "Market feed disconnected"}
+   210→   210→            >
+   211→   211→              {dataLive ? (
+   212→   212→                <Wifi className="h-3 w-3 text-emerald-500" />
+   213→   213→              ) : (
+   214→   214→                <WifiOff className="h-3 w-3 text-red-500" />
+   215→   215→              )}
+   216→   216→              <span className="text-[10px] uppercase">{dataLive ? "Live" : "Offline"}</span>
+   217→   217→            </Badge>
+   218→   218→            {botActive && (
+   219→   219→              <Badge className="gap-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-600">
+   220→   220→                <Radio className="h-3 w-3 animate-pulse" />
+   221→   221→                <span className="text-[10px] uppercase">AI Active</span>
+   222→   222→              </Badge>
+   223→   223→            )}
+   224→   224→          </div>
+   225→   225→
+   226→   226→          {/* Compact live/AI badges shown inline on mobile (sm-md) when space is tight */}
+   227→   227→          <div className="ml-1 flex items-center gap-1 sm:ml-3 md:hidden">
+   228→   228→            <Badge
+   229→   229→              variant="outline"
+   230→   230→              className="gap-1 rounded-md px-1.5 py-0"
+   231→   231→              title={dataLive ? "Market feed live" : "Market feed disconnected"}
+   232→   232→            >
+   233→   233→              {dataLive ? (
+   234→   234→                <Wifi className="h-3 w-3 text-emerald-500" />
+   235→   235→              ) : (
+   236→   236→                <WifiOff className="h-3 w-3 text-red-500" />
+   237→   237→              )}
+   238→   238→            </Badge>
+   239→   239→            {botActive && (
+   240→   240→              <Badge className="gap-1 rounded-md bg-emerald-600 px-1.5 py-0 text-white hover:bg-emerald-600">
+   241→   241→                <Radio className="h-3 w-3 animate-pulse" />
+   242→   242→              </Badge>
+   243→   243→            )}
+   244→   244→          </div>
+   245→   245→
+   246→   246→          <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
+   247→   247→            {hasAccount && (
+   248→   248→              <div className="hidden text-right md:block">
+   249→   249→                <div className="font-mono text-sm font-semibold">
+   250→   250→                  ${stats.equity.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+   251→   251→                </div>
+   252→   252→                <div className="text-[11px] text-muted-foreground">Equity</div>
+   253→   253→              </div>
+   254→   254→            )}
+   255→   255→            <AccountLinking
+   256→   256→              account={account}
+   257→   257→              onLinked={refreshAll}
+   258→   258→              onUnlinked={refreshAll}
+   259→   259→              triggerVariant="outline"
+   260→   260→            />
+   261→   261→            <Button
+   262→   262→              variant="outline"
+   263→   263→              size="icon"
+   264→   264→              className="shrink-0 border-red-500/30 text-red-600 hover:bg-red-500/10 hover:text-red-700 dark:text-red-400"
+   265→   265→              onClick={() => setKillSwitchOpen(true)}
+   266→   266→              title="Emergency kill switch — halt all AI trading immediately"
+   267→   267→              aria-label="Kill switch"
+   268→   268→            >
+   269→   269→              <OctagonAlert className="h-4 w-4" />
+   270→   270→            </Button>
+   271→   271→            <ThemeToggle />
+   272→   272→            <Button
+   273→   273→              variant="ghost"
+   274→   274→              size="icon"
+   275→   275→              title="Sign out"
+   276→   276→              aria-label="Sign out"
+   277→   277→              onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+   278→   278→            >
+   279→   279→              <LogOut className="h-4 w-4" />
+   280→   280→            </Button>
+   281→   281→          </div>
+   282→   282→        </div>
+   283→   283→      </header>
+   284→   284→
+   285→   285→      <KillSwitchDialog
+   286→   286→        open={killSwitchOpen}
+   287→   287→        onOpenChange={setKillSwitchOpen}
+   288→   288→        active={!!user?.killSwitch}
+   289→   289→        onTriggered={() => {
+   290→   290→          refreshAll();
+   291→   291→          refreshCompliance();
+   292→   292→        }}
+   293→   293→      />
+   294→   294→
+   295→   295→      {/* Main */}
+   296→   296→      <main className="mx-auto w-full min-w-0 max-w-7xl flex-1 px-3 py-4 sm:px-4 sm:py-6">
+   297→   297→        {authLoading ? (
+   298→   298→          <div className="flex h-64 items-center justify-center text-muted-foreground">
+   299→   299→            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+   300→   300→            Authenticating…
+   301→   301→          </div>
+   302→   302→        ) : !authenticated ? (
+   303→   303→          <AuthPrompt onSignIn={() => router.push("/auth/signin")} />
+   304→   304→        ) : needsCompliance && user ? (
+   305→   305→          <>
+   306→   306→            <ComplianceGate user={user} onAccepted={refreshCompliance} />
+   307→   307→            <div className="flex h-64 items-center justify-center text-muted-foreground">
+   308→   308→              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+   309→   309→              Waiting for risk acknowledgment…
+   310→   310→            </div>
+   311→   311→          </>
+   312→   312→        ) : !loaded ? (
+   313→   313→          <div className="flex h-64 items-center justify-center text-muted-foreground">
+   314→   314→            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+   315→   315→            Loading terminal…
+   316→   316→          </div>
+   317→   317→        ) : !hasAccount ? (
+   318→   318→          <Onboarding account={account} onLinked={refreshAll} onUnlinked={refreshAll} />
+   319→   319→        ) : (
+   320→   320→          <div className="grid gap-4 sm:gap-5">
+   321→   321→            <StatCards
+   322→   322→              stats={{
+   323→   323→                ...stats,
+   324→   324→                unrealized: liveUnrealized,
+   325→   325→                equity: stats.balance + liveUnrealized,
+   326→   326→              }}
+   327→   327→            />
+   328→   328→
+   329→   329→            <div className="grid items-stretch gap-4 sm:gap-5 lg:grid-cols-3">
+   330→   330→              <div className="h-full lg:col-span-2">
+   331→   331→                <DecisionSummaryCard decisions={decisions} botActive={botActive} />
+   332→   332→              </div>
+   333→   333→              <BotPanel
+   334→   334→                config={config}
+   335→   335→                onConfigChanged={refreshAll}
+   336→   336→                hasAccount={hasAccount}
+   337→   337→                killSwitchActive={!!user?.killSwitch}
+   338→   338→              />
+   339→   339→            </div>
+   340→   340→
+   341→   341→            <Tabs defaultValue="overview" className="w-full min-w-0">
+   342→   342→              <TabsList className="flex h-9 w-full justify-start gap-1 overflow-x-auto rounded-lg p-1 sm:grid sm:w-auto sm:grid-flow-col sm:justify-center sm:overflow-hidden [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+   343→   343→                <TabsTrigger value="overview" className="shrink-0 gap-1.5 px-3">
+   344→   344→                  <CandlestickChart className="h-4 w-4" />
+   345→   345→                  <span className="hidden sm:inline">Overview</span>
+   346→   346→                </TabsTrigger>
+   347→   347→                <TabsTrigger value="positions" className="shrink-0 gap-1.5 px-3">
+   348→   348→                  <Wallet className="h-4 w-4" />
+   349→   349→                  <span className="hidden sm:inline">Positions</span>
+   350→   350→                  {stats.openCount > 0 && (
+   351→   351→                    <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+   352→   352→                      {stats.openCount}
+   353→   353→                    </Badge>
+   354→   354→                  )}
+   355→   355→                </TabsTrigger>
+   356→   356→                <TabsTrigger value="ai" className="shrink-0 gap-1.5 px-3">
+   357→   357→                  <Bot className="h-4 w-4" />
+   358→   358→                  <span className="hidden sm:inline">AI</span>
+   359→   359→                </TabsTrigger>
+   360→   360→                <TabsTrigger value="testing" className="shrink-0 gap-1.5 px-3">
+   361→   361→                  <FlaskConical className="h-4 w-4" />
+   362→   362→                  <span className="hidden sm:inline">Testing</span>
+   363→   363→                </TabsTrigger>
+   364→   364→                <TabsTrigger value="fees" className="shrink-0 gap-1.5 px-3">
+   365→   365→                  <Coins className="h-4 w-4" />
+   366→   366→                  <span className="hidden sm:inline">Fees</span>
+   367→   367→                  {stats.feesOwed != null && stats.feesOwed > 0 && (
+   368→   368→                    <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px] text-amber-600 dark:text-amber-400">
+   369→   369→                      {formatCurrency(stats.feesOwed)}
+   370→   370→                    </Badge>
+   371→   371→                  )}
+   372→   372→                </TabsTrigger>
+   373→   373→                {user?.role === "admin" && (
+   374→   374→                  <TabsTrigger value="admin" className="shrink-0 gap-1.5 px-3">
+   375→   375→                    <ShieldCheck className="h-4 w-4" />
+   376→   376→                    <span className="hidden sm:inline">Admin</span>
+   377→   377→                  </TabsTrigger>
+   378→   378→                )}
+   379→   379→              </TabsList>
+   380→   380→
+   381→   381→              {/* Overview */}
+   382→   382→              <TabsContent value="overview" className="mt-4">
+   383→   383→                <div className="grid items-stretch gap-4 sm:gap-5 lg:grid-cols-3">
+   384→   384→                  <div className="lg:col-span-1">
+   385→   385→                    <Card className="h-full">
+   386→   386→                      <CardHeader className="border-b bg-muted/30 py-3">
+   387→   387→                        <CardTitle className="flex items-center gap-1.5 text-sm">
+   388→   388→                          <LineChart className="h-4 w-4" />
+   389→   389→                          Market watch
+   390→   390→                        </CardTitle>
+   391→   391→                      </CardHeader>
+   392→   392→                      <CardContent className="p-0">
+   393→   393→                        <MarketWatch selected={selected} onSelect={setSelected} />
+   394→   394→                      </CardContent>
+   395→   395→                    </Card>
+   396→   396→                  </div>
+   397→   397→                  <div className="space-y-4 sm:space-y-5 lg:col-span-2">
+   398→   398→                    <PriceChart symbol={selected} positions={positions} />
+   399→   399→                    <Card>
+   400→   400→                      <CardHeader className="border-b bg-muted/30 py-3">
+   401→   401→                        <CardTitle className="flex items-center gap-1.5 text-sm">
+   402→   402→                          <Activity className="h-4 w-4" />
+   403→   403→                          Open positions
+   404→   404→                        </CardTitle>
+   405→   405→                      </CardHeader>
+   406→   406→                      <CardContent className="p-2 sm:p-4">
+   407→   407→                        <PositionsTable
+   408→   408→                          positions={positions}
+   409→   409→                          livePrices={livePrices}
+   410→   410→                          onRefresh={refreshAll}
+   411→   411→                        />
+   412→   412→                      </CardContent>
+   413→   413→                    </Card>
+   414→   414→                  </div>
+   415→   415→                </div>
+   416→   416→              </TabsContent>
+   417→   417→
+   418→   418→              {/* Positions & History */}
+   419→   419→              <TabsContent value="positions" className="mt-4 space-y-4 sm:space-y-5">
+   420→   420→                <Card>
+   421→   421→                  <CardHeader className="border-b bg-muted/30 py-3">
+   422→   422→                    <CardTitle className="flex items-center gap-1.5 text-sm">
+   423→   423→                      <Activity className="h-4 w-4" />
+   424→   424→                      Open positions
+   425→   425→                    </CardTitle>
+   426→   426→                  </CardHeader>
+   427→   427→                  <CardContent className="p-2 sm:p-4">
+   428→   428→                    <PositionsTable
+   429→   429→                      positions={positions}
+   430→   430→                      livePrices={livePrices}
+   431→   431→                      onRefresh={refreshAll}
+   432→   432→                    />
+   433→   433→                  </CardContent>
+   434→   434→                </Card>
+   435→   435→                <Card>
+   436→   436→                  <CardHeader className="border-b bg-muted/30 py-3">
+   437→   437→                    <CardTitle className="flex items-center gap-1.5 text-sm">
+   438→   438→                      <History className="h-4 w-4" />
+   439→   439→                      Trade history
+   440→   440→                    </CardTitle>
+   441→   441→                  </CardHeader>
+   442→   442→                  <CardContent className="p-2 sm:p-4">
+   443→   443→                    <HistoryTable trades={history} />
+   444→   444→                  </CardContent>
+   445→   445→                </Card>
+   446→   446→              </TabsContent>
+   447→   447→
+   448→   448→              {/* AI Activity */}
+   449→   449→              <TabsContent value="ai" className="mt-4">
+   450→   450→                <div className="grid items-stretch gap-4 sm:gap-5 lg:grid-cols-3">
+   451→   451→                  <div className="h-full lg:col-span-2">
+   452→   452→                    <Card>
+   453→   453→                      <CardHeader className="border-b bg-muted/30 py-3">
+   454→   454→                        <CardTitle className="flex items-center gap-1.5 text-sm">
+   455→   455→                          <Bot className="h-4 w-4" />
+   456→   456→                          AI decision log
+   457→   457→                        </CardTitle>
+   458→   458→                      </CardHeader>
+   459→   459→                      <CardContent className="p-0">
+   460→   460→                        <DecisionFeed decisions={decisions} />
+   461→   461→                      </CardContent>
+   462→   462→                    </Card>
+   463→   463→                  </div>
+   464→   464→                  <div className="space-y-4 sm:space-y-5">
+   465→   465→                    <Card>
+   466→   466→                      <CardHeader className="border-b bg-muted/30 py-3">
+   467→   467→                        <CardTitle className="text-sm">Watchlist</CardTitle>
+   468→   468→                      </CardHeader>
+   469→   469→                      <CardContent className="p-0">
+   470→   470→                        <MarketWatch selected={selected} onSelect={setSelected} />
+   471→   471→                      </CardContent>
+   472→   472→                    </Card>
+   473→   473→                    <PriceChart symbol={selected} positions={positions} />
+   474→   474→                  </div>
+   475→   475→                </div>
+   476→   476→              </TabsContent>
+   477→   477→
+   478→   478→              {/* Fees */}
+   479→   479→              <TabsContent value="fees" className="mt-4">
+   480→   480→                <div className="grid items-stretch gap-4 sm:gap-5 lg:grid-cols-3">
+   481→   481→                  <div className="h-full lg:col-span-2">
+   482→   482→                    <FeeCard
+   483→   483→                      stats={{
+   484→   484→                        feeEnabled: stats.feeEnabled ?? true,
+   485→   485→                        profitSharePct: stats.profitSharePct ?? 20,
+   486→   486→                        highWaterMark: 0,
+   487→   487→                        totalFeesCharged: stats.totalFeesCharged ?? 0,
+   488→   488→                        totalFeesSettled: 0,
+   489→   489→                        feesOwed: stats.feesOwed ?? 0,
+   490→   490→                        lastFeeAt: null,
+   491→   491→                      }}
+   492→   492→                    />
+   493→   493→                  </div>
+   494→   494→                  <div className="space-y-4 sm:space-y-5">
+   495→   495→                    <Card>
+   496→   496→                      <CardHeader className="border-b bg-muted/30 py-3">
+   497→   497→                        <CardTitle className="text-sm">Watchlist</CardTitle>
+   498→   498→                      </CardHeader>
+   499→   499→                      <CardContent className="p-0">
+   500→   500→                        <MarketWatch selected={selected} onSelect={setSelected} />
+   501→   501→                      </CardContent>
+   502→   502→                    </Card>
+   503→   503→                    <PriceChart symbol={selected} positions={positions} />
+   504→   504→                  </div>
+   505→   505→                </div>
+   506→   506→              </TabsContent>
+   507→   507→
+   508→   508→              {/* Testing — forward tests + backtests */}
+   509→   509→              <TabsContent value="testing" className="mt-4">
+   510→   510→                <div className="grid items-stretch gap-4 sm:gap-5 lg:grid-cols-3">
+   511→   511→                  <div className="h-full lg:col-span-2">
+   512→   512→                    <TestingPanel />
+   513→   513→                  </div>
+   514→   514→                  <div className="space-y-4 sm:space-y-5">
+   515→   515→                    <Card>
+   516→   516→                      <CardHeader className="border-b bg-muted/30 py-3">
+   517→   517→                        <CardTitle className="text-sm">Watchlist</CardTitle>
+   518→   518→                      </CardHeader>
+   519→   519→                      <CardContent className="p-0">
+   520→   520→                        <MarketWatch selected={selected} onSelect={setSelected} />
+   521→   521→                      </CardContent>
+   522→   522→                    </Card>
+   523→   523→                    <PriceChart symbol={selected} positions={positions} />
+   524→   524→                  </div>
+   525→   525→                </div>
+   526→   526→              </TabsContent>
+   527→   527→
+   528→   528→              {/* Admin — platform-wide dashboard */}
+   529→   529→              <TabsContent value="admin" className="mt-4">
+   530→   530→                <AdminDashboard />
+   531→   531→              </TabsContent>
+   532→   532→            </Tabs>
+   533→   533→          </div>
+   534→   534→        )}
+   535→   535→      </main>
+   536→   536→
+   537→   537→      {/* Footer */}
+   538→   538→      <footer className="mt-auto border-t bg-muted/20">
+   539→   539→        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-3 py-3 text-xs text-muted-foreground sm:flex-row sm:px-4 sm:py-4">
+   540→   540→          <div className="flex items-center gap-1.5 text-center sm:text-left">
+   541→   541→            <Bot className="h-3.5 w-3.5 shrink-0" />
+   542→   542→            <span>
+   543→   543→              <strong className="font-semibold text-foreground">Fovi</strong> — AI auto-trading
+   544→   544→              terminal. Simulated market &amp; execution for demonstration.
+   545→   545→            </span>
+   546→   546→          </div>
+   547→   547→          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+   548→   548→            <span>{SYMBOLS.length} instruments tracked</span>
+   549→   549→            <span className="hidden sm:inline">·</span>
+   550→   550→            <span>Not financial advice</span>
+   551→   551→            <a
+   552→   552→              href="https://chat.z.ai"
+   553→   553→              target="_blank"
+   554→   554→              rel="noreferrer"
+   555→   555→              className="flex items-center gap-1 hover:text-foreground"
+   556→   556→            >
+   557→   557→              <Github className="h-3.5 w-3.5" />
+   558→   558→              <span className="hidden sm:inline">Built with Z.ai</span>
+   559→   559→            </a>
+   560→   560→          </div>
+   561→   561→        </div>
+   562→   562→      </footer>
+   563→   563→    </div>
+   564→   564→  );
+   565→   565→}
+   566→   566→
+   567→   567→function Onboarding({
+   568→   568→  account,
+   569→   569→  onLinked,
+   570→   570→  onUnlinked,
+   571→   571→}: {
+   572→   572→  account: LinkedAccount | null;
+   573→   573→  onLinked: () => void;
+   574→   574→  onUnlinked: () => void;
+   575→   575→}) {
+   576→   576→  return (
+   577→   577→    <div className="mx-auto flex max-w-3xl flex-col items-center gap-6 py-8 text-center sm:gap-8 sm:py-10">
+   578→   578→      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary sm:h-16 sm:w-16">
+   579→   579→        <Link2 className="h-7 w-7 sm:h-8 sm:w-8" />
+   580→   580→      </div>
+   581→   581→      <div className="space-y-3">
+   582→   582→        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl md:text-4xl">
+   583→   583→          Link your trading account to begin
+   584→   584→        </h1>
+   585→   585→        <p className="mx-auto max-w-xl text-sm text-muted-foreground sm:text-base">
+   586→   586→          Fovi connects to your broker, then lets an AI strategist analyze the market and
+   587→   587→          execute trades automatically — with professional reasoning, take-profit, stop-loss, and
+   588→   588→          disciplined risk management on every position.
+   589→   589→        </p>
+   590→   590→      </div>
+   591→   591→
+   592→   592→      <div className="grid w-full gap-3 text-left sm:grid-cols-3 sm:gap-4">
+   593→   593→        <Feature
+   594→   594→          icon={Link2}
+   595→   595→          title="1. Link account"
+   596→   596→          desc="Connect any supported broker via API key. Demo or live."
+   597→   597→        />
+   598→   598→        <Feature
+   599→   599→          icon={Bot}
+   600→   600→          title="2. Enable AI"
+   601→   601→          desc="Toggle the strategist on. Choose conservative, balanced, or aggressive."
+   602→   602→        />
+   603→   603→        <Feature
+   604→   604→          icon={Activity}
+   605→   605→          title="3. Auto-trade"
+   606→   606→          desc="AI analyzes, enters, and exits with TP/SL — you see every reasoning step."
+   607→   607→        />
+   608→   608→      </div>
+   609→   609→
+   610→   610→      <AccountLinking
+   611→   611→        account={account}
+   612→   612→        onLinked={onLinked}
+   613→   613→        onUnlinked={onUnlinked}
+   614→   614→        triggerVariant="default"
+   615→   615→      />
+   616→   616→
+   617→   617→      <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground sm:p-4 sm:text-sm">
+   618→   618→        Tip: use a <strong className="text-foreground">demo</strong> account type and a starting
+   619→   619→        balance to test the strategist risk-free.
+   620→   620→      </div>
+   621→   621→    </div>
+   622→   622→  );
+   623→   623→}
+   624→   624→
+   625→   625→function Feature({
+   626→   626→  icon: Icon,
+   627→   627→  title,
+   628→   628→  desc,
+   629→   629→}: {
+   630→   630→  icon: typeof Link2;
+   631→   631→  title: string;
+   632→   632→  desc: string;
+   633→   633→}) {
+   634→   634→  return (
+   635→   635→    <Card>
+   636→   636→      <CardContent className="p-4">
+   637→   637→        <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+   638→   638→          <Icon className="h-5 w-5" />
+   639→   639→        </div>
+   640→   640→        <div className="text-sm font-semibold">{title}</div>
+   641→   641→        <div className="mt-1 text-xs text-muted-foreground">{desc}</div>
+   642→   642→      </CardContent>
+   643→   643→    </Card>
+   644→   644→  );
+   645→   645→}
+   646→   646→
+   647→   647→function AuthPrompt({ onSignIn }: { onSignIn: () => void }) {
+   648→   648→  return (
+   649→   649→    <div className="mx-auto flex max-w-md flex-col items-center gap-5 py-16 text-center">
+   650→   650→      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+   651→   651→        <ShieldCheck className="h-7 w-7" />
+   652→   652→      </div>
+   653→   653→      <div className="space-y-2">
+   654→   654→        <h2 className="text-2xl font-bold tracking-tight">Authentication required</h2>
+   655→   655→        <p className="text-sm text-muted-foreground">
+   656→   656→          Fovi requires an authenticated session. Your trading account, AI decisions, and audit
+   657→   657→          trail are scoped to your account.
+   658→   658→        </p>
+   659→   659→      </div>
+   660→   660→      <Button onClick={onSignIn} className="gap-1.5">
+   661→   661→        <LogOut className="h-4 w-4 rotate-180" />
+   662→   662→        Sign in / Sign up
+   663→   663→      </Button>
+   664→   664→    </div>
+   665→   665→  );
+   666→   666→}
+   667→   667→
+   668→   668→function KillSwitchDialog({
+   669→   669→  open,
+   670→   670→  onOpenChange,
+   671→   671→  active,
+   672→   672→  onTriggered,
+   673→   673→}: {
+   674→   674→  open: boolean;
+   675→   675→  onOpenChange: (v: boolean) => void;
+   676→   676→  active: boolean;
+   677→   677→  onTriggered: () => void;
+   678→   678→}) {
+   679→   679→  const [loading, setLoading] = React.useState(false);
+   680→   680→
+   681→   681→  async function toggle(next: boolean) {
+   682→   682→    setLoading(true);
+   683→   683→    try {
+   684→   684→      const res = await fetch("/api/auth/kill-switch", {
+   685→   685→        method: "POST",
+   686→   686→        headers: { "Content-Type": "application/json" },
+   687→   687→        body: JSON.stringify({ enabled: next }),
+   688→   688→      });
+   689→   689→      if (!res.ok) throw new Error("Failed");
+   690→   690→      toast.success(
+   691→   691→        next
+   692→   692→          ? "Kill switch ON — all AI trading halted."
+   693→   693→          : "Kill switch off — you may re-enable the bot.",
+   694→   694→      );
+   695→   695→      onTriggered();
+   696→   696→      onOpenChange(false);
+   697→   697→    } catch {
+   698→   698→      toast.error("Could not toggle kill switch.");
+   699→   699→    } finally {
+   700→   700→      setLoading(false);
+   701→   701→    }
+   702→   702→  }
+   703→   703→
+   704→   704→  return (
+   705→   705→    <AlertDialog open={open} onOpenChange={onOpenChange}>
+   706→   706→      <AlertDialogContent>
+   707→   707→        <AlertDialogHeader>
+   708→   708→          <AlertDialogTitle className="flex items-center gap-2">
+   709→   709→            <OctagonAlert className="h-5 w-5 text-red-600" />
+   710→   710→            Emergency kill switch
+   711→   711→          </AlertDialogTitle>
+   712→   712→          <AlertDialogDescription>
+   713→   713→            {active
+   714→   714→              ? "The kill switch is currently ON. The AI bot cannot place new trades. Turn it off to resume (you will need to re-enable the bot manually)."
+   715→   715→              : "Activating the kill switch immediately halts the AI strategist and prevents any new trades from being placed. Open positions are NOT closed automatically — manage them manually. This is recorded in your audit log."}
+   716→   716→          </AlertDialogDescription>
+   717→   717→        </AlertDialogHeader>
+   718→   718→        <AlertDialogFooter>
+   719→   719→          <AlertDialogCancel>Cancel</AlertDialogCancel>
+   720→   720→          {active ? (
+   721→   721→            <AlertDialogAction
+   722→   722→              onClick={() => toggle(false)}
+   723→   723→              disabled={loading}
+   724→   724→              className="bg-emerald-600 hover:bg-emerald-700"
+   725→   725→            >
+   726→   726→              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   727→   727→              Turn off
+   728→   728→            </AlertDialogAction>
+   729→   729→          ) : (
+   730→   730→            <AlertDialogAction
+   731→   731→              onClick={() => toggle(true)}
+   732→   732→              disabled={loading}
+   733→   733→              className="bg-red-600 hover:bg-red-700"
+   734→   734→            >
+   735→   735→              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   736→   736→              Activate kill switch
+   737→   737→            </AlertDialogAction>
+   738→   738→          )}
+   739→   739→        </AlertDialogFooter>
+   740→   740→      </AlertDialogContent>
+   741→   741→    </AlertDialog>
+   742→   742→  );
+   743→   743→}
+   744→   744→
+   745→   745→export function Terminal() {
+   746→   746→  return (
+   747→   747→    <MarketProvider>
+   748→   748→      <TerminalInner />
+   749→   749→    </MarketProvider>
+   750→   750→  );
+   751→   751→}
+   752→   752→
