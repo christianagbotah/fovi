@@ -1,0 +1,856 @@
+     1→'use client';
+     2→
+     3→import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import {
+     6→  LayoutDashboard, TrendingUp, TrendingDown, BarChart3, Search,
+     7→  Menu, Wallet, Zap, Sparkles, Plus, RefreshCw, Bell, Settings, MessageSquare, ArrowUpRight,
+     8→  ArrowDownRight, Activity, Wifi, WifiOff, ChevronRight, X, Send, Loader2,
+     9→  Shield, Target, Trophy, Clock, Radio, Briefcase,
+    10→} from 'lucide-react';
+    11→import { useTradingStore } from '@/lib/store/trading-store';
+    12→import { AccountSwitcher } from '@/components/trading/account-switcher';
+    13→import { PriceChart } from '@/components/trading/price-chart';
+    14→import { PositionsPanel } from '@/components/trading/positions-panel';
+    15→import { SignalsPanel } from '@/components/trading/signals-panel';
+    16→import { OrderForm } from '@/components/trading/order-form';
+    17→import { MarketOverview } from '@/components/trading/market-overview';
+    18→import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
+    19→import { Button } from '@/components/ui/button';
+    20→import { Badge } from '@/components/ui/badge';
+    21→import { Card, CardContent } from '@/components/ui/card';
+    22→import { ScrollArea } from '@/components/ui/scroll-area';
+    23→import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+    24→import { formatPnl, formatPrice, formatVolume } from '@/lib/market-sim';
+    25→import { useMarketSocket } from '@/hooks/use-market-socket';
+    26→
+    27→// ============================================================
+    28→// Mobile Bottom Tab Bar
+    29→// ============================================================
+    30→const MOBILE_TABS = [
+    31→  { id: 'dashboard', label: 'Trade', icon: LayoutDashboard },
+    32→  { id: 'signals', label: 'Signals', icon: Sparkles },
+    33→  { id: 'positions', label: 'Positions', icon: Wallet },
+    34→  { id: 'markets', label: 'Markets', icon: Search },
+    35→];
+    36→
+    37→function MobileTabBar() {
+    38→  const { activeTab, setActiveTab, setOrderSheetOpen, aiChatOpen, setAiChatOpen, wsConnected } = useTradingStore();
+    39→
+    40→  return (
+    41→    <div className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-background/95 backdrop-blur-xl border-t border-border safe-area-pb">
+    42→      <div className="flex items-center justify-around h-16">
+    43→        {MOBILE_TABS.map(tab => {
+    44→          const Icon = tab.icon;
+    45→          const isActive = activeTab === tab.id;
+    46→          return (
+    47→            <button
+    48→              key={tab.id}
+    49→              onClick={() => setActiveTab(tab.id)}
+    50→              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg transition-all duration-200 ${
+    51→                isActive ? 'text-primary scale-105' : 'text-muted-foreground'
+    52→              }`}
+    53→            >
+    54→              <Icon className={`h-5 w-5 ${isActive ? 'stroke-[2.5px]' : ''}`} />
+    55→              <span className="text-[10px] font-medium">{tab.label}</span>
+    56→            </button>
+    57→          );
+    58→        })}
+    59→        <button
+    60→          onClick={() => setOrderSheetOpen(true)}
+    61→          className="flex flex-col items-center gap-0.5 px-3 py-1.5"
+    62→        >
+    63→          <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center -mt-5 shadow-lg shadow-emerald-600/30 active:scale-95 transition-transform">
+    64→            <Plus className="h-5 w-5 text-white" />
+    65→          </div>
+    66→          <span className="text-[10px] font-medium text-emerald-500">Trade</span>
+    67→        </button>
+    68→        <button
+    69→          onClick={() => setAiChatOpen(!aiChatOpen)}
+    70→          className={`flex flex-col items-center gap-0.5 px-3 py-1.5 transition-colors ${
+    71→            aiChatOpen ? 'text-primary' : 'text-muted-foreground'
+    72→          }`}
+    73→        >
+    74→          <div className="relative">
+    75→            <MessageSquare className="h-5 w-5" />
+    76→            {wsConnected && (
+    77→              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500" />
+    78→            )}
+    79→          </div>
+    80→          <span className="text-[10px] font-medium">AI</span>
+    81→        </button>
+    82→      </div>
+    83→    </div>
+    84→  );
+    85→}
+    86→
+    87→// ============================================================
+    88→// Portfolio Summary Cards - Enhanced
+    89→// ============================================================
+    90→function PortfolioCards() {
+    91→  const { portfolio, wsConnected } = useTradingStore();
+    92→  if (!portfolio) return null;
+    93→
+    94→  const isPnlUp = portfolio.dayPnl >= 0;
+    95→  const isTotalUp = portfolio.totalPnl >= 0;
+    96→
+    97→  const cards = [
+    98→    {
+    99→      label: 'Portfolio Value',
+   100→      value: `$${portfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+   101→      sub: `${isPnlUp ? '+' : ''}${portfolio.dayPnlPercent.toFixed(2)}% today`,
+   102→      color: isPnlUp ? 'text-emerald-500' : 'text-red-500',
+   103→      icon: Wallet,
+   104→      bg: isPnlUp ? 'bg-emerald-500/5' : 'bg-red-500/5',
+   105→    },
+   106→    {
+   107→      label: 'Unrealized P&L',
+   108→      value: formatPnl(portfolio.totalPnl),
+   109→      sub: `${isTotalUp ? '+' : ''}${portfolio.totalPnlPercent.toFixed(2)}%`,
+   110→      color: isTotalUp ? 'text-emerald-500' : 'text-red-500',
+   111→      icon: isTotalUp ? TrendingUp : TrendingDown,
+   112→      bg: isTotalUp ? 'bg-emerald-500/5' : 'bg-red-500/5',
+   113→    },
+   114→    {
+   115→      label: 'Open Positions',
+   116→      value: String(portfolio.openPositions),
+   117→      sub: `${portfolio.totalTrades} total trades`,
+   118→      color: 'text-foreground',
+   119→      icon: BarChart3,
+   120→      bg: 'bg-muted/30',
+   121→    },
+   122→    {
+   123→      label: 'AI Win Rate',
+   124→      value: `${portfolio.winRate.toFixed(0)}%`,
+   125→      sub: `${portfolio.activeSignals} active signals`,
+   126→      color: portfolio.winRate >= 50 ? 'text-amber-500' : 'text-orange-500',
+   127→      icon: Trophy,
+   128→      bg: 'bg-amber-500/5',
+   129→    },
+   130→  ];
+   131→
+   132→  return (
+   133→    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3">
+   134→      {cards.map(card => {
+   135→        const Icon = card.icon;
+   136→        return (
+   137→          <Card key={card.label} className={`${card.bg} border-border/30 overflow-hidden`}>
+   138→            <CardContent className="p-3 lg:p-4">
+   139→              <div className="flex items-center justify-between mb-1.5">
+   140→                <div className="flex items-center gap-1.5">
+   141→                  <Icon className={`h-3.5 w-3.5 ${card.color}`} />
+   142→                  <span className="text-[11px] text-muted-foreground font-medium">{card.label}</span>
+   143→                </div>
+   144→                {wsConnected && (
+   145→                  <span className="flex items-center gap-0.5 text-[9px] text-emerald-500 font-medium">
+   146→                    <Radio className="h-2.5 w-2.5" /> LIVE
+   147→                  </span>
+   148→                )}
+   149→              </div>
+   150→              <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${card.color}`}>{card.value}</p>
+   151→              <p className="text-[11px] text-muted-foreground mt-0.5">{card.sub}</p>
+   152→            </CardContent>
+   153→          </Card>
+   154→        );
+   155→      })}
+   156→    </div>
+   157→  );
+   158→}
+   159→
+   160→// ============================================================
+   161→// Quick Trade Buttons (Mobile - visible on market symbols)
+   162→// ============================================================
+   163→function QuickTradeButtons({ symbol, name }: { symbol: string; name: string }) {
+   164→  const { setOrderSheetOpen, setOrderSymbol } = useTradingStore();
+   165→
+   166→  const handleTrade = (side: 'buy' | 'sell') => {
+   167→    setOrderSymbol(symbol);
+   168→    setOrderSheetOpen(true);
+   169→  };
+   170→
+   171→  return (
+   172→    <div className="flex gap-2">
+   173→      <Button size="sm" className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium"
+   174→        onClick={(e) => { e.stopPropagation(); handleTrade('buy'); }}>
+   175→        Buy
+   176→      </Button>
+   177→      <Button size="sm" variant="outline" className="h-8 px-3 text-red-500 border-red-500/30 hover:bg-red-500/10 text-xs font-medium"
+   178→        onClick={(e) => { e.stopPropagation(); handleTrade('sell'); }}>
+   179→        Sell
+   180→      </Button>
+   181→    </div>
+   182→  );
+   183→}
+   184→
+   185→// ============================================================
+   186→// Ticker Strip - Live scrolling prices
+   187→// ============================================================
+   188→function TickerStrip() {
+   189→  const { livePrices, allSymbols, wsConnected, setSelectedSymbol, setAllSymbols } = useTradingStore();
+   190→  const prices = livePrices.length > 0 ? livePrices : allSymbols;
+   191→  const topMovers = useMemo(() =>
+   192→    [...prices].sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent)).slice(0, 10),
+   193→    [prices]
+   194→  );
+   195→
+   196→  // Sync WebSocket prices to allSymbols in the store
+   197→  useEffect(() => {
+   198→    if (livePrices.length > 0) setAllSymbols(livePrices);
+   199→  }, [livePrices, setAllSymbols]);
+   200→
+   201→  if (topMovers.length === 0) return null;
+   202→
+   203→  return (
+   204→    <div className="border-b border-border/50 bg-muted/20">
+   205→      <ScrollArea className="w-full">
+   206→        <div className="flex gap-4 px-4 py-1.5 min-w-max">
+   207→          {wsConnected && (
+   208→            <span className="flex items-center gap-1 text-[10px] text-emerald-500 font-semibold shrink-0">
+   209→              <Radio className="h-3 w-3" /> LIVE
+   210→            </span>
+   211→          )}
+   212→          {topMovers.map(sym => {
+   213→            const isUp = sym.changePercent >= 0;
+   214→            return (
+   215→              <button
+   216→                key={sym.symbol}
+   217→                onClick={() => setSelectedSymbol(sym.symbol)}
+   218→                className="flex items-center gap-1.5 shrink-0 hover:opacity-80 transition-opacity"
+   219→              >
+   220→                <span className="text-[11px] font-semibold">{sym.symbol}</span>
+   221→                <span className={`text-[11px] font-medium tabular-nums ${isUp ? 'text-emerald-500' : 'text-red-500'}`}>
+   222→                  {formatPrice(sym.price, sym.symbol)}
+   223→                </span>
+   224→                <span className={`text-[10px] font-medium tabular-nums ${isUp ? 'text-emerald-500' : 'text-red-500'}`}>
+   225→                  {isUp ? '+' : ''}{sym.changePercent.toFixed(2)}%
+   226→                </span>
+   227→              </button>
+   228→            );
+   229→          })}
+   230→        </div>
+   231→      </ScrollArea>
+   232→    </div>
+   233→  );
+   234→}
+   235→
+   236→// ============================================================
+   237→// AI Chat Sheet - Enhanced with real LLM
+   238→// ============================================================
+   239→function AiChatSheet() {
+   240→  const { aiChatOpen, setAiChatOpen, selectedSymbol, portfolio, positions, signals, wsConnected } = useTradingStore();
+   241→  const [messages, setMessages] = useState<{ role: string; content: string }[]>([
+   242→    { role: 'assistant', content: `Welcome to **Fovi AI**. I'm your intelligent trading assistant with real-time market analysis capabilities.\n\nI can help you with:\n• **Technical Analysis** — RSI, MACD, Bollinger Bands, patterns\n• **Trade Ideas** — Entry, stop-loss, take-profit levels\n• **Risk Management** — Position sizing and portfolio analysis\n• **Market Insights** — Real-time market commentary\n\nTry asking: "Analyze AAPL" or "What's the crypto market doing?"` },
+   243→  ]);
+   244→  const [input, setInput] = useState('');
+   245→  const [sending, setSending] = useState(false);
+   246→  const scrollRef = useRef<HTMLDivElement>(null);
+   247→  const inputRef = useRef<HTMLInputElement>(null);
+   248→  const sessionId = useRef(`session_${Date.now()}`);
+   249→
+   250→  useEffect(() => {
+   251→    if (scrollRef.current) {
+   252→      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+   253→    }
+   254→  }, [messages]);
+   255→
+   256→  useEffect(() => {
+   257→    if (aiChatOpen && inputRef.current) {
+   258→      setTimeout(() => inputRef.current?.focus(), 300);
+   259→    }
+   260→  }, [aiChatOpen]);
+   261→
+   262→  const handleSend = useCallback(async () => {
+   263→    if (!input.trim() || sending) return;
+   264→    const userMsg = input.trim();
+   265→    setInput('');
+   266→    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+   267→    setSending(true);
+   268→
+   269→    try {
+   270→      const res = await fetch('/api/trading/ai-chat', {
+   271→        method: 'POST',
+   272→        headers: { 'Content-Type': 'application/json' },
+   273→        body: JSON.stringify({ message: userMsg, sessionId: sessionId.current }),
+   274→      });
+   275→      const data = await res.json();
+   276→      if (data.success) {
+   277→        setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+   278→      } else {
+   279→        setMessages(prev => [...prev, { role: 'assistant', content: `Sorry, I encountered an error: ${data.error}. Please try again.` }]);
+   280→      }
+   281→    } catch {
+   282→      setMessages(prev => [...prev, { role: 'assistant', content: 'I\'m having trouble connecting. Please check your connection and try again.' }]);
+   283→    } finally {
+   284→      setSending(false);
+   285→    }
+   286→  }, [input, sending]);
+   287→
+   288→  const quickActions = [
+   289→    { label: `Analyze ${selectedSymbol || 'AAPL'}`, prompt: `Give me a detailed technical analysis of ${selectedSymbol || 'AAPL'} with trade recommendations` },
+   290→    { label: 'Market Overview', prompt: 'Give me a summary of the current market conditions across all asset classes' },
+   291→    { label: 'Risk Check', prompt: 'Analyze my current portfolio risk and suggest adjustments' },
+   292→  ];
+   293→
+   294→  return (
+   295→    <Sheet open={aiChatOpen} onOpenChange={setAiChatOpen}>
+   296→      <SheetContent side="right" className="w-full sm:max-w-md p-0 flex flex-col">
+   297→        {/* Header */}
+   298→        <SheetHeader className="px-4 pt-4 pb-3 border-b border-border shrink-0">
+   299→          <SheetTitle className="flex items-center gap-2">
+   300→            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
+   301→              <Sparkles className="h-4 w-4 text-white" />
+   302→            </div>
+   303→            <div className="flex-1">
+   304→              <div className="flex items-center gap-2">
+   305→                <span className="font-bold">Fovi AI</span>
+   306→                {wsConnected && (
+   307→                  <span className="flex items-center gap-1 text-[10px] text-emerald-500 font-medium">
+   308→                    <Wifi className="h-3 w-3" /> Connected
+   309→                  </span>
+   310→                )}
+   311→              </div>
+   312→              <p className="text-xs text-muted-foreground">AI Trading Assistant</p>
+   313→            </div>
+   314→            <Button variant="ghost" size="icon" className="h-8 w-8"
+   315→              onClick={() => setMessages([{ role: 'assistant', content: 'Conversation cleared. How can I help you with your trading today?' }])}>
+   316→              <RefreshCw className="h-4 w-4" />
+   317→            </Button>
+   318→          </SheetTitle>
+   319→        </SheetHeader>
+   320→
+   321→        {/* Messages */}
+   322→        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+   323→          {messages.map((msg, i) => (
+   324→            <motion.div
+   325→              key={i}
+   326→              initial={{ opacity: 0, y: 10 }}
+   327→              animate={{ opacity: 1, y: 0 }}
+   328→              transition={{ duration: 0.2 }}
+   329→              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+   330→            >
+   331→              <div className={`max-w-[88%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+   332→                msg.role === 'user'
+   333→                  ? 'bg-primary text-primary-foreground rounded-br-md'
+   334→                  : 'bg-muted rounded-bl-md'
+   335→              }`}>
+   336→                <MarkdownContent content={msg.content} />
+   337→              </div>
+   338→            </motion.div>
+   339→          ))}
+   340→          {sending && (
+   341→            <div className="flex justify-start">
+   342→              <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
+   343→                <div className="flex items-center gap-2">
+   344→                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+   345→                  <span className="text-xs text-muted-foreground">Fovi AI is analyzing...</span>
+   346→                </div>
+   347→              </div>
+   348→            </div>
+   349→          )}
+   350→        </div>
+   351→
+   352→        {/* Quick Actions (show when few messages) */}
+   353→        {messages.length <= 2 && !sending && (
+   354→          <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
+   355→            {quickActions.map(action => (
+   356→              <button
+   357→                key={action.label}
+   358→                onClick={() => { setInput(action.prompt); }}
+   359→                className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-full border border-border hover:bg-accent transition-colors"
+   360→              >
+   361→                {action.label}
+   362→              </button>
+   363→            ))}
+   364→          </div>
+   365→        )}
+   366→
+   367→        {/* Input */}
+   368→        <div className="p-3 border-t border-border shrink-0">
+   369→          <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2">
+   370→            <input
+   371→              ref={inputRef}
+   372→              value={input}
+   373→              onChange={e => setInput(e.target.value)}
+   374→              placeholder="Ask about any market, signal, or trade..."
+   375→              className="flex-1 h-10 px-4 rounded-xl bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50 transition-shadow"
+   376→              disabled={sending}
+   377→            />
+   378→            <Button type="submit" size="icon" disabled={sending || !input.trim()} className="h-10 w-10 rounded-xl">
+   379→              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+   380→            </Button>
+   381→          </form>
+   382→          <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
+   383→            AI-generated analysis. Not financial advice. Always do your own research.
+   384→          </p>
+   385→        </div>
+   386→      </SheetContent>
+   387→    </Sheet>
+   388→  );
+   389→}
+   390→
+   391→// ============================================================
+   392→// Simple Markdown renderer (no external dep needed)
+   393→// ============================================================
+   394→function MarkdownContent({ content }: { content: string }) {
+   395→  const lines = content.split('\n');
+   396→  return (
+   397→    <>
+   398→      {lines.map((line, j) => {
+   399→        if (!line.trim()) return <br key={j} />;
+   400→        if (line.startsWith('### ')) return <h4 key={j} className="font-bold text-sm mt-3 mb-1">{line.slice(4)}</h4>;
+   401→        if (line.startsWith('## ')) return <h3 key={j} className="font-bold text-base mt-3 mb-1">{line.slice(3)}</h3>;
+   402→        if (line.startsWith('**') && line.endsWith('**')) return <p key={j} className="font-bold mt-2 first:mt-0">{line.replace(/\*\*/g, '')}</p>;
+   403→        if (line.startsWith('- ') || line.startsWith('* ')) {
+   404→          const text = line.slice(2);
+   405→          // Handle inline bold
+   406→          const parts = text.split(/(\*\*[^*]+\*\*)/);
+   407→          return (
+   408→            <p key={j} className="ml-2 flex items-start gap-1">
+   409→              <span className="text-primary mt-0.5">•</span>
+   410→              <span>{parts.map((part, k) =>
+   411→                part.startsWith('**') && part.endsWith('**')
+   412→                  ? <strong key={k}>{part.replace(/\*\*/g, '')}</strong>
+   413→                  : part
+   414→              )}</span>
+   415→            </p>
+   416→          );
+   417→        }
+   418→        // Inline formatting
+   419→        const parts = line.split(/(\*\*[^*]+\*\*)/);
+   420→        if (line.startsWith('*') && line.endsWith('*') && !line.includes(' ')) {
+   421→          return <p key={j} className="text-xs opacity-60 mt-2 italic">{line.replace(/\*/g, '')}</p>;
+   422→        }
+   423→        return <p key={j}>{parts.map((part, k) =>
+   424→          part.startsWith('**') && part.endsWith('**')
+   425→            ? <strong key={k}>{part.replace(/\*\*/g, '')}</strong>
+   426→            : part
+   427→        )}</p>;
+   428→      })}
+   429→    </>
+   430→  );
+   431→}
+   432→
+   433→// ============================================================
+   434→// Settings Sheet - Broker Connect
+   435→// ============================================================
+   436→function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+   437→  const { accounts, setAccounts } = useTradingStore();
+   438→  const [connecting, setConnecting] = useState(false);
+   439→  const [broker, setBroker] = useState('alpaca');
+   440→  const [apiKey, setApiKey] = useState('');
+   441→  const [apiSecret, setApiSecret] = useState('');
+   442→  const [accountType, setAccountType] = useState('demo');
+   443→
+   444→  const handleConnect = async () => {
+   445→    if (!apiKey || !apiSecret) return;
+   446→    setConnecting(true);
+   447→    try {
+   448→      const res = await fetch('/api/trading/accounts', {
+   449→        method: 'POST',
+   450→        headers: { 'Content-Type': 'application/json' },
+   451→        body: JSON.stringify({ broker, accountType, apiKey, apiSecret }),
+   452→      });
+   453→      if (res.ok) {
+   454→        const accs = await (await fetch('/api/trading/accounts')).json();
+   455→        setAccounts(accs);
+   456→        setApiKey(''); setApiSecret('');
+   457→        onOpenChange(false);
+   458→      }
+   459→    } catch { /* */ } finally { setConnecting(false); }
+   460→  };
+   461→
+   462→  return (
+   463→    <Sheet open={open} onOpenChange={onOpenChange}>
+   464→      <SheetContent side="right" className="w-full sm:max-w-md">
+   465→        <SheetHeader className="pb-4">
+   466→          <SheetTitle className="flex items-center gap-2">
+   467→            <Settings className="h-5 w-5" />
+   468→            Settings & Brokers
+   469→          </SheetTitle>
+   470→        </SheetHeader>
+   471→
+   472→        <div className="space-y-6 pb-8">
+   473→          {/* Connected Accounts */}
+   474→          <div>
+   475→            <h3 className="text-sm font-semibold mb-3">Connected Accounts</h3>
+   476→            <div className="space-y-2">
+   477→              {accounts.map(acc => (
+   478→                <div key={acc.id} className="flex items-center gap-3 p-3 rounded-xl bg-muted/50 border border-border/50">
+   479→                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+   480→                    acc.accountType === 'live' ? 'bg-emerald-500/15' : 'bg-amber-500/15'
+   481→                  }`}>
+   482→                    <Briefcase className={`h-4 w-4 ${acc.accountType === 'live' ? 'text-emerald-500' : 'text-amber-500'}`} />
+   483→                  </div>
+   484→                  <div className="flex-1 min-w-0">
+   485→                    <div className="flex items-center gap-2">
+   486→                      <span className="text-sm font-semibold">{acc.broker.toUpperCase()}</span>
+   487→                      <Badge variant={acc.accountType === 'live' ? 'default' : 'secondary'}
+   488→                        className={`text-[10px] h-5 ${acc.accountType === 'live'
+   489→                          ? 'bg-emerald-500/10 text-emerald-500'
+   490→                          : 'bg-amber-500/10 text-amber-500'}`}>
+   491→                        {acc.accountType}
+   492→                      </Badge>
+   493→                      {acc.isDefault && <Badge variant="outline" className="text-[10px] h-5">DEFAULT</Badge>}
+   494→                    </div>
+   495→                    <p className="text-xs text-muted-foreground">${acc.balance.toLocaleString()}</p>
+   496→                  </div>
+   497→                </div>
+   498→              ))}
+   499→            </div>
+   500→          </div>
+   501→
+   502→          {/* Connect New Broker */}
+   503→          <div>
+   504→            <h3 className="text-sm font-semibold mb-3">Connect Broker</h3>
+   505→            <div className="space-y-3 p-4 rounded-xl border border-border/50 bg-card">
+   506→              <div className="grid grid-cols-3 gap-2">
+   507→                {(['alpaca', 'binance', 'deriv'] as const).map(b => (
+   508→                  <button key={b} onClick={() => setBroker(b)}
+   509→                    className={`p-2.5 rounded-lg text-xs font-medium border transition-colors ${
+   510→                      broker === b ? 'bg-primary/10 border-primary text-primary' : 'border-border hover:bg-accent'
+   511→                    }`}>
+   512→                    {b.charAt(0).toUpperCase() + b.slice(1)}
+   513→                  </button>
+   514→                ))}
+   515→              </div>
+   516→
+   517→              <div className="grid grid-cols-2 gap-2">
+   518→                <button onClick={() => setAccountType('demo')}
+   519→                  className={`p-2 rounded-lg text-xs font-medium border transition-colors ${
+   520→                    accountType === 'demo' ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 'border-border'
+   521→                  }`}>
+   522→                  Demo / Paper
+   523→                </button>
+   524→                <button onClick={() => setAccountType('live')}
+   525→                  className={`p-2 rounded-lg text-xs font-medium border transition-colors ${
+   526→                    accountType === 'live' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500' : 'border-border'
+   527→                  }`}>
+   528→                  Live Trading
+   529→                </button>
+   530→              </div>
+   531→
+   532→              <div className="space-y-2">
+   533→                <label className="text-xs text-muted-foreground">API Key</label>
+   534→                <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+   535→                  placeholder="Enter your API key"
+   536→                  className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+   537→              </div>
+   538→              <div className="space-y-2">
+   539→                <label className="text-xs text-muted-foreground">API Secret</label>
+   540→                <input type="password" value={apiSecret} onChange={e => setApiSecret(e.target.value)}
+   541→                  placeholder="Enter your API secret"
+   542→                  className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+   543→              </div>
+   544→
+   545→              <Button onClick={handleConnect} disabled={connecting || !apiKey || !apiSecret} className="w-full">
+   546→                {connecting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Shield className="h-4 w-4 mr-2" />}
+   547→                Connect {broker.charAt(0).toUpperCase() + broker.slice(1)}
+   548→              </Button>
+   549→
+   550→              {accountType === 'live' && (
+   551→                <p className="text-[10px] text-red-500 flex items-center gap-1">
+   552→                  <Shield className="h-3 w-3" /> Live trading uses real money. Ensure you understand the risks.
+   553→                </p>
+   554→              )}
+   555→            </div>
+   556→          </div>
+   557→
+   558→          {/* Platform Info */}
+   559→          <div className="p-4 rounded-xl bg-muted/30 border border-border/30">
+   560→            <h4 className="text-xs font-semibold mb-2">About Fovi AI</h4>
+   561→            <p className="text-xs text-muted-foreground leading-relaxed">
+   562→              Fovi is a world-class AI auto-trading platform combining technical analysis,
+   563→              machine learning signals, and real-time market data. Connect your preferred
+   564→              broker to start trading with AI assistance.
+   565→            </p>
+   566→            <div className="flex gap-2 mt-3">
+   567→              <Badge variant="outline" className="text-[10px]">v1.0.0</Badge>
+   568→              <Badge variant="outline" className="text-[10px]">Next.js 16</Badge>
+   569→              <Badge variant="outline" className="text-[10px]">Prisma</Badge>
+   570→            </div>
+   571→          </div>
+   572→        </div>
+   573→      </SheetContent>
+   574→    </Sheet>
+   575→  );
+   576→}
+   577→
+   578→// ============================================================
+   579→// Desktop Sidebar
+   580→// ============================================================
+   581→function DesktopSidebar() {
+   582→  const { activeTab, setActiveTab, setOrderSheetOpen } = useTradingStore();
+   583→
+   584→  const sidebarItems = [
+   585→    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+   586→    { id: 'markets', label: 'Markets', icon: Search },
+   587→    { id: 'positions', label: 'Positions', icon: Wallet },
+   588→    { id: 'signals', label: 'AI Signals', icon: Sparkles },
+   589→  ];
+   590→
+   591→  return (
+   592→    <aside className="hidden lg:flex flex-col w-56 border-r border-border bg-card/30 shrink-0">
+   593→      <div className="p-4">
+   594→        <div className="flex items-center gap-2.5">
+   595→          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20">
+   596→            <Zap className="h-5 w-5 text-primary-foreground" />
+   597→          </div>
+   598→          <div>
+   599→            <h1 className="font-bold text-base tracking-tight">Fovi AI</h1>
+   600→            <p className="text-[10px] text-muted-foreground font-medium">Auto-Trading Platform</p>
+   601→          </div>
+   602→        </div>
+   603→      </div>
+   604→
+   605→      <nav className="flex-1 px-2 space-y-0.5">
+   606→        {sidebarItems.map(item => {
+   607→          const Icon = item.icon;
+   608→          const isActive = activeTab === item.id;
+   609→          return (
+   610→            <button
+   611→              key={item.id}
+   612→              onClick={() => setActiveTab(item.id)}
+   613→              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+   614→                isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+   615→              }`}
+   616→            >
+   617→              <Icon className="h-4 w-4" />
+   618→              {item.label}
+   619→            </button>
+   620→          );
+   621→        })}
+   622→      </nav>
+   623→
+   624→      <div className="p-3 border-t border-border">
+   625→        <Button className="w-full gap-2" onClick={() => setOrderSheetOpen(true)}>
+   626→          <Plus className="h-4 w-4" /> New Trade
+   627→        </Button>
+   628→      </div>
+   629→    </aside>
+   630→  );
+   631→}
+   632→
+   633→// ============================================================
+   634→// Main Trading Dashboard Page
+   635→// ============================================================
+   636→export default function TradingDashboard() {
+   637→  const {
+   638→    activeTab, setAccounts, setPortfolio, setAllSymbols, setLivePrices, setWsConnected,
+   639→    accounts, livePrices, allSymbols,
+   640→  } = useTradingStore();
+   641→  const [settingsOpen, setSettingsOpen] = useState(false);
+   642→
+   643→  // WebSocket market data
+   644→  const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
+   645→
+   646→  // Sync WebSocket data to store
+   647→  useEffect(() => {
+   648→    if (wsPrices.length > 0) {
+   649→      setLivePrices(wsPrices);
+   650→      setWsConnected(wsConnected);
+   651→    }
+   652→  }, [wsPrices, wsConnected, setLivePrices, setWsConnected]);
+   653→
+   654→  // Periodic data refresh
+   655→  useEffect(() => {
+   656→    async function loadData() {
+   657→      try {
+   658→        const [accRes, portRes, symRes] = await Promise.all([
+   659→          fetch('/api/trading/accounts'),
+   660→          fetch('/api/trading/portfolio'),
+   661→          fetch('/api/trading/market/symbols'),
+   662→        ]);
+   663→        if (accRes.ok) setAccounts(await accRes.json());
+   664→        if (portRes.ok) setPortfolio(await portRes.json());
+   665→        if (symRes.ok) setAllSymbols(await symRes.json());
+   666→      } catch { /* */ }
+   667→    }
+   668→    loadData();
+   669→    const interval = setInterval(loadData, 15000);
+   670→    return () => clearInterval(interval);
+   671→  }, [setAccounts, setPortfolio, setAllSymbols]);
+   672→
+   673→  return (
+   674→    <div className="min-h-screen flex flex-col bg-background">
+   675→      {/* ====== TOP BAR ====== */}
+   676→      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-xl border-b border-border/50">
+   677→        <div className="flex items-center justify-between h-14 px-4">
+   678→          <div className="flex items-center gap-3">
+   679→            <button className="lg:hidden" onClick={() => setSettingsOpen(true)}>
+   680→              <Menu className="h-5 w-5" />
+   681→            </button>
+   682→            <div className="flex items-center gap-2 lg:hidden">
+   683→              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
+   684→                <Zap className="h-4 w-4 text-primary-foreground" />
+   685→              </div>
+   686→              <span className="font-bold text-lg">Fovi</span>
+   687→            </div>
+   688→            <AccountSwitcher />
+   689→          </div>
+   690→
+   691→          <div className="flex items-center gap-1.5">
+   692→            {wsConnected ? (
+   693→              <span className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-500 text-[10px] font-semibold">
+   694→                <Wifi className="h-3 w-3" /> LIVE
+   695→              </span>
+   696→            ) : (
+   697→              <span className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-muted text-muted-foreground text-[10px] font-semibold">
+   698→                <WifiOff className="h-3 w-3" /> DEMO
+   699→              </span>
+   700→            )}
+   701→            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => window.location.reload()}>
+   702→              <RefreshCw className="h-4 w-4" />
+   703→            </Button>
+   704→            <Button variant="ghost" size="icon" className="h-9 w-9 relative">
+   705→              <Bell className="h-4 w-4" />
+   706→              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">3</span>
+   707→            </Button>
+   708→            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setSettingsOpen(true)}>
+   709→              <Settings className="h-4 w-4" />
+   710→            </Button>
+   711→          </div>
+   712→        </div>
+   713→      </header>
+   714→
+   715→      {/* ====== TICKER STRIP ====== */}
+   716→      <TickerStrip />
+   717→
+   718→      {/* ====== MAIN LAYOUT ====== */}
+   719→      <div className="flex-1 flex overflow-hidden">
+   720→        {/* Desktop Sidebar */}
+   721→        <DesktopSidebar />
+   722→
+   723→        {/* Main Content */}
+   724→        <main className="flex-1 overflow-y-auto pb-20 lg:pb-4">
+   725→          <AnimatePresence mode="wait">
+   726→            {/* ====== DASHBOARD TAB ====== */}
+   727→            {activeTab === 'dashboard' && (
+   728→              <motion.div
+   729→                key="dashboard"
+   730→                initial={{ opacity: 0, y: 8 }}
+   731→                animate={{ opacity: 1, y: 0 }}
+   732→                exit={{ opacity: 0, y: -8 }}
+   733→                transition={{ duration: 0.15 }}
+   734→                className="h-full"
+   735→              >
+   736→                <div className="p-4 pb-2">
+   737→                  <PortfolioCards />
+   738→                </div>
+   739→
+   740→                <div className="flex flex-col lg:flex-row gap-3 p-4 pt-2">
+   741→                  <Card className="flex-1 min-h-[400px] lg:min-h-[500px] overflow-hidden">
+   742→                    <PriceChart />
+   743→                  </Card>
+   744→
+   745→                  <Card className="hidden lg:block w-80 overflow-hidden">
+   746→                    <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+   747→                      <div className="flex items-center gap-2">
+   748→                        <Sparkles className="h-4 w-4 text-amber-500" />
+   749→                        <h3 className="text-sm font-semibold">AI Signals</h3>
+   750→                      </div>
+   751→                      <Badge variant="outline" className="text-[10px] h-5 bg-amber-500/5 text-amber-500 border-amber-500/20">
+   752→                        AI Powered
+   753→                      </Badge>
+   754→                    </div>
+   755→                    <div className="h-[calc(100%-49px)] overflow-y-auto">
+   756→                      <SignalsPanel />
+   757→                    </div>
+   758→                  </Card>
+   759→                </div>
+   760→
+   761→                {/* Desktop: Positions Table */}
+   762→                <div className="px-4 pb-4 hidden lg:block">
+   763→                  <Card className="overflow-hidden">
+   764→                    <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+   765→                      <div className="flex items-center gap-2">
+   766→                        <Wallet className="h-4 w-4" />
+   767→                        <h3 className="text-sm font-semibold">Open Positions</h3>
+   768→                      </div>
+   769→                      <Button size="sm" className="h-7 gap-1" onClick={() => useTradingStore.getState().setOrderSheetOpen(true)}>
+   770→                        <Plus className="h-3 w-3" /> New Trade
+   771→                      </Button>
+   772→                    </div>
+   773→                    <div className="max-h-64 overflow-y-auto">
+   774→                      <PositionsPanel />
+   775→                    </div>
+   776→                  </Card>
+   777→                </div>
+   778→              </motion.div>
+   779→            )}
+   780→
+   781→            {/* ====== SIGNALS TAB (Mobile) ====== */}
+   782→            {activeTab === 'signals' && (
+   783→              <motion.div
+   784→                key="signals"
+   785→                initial={{ opacity: 0, x: 20 }}
+   786→                animate={{ opacity: 1, x: 0 }}
+   787→                exit={{ opacity: 0, x: -20 }}
+   788→                transition={{ duration: 0.15 }}
+   789→                className="lg:hidden h-full"
+   790→              >
+   791→                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
+   792→                  <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+   793→                    <Sparkles className="h-4 w-4 text-amber-500" />
+   794→                    <h3 className="text-sm font-semibold">AI Trading Signals</h3>
+   795→                  </div>
+   796→                  <SignalsPanel />
+   797→                </Card>
+   798→              </motion.div>
+   799→            )}
+   800→
+   801→            {/* ====== POSITIONS TAB (Mobile) ====== */}
+   802→            {activeTab === 'positions' && (
+   803→              <motion.div
+   804→                key="positions"
+   805→                initial={{ opacity: 0, x: 20 }}
+   806→                animate={{ opacity: 1, x: 0 }}
+   807→                exit={{ opacity: 0, x: -20 }}
+   808→                transition={{ duration: 0.15 }}
+   809→                className="lg:hidden h-full"
+   810→              >
+   811→                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
+   812→                  <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+   813→                    <div className="flex items-center gap-2">
+   814→                      <Wallet className="h-4 w-4" />
+   815→                      <h3 className="text-sm font-semibold">Positions</h3>
+   816→                    </div>
+   817→                    <Button size="sm" className="h-7 gap-1" onClick={() => useTradingStore.getState().setOrderSheetOpen(true)}>
+   818→                      <Plus className="h-3 w-3" /> New
+   819→                    </Button>
+   820→                  </div>
+   821→                  <PositionsPanel />
+   822→                </Card>
+   823→              </motion.div>
+   824→            )}
+   825→
+   826→            {/* ====== MARKETS TAB (Mobile) ====== */}
+   827→            {activeTab === 'markets' && (
+   828→              <motion.div
+   829→                key="markets"
+   830→                initial={{ opacity: 0, x: 20 }}
+   831→                animate={{ opacity: 1, x: 0 }}
+   832→                exit={{ opacity: 0, x: -20 }}
+   833→                transition={{ duration: 0.15 }}
+   834→                className="lg:hidden h-full"
+   835→              >
+   836→                <Card className="m-4 overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
+   837→                  <MarketOverview />
+   838→                </Card>
+   839→              </motion.div>
+   840→            )}
+   841→          </AnimatePresence>
+   842→        </main>
+   843→      </div>
+   844→
+   845→      {/* ====== MOBILE BOTTOM TAB BAR ====== */}
+   846→      <MobileTabBar />
+   847→
+   848→      {/* ====== SHEETS & MODALS ====== */}
+   849→      <OrderForm />
+   850→      <SignalDetailSheet />
+   851→      <AiChatSheet />
+   852→      <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+   853→    </div>
+   854→  );
+   855→}
+   856→
