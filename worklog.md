@@ -19,6 +19,14 @@ Work Log:
 Stage Summary:
 - 8 commits pushed to origin/main
 - Rule established: commit + push after every change
+- All lost features rebuilt and pushed in 7 new commits:
+  1. a741693 - price-chart.tsx with area/candlestick/line chart types
+  2. 17470ed - production CoinGecko API for crypto market data
+  3. 790c0d5 - MobileNavSheet, scrolling fixes, SymbolDetailView
+  4. 4ef94c7 - page preloader component
+  5. 18a31f2 - comprehensive auth pages (login, 4-step signup, forgot password)
+- ESLint: 0 errors across all files
+- Local and remote in sync (verified)
 
 ---
 Task ID: 7
