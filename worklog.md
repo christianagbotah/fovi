@@ -1,5 +1,25 @@
 # Worklog
 
+## ⚠️ CRITICAL RULE — ALWAYS COMMIT + PUSH AFTER EVERY UPDATE
+**Never leave work uncommitted.** Every single code change must be `git add -A && git commit -m "..." && git push origin main` immediately.
+This was established after losing a full session's work (MobileNavSheet, scrolling fixes, SymbolDetailView, candlestick charts) that was never committed.
+
+---
+Task ID: 0
+Agent: main
+Task: Push 8 unpushed local commits, rebuild lost features, enforce commit-after-every-update rule
+
+Work Log:
+- Discovered 8 local commits never pushed to origin/main
+- Discovered previous session's UI fixes (hamburger, scrolling, symbol detail, chart types) were NEVER committed at all
+- Established rule: always git commit + push after every single update
+- Pushed 8 pending commits
+- Rebuilding all lost features...
+
+Stage Summary:
+- 8 commits pushed to origin/main
+- Rule established: commit + push after every change
+
 ---
 Task ID: 7
 Agent: main
