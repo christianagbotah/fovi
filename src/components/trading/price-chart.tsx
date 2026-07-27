@@ -318,7 +318,7 @@ export function PriceChart() {
       </div>
 
       {/* Volume Bar Chart */}
-      {candles.length > 0 && (
+      {candles.length > 0 && candles.some(c => c.volume > 0) && (
         <div className="h-16 px-2 pb-2">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData.slice(-30)} margin={{ top: 0, right: 5, bottom: 0, left: 5 }}>

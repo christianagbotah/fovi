@@ -25,7 +25,10 @@ function isPrismaUnavailable(error: unknown): boolean {
     return error.message.includes('validating datasource') ||
            error.message.includes('postgresql://') ||
            error.message.includes('ENOTFOUND') ||
-           error.message.includes('ECONNREFUSED');
+           error.message.includes('ECONNREFUSED') ||
+           error.message.includes('does not exist') ||
+           error.message.includes('relation \"') ||
+           error.message.includes('Unknown table');
   }
   return false;
 }

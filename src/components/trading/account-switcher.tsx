@@ -139,7 +139,7 @@ export function AccountSwitcher() {
           <Plus className="h-3.5 w-3.5" /> Add
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" onInteractOutside={(e: React.MouseEvent) => e.preventDefault()} onOpenAutoFocus={(e: Event) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Add Trading Account</DialogTitle>
         </DialogHeader>

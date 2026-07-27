@@ -147,3 +147,15 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 40%);
 }
+
+/* Pointer cursor on all interactive elements */
+a, button, [role="button"], [type="button"], [type="submit"], [type="reset"],
+select, summary, [tabindex]:not([tabindex="-1"]),
+[data-radix-collection-item] {
+  cursor: pointer;
+}
+
+/* Remove pointer from disabled elements */
+a[disabled], button[disabled], [disabled] {
+  cursor: not-allowed;
+}

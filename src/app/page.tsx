@@ -552,7 +552,7 @@ function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
-          <SheetTitle className="flex items-center gap-2">
+          <SheetTitle className="flex items-center gap-2 pr-8">
             <Bell className="h-5 w-5" />
             Price Alerts
             <Badge variant="secondary" className="text-[10px] ml-auto">{alerts.length}</Badge>
