@@ -1,8 +1,103 @@
+// Crypto prices from CoinGecko API (free, no key). Stocks/forex use demo data. On VPS, add TWELVEDATA_API_KEY env var for real stock data.
+
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 
 // ============================================================
-// Price Generation (copied — mini-service is independent)
+// CoinGecko Real Data — Free API, No Key Required
+// ============================================================
+
+const COINGECKO_IDS: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  SOL: 'solana',
+  BNB: 'binancecoin',
+  XRP: 'ripple',
+  DOGE: 'dogecoin',
+  ADA: 'cardano',
+  AVAX: 'avalanche-2',
+  DOT: 'polkadot',
+  LINK: 'chainlink',
+}
+
+const CRYPTO_SYMBOLS = Object.keys(COINGECKO_IDS)
+
+interface CoinGeckoMarket {
+  symbol: string
+  current_price: number
+  price_change_24h: number
+  price_change_percentage_24h: number
+  total_volume: number
+  high_24h: number
+  low_24h: number
+}
+
+// In-memory store for real crypto prices — updated every 30s
+let realCryptoPrices = new Map<string, {
+  price: number
+  change: number
+  changePercent: number
+  volume: number
+  high24h: number
+  low24h: number
+}>()
+
+async function fetchRealCryptoPrices(): Promise<Map<string, {
+  price: number
+  change: number
+  changePercent: number
+  volume: number
+  high24h: number
+  low24h: number
+}>> {
+  try {
+    const url =
+      'https://api.coingecko.com/api/v3/coins/markets' +
+      '?vs_currency=usd&order=market_cap_desc&per_page=20&page=1' +
+      '&sparkline=false&price_change_percentage=24h'
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`)
+    const data: CoinGeckoMarket[] = await res.json()
+
+    const newPrices = new Map<string, {
+      price: number
+      change: number
+      changePercent: number
+      volume: number
+      high24h: number
+      low24h: number
+    }>()
+
+    for (const coin of data) {
+      const symbol = coin.symbol?.toUpperCase()
+      if (symbol && COINGECKO_IDS[symbol]) {
+        newPrices.set(symbol, {
+          price: coin.current_price,
+          change: coin.price_change_24h ?? 0,
+          changePercent: coin.price_change_percentage_24h ?? 0,
+          volume: coin.total_volume ?? 0,
+          high24h: coin.high_24h ?? coin.current_price * 1.02,
+          low24h: coin.low_24h ?? coin.current_price * 0.98,
+        })
+      }
+    }
+
+    if (newPrices.size > 0) {
+      console.log(`[market] CoinGecko: fetched ${newPrices.size} real crypto prices`)
+      realCryptoPrices = newPrices
+    }
+  } catch (err) {
+    console.warn('[market] CoinGecko fetch failed, using demo prices:', err instanceof Error ? err.message : err)
+  }
+
+  return realCryptoPrices
+}
+
+// ============================================================
+// Price Generation (Demo Fallback)
 // ============================================================
 
 const BASE_PRICES: Record<string, number> = {
@@ -63,6 +158,27 @@ interface PriceTick {
 }
 
 function getPriceTick(symbol: string, base: number): PriceTick {
+  // Use real CoinGecko data for crypto if available
+  const cryptoData = realCryptoPrices.get(symbol)
+  if (cryptoData) {
+    // Add a tiny random micro-movement to simulate live tick changes
+    const microShift = (Math.random() - 0.5) * 0.001 * cryptoData.price
+    const price = Math.round((cryptoData.price + microShift) * 100) / 100
+    return {
+      symbol,
+      name: SYMBOL_NAMES[symbol] || symbol,
+      assetType: getAssetType(symbol),
+      price,
+      change: cryptoData.change,
+      changePercent: cryptoData.changePercent,
+      volume: cryptoData.volume,
+      high24h: cryptoData.high24h,
+      low24h: cryptoData.low24h,
+      timestamp: Date.now(),
+    }
+  }
+
+  // Demo fallback for stocks, forex, commodities, or if CoinGecko is down
   const price = randomWalkPrice(base, 0.002)
   const prevPrice = randomWalkPrice(base, 0.003)
   const change = price - prevPrice
@@ -140,10 +256,23 @@ setInterval(() => {
   io.to('market:all').emit('prices:update', { prices: allTicks, timestamp: now })
 }, 2000)
 
+// ============================================================
+// CoinGecko refresh loop — every 30 seconds
+// ============================================================
+
+setInterval(() => {
+  fetchRealCryptoPrices()
+}, 30_000)
+
 const PORT = 3003
-httpServer.listen(PORT, () => {
-  console.log(`[market] Market data service running on port ${PORT}`)
-  console.log(`[market] Streaming ${SYMBOLS.length} symbols every 2s`)
+
+// Startup: fetch real crypto prices immediately, then start server
+fetchRealCryptoPrices().then(() => {
+  httpServer.listen(PORT, () => {
+    console.log(`[market] Market data service running on port ${PORT}`)
+    console.log(`[market] Streaming ${SYMBOLS.length} symbols every 2s (crypto: CoinGecko, stocks/forex: demo)`)
+    console.log(`[market] CoinGecko refresh every 30s`)
+  })
 })
 
 process.on('SIGTERM', () => { httpServer.close(() => process.exit(0)) })
