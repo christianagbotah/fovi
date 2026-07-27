@@ -1,14 +1,18 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
+import {
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
+  ComposedChart, Line, LineChart, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
+} from 'recharts';
+import { ArrowUpRight, ArrowDownRight, AreaChart as AreaChartIcon, BarChart3, LineChart as LineChartIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTradingStore } from '@/lib/store/trading-store';
-import type { Timeframe, CandleData } from '@/lib/types';
+import type { Timeframe } from '@/lib/types';
 import { formatPrice } from '@/lib/market-sim';
 
-type ChartType = 'area' | 'candle';
+type ChartType = 'area' | 'candle' | 'line';
 
 const TIMEFRAMES: { value: Timeframe; label: string }[] = [
   { value: '1m', label: '1M' },
@@ -20,6 +24,77 @@ const TIMEFRAMES: { value: Timeframe; label: string }[] = [
   { value: '1w', label: '1W' },
 ];
 
+const CHART_TYPES: { value: ChartType; label: string; icon: React.ReactNode }[] = [
+  { value: 'area', label: 'Area', icon: <AreaChartIcon className="h-4 w-4" /> },
+  { value: 'candle', label: 'Candle', icon: <BarChart3 className="h-4 w-4" /> },
+  { value: 'line', label: 'Line', icon: <LineChartIcon className="h-4 w-4" /> },
+];
+
+const tooltipStyle: React.CSSProperties = {
+  backgroundColor: 'hsl(var(--card))',
+  border: '1px solid hsl(var(--border))',
+  borderRadius: '8px',
+  fontSize: '12px',
+};
+
+// ---------- CandlestickShape ----------
+function CandlestickShape(props: any) {
+  const { x, y, width, height, payload, background } = props;
+  if (!payload || x == null || y == null) return null;
+
+  const isUp = payload.close >= payload.open;
+  const color = isUp ? '#10b981' : '#ef4444';
+  const chartHeight = background?.height || height;
+  const yMin = background?.y || 0;
+  const yMax = yMin + chartHeight;
+
+  const range = payload.high - payload.low || 1;
+  const toY = (val: number) => yMax - ((val - payload.low) / range) * chartHeight;
+
+  const openY = toY(payload.open);
+  const closeY = toY(payload.close);
+  const highY = toY(payload.high);
+  const lowY = toY(payload.low);
+
+  const bodyTop = Math.min(openY, closeY);
+  const bodyHeight = Math.max(Math.abs(closeY - openY), 1);
+  const wickX = x + width / 2;
+
+  return (
+    <g>
+      <line x1={wickX} y1={highY} x2={wickX} y2={lowY} stroke={color} strokeWidth={1} />
+      <rect
+        x={x}
+        y={bodyTop}
+        width={width}
+        height={bodyHeight}
+        fill={color}
+        opacity={0.9}
+        stroke={color}
+        strokeWidth={0.5}
+      />
+    </g>
+  );
+}
+
+// ---------- Candlestick Tooltip ----------
+function CandleTooltipContent({ active, payload }: any) {
+  if (!active || !payload?.[0]?.payload) return null;
+  const d = payload[0].payload;
+  return (
+    <div style={tooltipStyle} className="p-2">
+      <div className="text-xs text-muted-foreground mb-1">{d.time}</div>
+      <div className="flex gap-3 text-xs tabular-nums">
+        <span>O: <b>{formatPrice(d.open, '')}</b></span>
+        <span>H: <b>{formatPrice(d.high, '')}</b></span>
+        <span>L: <b>{formatPrice(d.low, '')}</b></span>
+        <span>C: <b>{formatPrice(d.close, '')}</b></span>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Main Component ----------
 export function PriceChart() {
   const {
     selectedSymbol, selectedTimeframe, setSelectedTimeframe,
@@ -60,6 +135,14 @@ export function PriceChart() {
   const priceChange = lastCandle && prevCandle ? lastCandle.close - prevCandle.close : 0;
   const priceChangePct = prevCandle ? (priceChange / prevCandle.close) * 100 : 0;
   const isUp = priceChange >= 0;
+  const strokeColor = isUp ? '#10b981' : '#ef4444';
+
+  const candleDomain = useMemo(() => {
+    if (candles.length === 0) return ['auto', 'auto'] as [number, number];
+    const lows = candles.map(c => c.low);
+    const highs = candles.map(c => c.high);
+    return [Math.min(...lows) * 0.998, Math.max(...highs) * 1.002] as [number, number];
+  }, [candles]);
 
   const handleBuySell = (side: 'buy' | 'sell') => {
     setOrderSymbol(selectedSymbol);
@@ -73,6 +156,102 @@ export function PriceChart() {
       </div>
     );
   }
+
+  const renderChart = () => {
+    if (isLoading && !candles.length) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      );
+    }
+
+    switch (chartType) {
+      case 'area':
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
+              <defs>
+                <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={strokeColor} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={strokeColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+              <YAxis
+                domain={['auto', 'auto']}
+                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
+                tickFormatter={(v: number) => formatPrice(v, selectedSymbol || '')}
+              />
+              <Tooltip
+                contentStyle={tooltipStyle}
+                formatter={(value: number) => [formatPrice(value, selectedSymbol || ''), 'Price']}
+              />
+              <Area
+                type="monotone"
+                dataKey="close"
+                stroke={strokeColor}
+                strokeWidth={2}
+                fill="url(#priceGradient)"
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        );
+
+      case 'candle':
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+              <YAxis
+                domain={candleDomain}
+                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
+                tickFormatter={(v: number) => formatPrice(v, selectedSymbol || '')}
+              />
+              <Tooltip content={<CandleTooltipContent />} />
+              <Bar
+                dataKey="close"
+                shape={<CandlestickShape />}
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        );
+
+      case 'line':
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+              <YAxis
+                domain={['auto', 'auto']}
+                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
+                tickFormatter={(v: number) => formatPrice(v, selectedSymbol || '')}
+              />
+              <Tooltip
+                contentStyle={tooltipStyle}
+                formatter={(value: number) => [formatPrice(value, selectedSymbol || ''), 'Price']}
+              />
+              <Line
+                type="monotone"
+                dataKey="close"
+                stroke={strokeColor}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        );
+
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -100,6 +279,24 @@ export function PriceChart() {
         </div>
       </div>
 
+      {/* Chart Type Selector */}
+      <div className="flex items-center gap-1 px-4 pb-2">
+        {CHART_TYPES.map(ct => (
+          <button
+            key={ct.value}
+            onClick={() => setChartType(ct.value)}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              chartType === ct.value
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-accent'
+            }`}
+          >
+            {ct.icon}
+            <span className="hidden lg:inline">{ct.label}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Timeframe Selector */}
       <div className="flex items-center gap-1 px-4 pb-2">
         {TIMEFRAMES.map(tf => (
@@ -117,44 +314,7 @@ export function PriceChart() {
 
       {/* Chart */}
       <div className="flex-1 min-h-0 px-2 pb-2">
-        {isLoading && !candles.length ? (
-          <div className="h-full flex items-center justify-center">
-            <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-              <defs>
-                <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={isUp ? '#10b981' : '#ef4444'} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={isUp ? '#10b981' : '#ef4444'} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
-              <YAxis
-                domain={['auto', 'auto']}
-                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
-                tickFormatter={(v: number) => formatPrice(v, selectedSymbol || '')}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))',
-                  borderRadius: '8px', fontSize: '12px',
-                }}
-                formatter={(value: number) => [formatPrice(value, selectedSymbol || ''), 'Price']}
-              />
-              <Area
-                type="monotone"
-                dataKey="close"
-                stroke={isUp ? '#10b981' : '#ef4444'}
-                strokeWidth={2}
-                fill="url(#priceGradient)"
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
+        {renderChart()}
       </div>
 
       {/* Volume Bar Chart */}
@@ -162,7 +322,19 @@ export function PriceChart() {
         <div className="h-16 px-2 pb-2">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData.slice(-30)} margin={{ top: 0, right: 5, bottom: 0, left: 5 }}>
-              <Bar dataKey="volume" fill="hsl(var(--muted-foreground))" opacity={0.3} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="volume" isAnimationActive={false} radius={[2, 2, 0, 0]}>
+                {chartData.slice(-30).map((entry, idx) => (
+                  <Cell
+                    key={idx}
+                    fill={
+                      chartType === 'candle'
+                        ? (entry.close >= entry.open ? '#10b981' : '#ef4444')
+                        : 'hsl(var(--muted-foreground))'
+                    }
+                    opacity={chartType === 'candle' ? 0.5 : 0.3}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -219,3 +219,23 @@ Stage Summary:
 - getServerSession() will validate the JWT correctly because it's properly signed
 - If this still fails, the issue is with nginx/Cloudflare stripping Set-Cookie headers
 - PM2 logs will show [signin] entries for diagnostics
+---
+Task ID: 2
+Agent: Frontend Chart Expert
+Task: Rebuild price-chart.tsx with area/candlestick/line chart types
+
+Work Log:
+- Rewrote price-chart.tsx with three chart types (area, candlestick, line)
+- Implemented CandlestickShape custom Recharts shape component for OHLC rendering
+- Added chart type toggle selector (icons-only on mobile, icons+labels on desktop via hidden lg:inline)
+- Candlestick chart uses ComposedChart with custom Bar shape, Y domain from high/low with 0.2% padding
+- Candlestick tooltip shows O/H/L/C formatted prices
+- Line chart uses LineChart with monotone interpolation, strokeWidth 2, dot={false}
+- Area chart preserved with gradient fill
+- Volume bars colored green/red by candle direction when in candle mode
+- Extracted tooltipStyle constant for consistent styling across chart types
+
+Stage Summary:
+- Produced: src/components/trading/price-chart.tsx (~344 lines)
+- All three chart types functional with proper OHLC rendering
+- ESLint: 0 errors
