@@ -875,9 +875,8 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 // Desktop Sidebar
 // ============================================================
 function DesktopSidebar() {
-  const { activeTab, setActiveTab, setOrderSheetOpen, alertCount } = useTradingStore();
+  const { activeTab, setActiveTab, setOrderSheetOpen, alerts } = useTradingStore();
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const untriggeredCount = alertCount();
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -929,7 +928,7 @@ function DesktopSidebar() {
 
       <div className="p-3 space-y-2 border-t border-border">
         <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer" onClick={() => setAlertsOpen(true)}>
-          <Bell className="h-4 w-4" /> Alerts {untriggeredCount > 0 && <Badge variant="secondary" className="ml-auto text-[10px] h-4">{untriggeredCount}</Badge>}
+          <Bell className="h-4 w-4" /> Alerts {alerts.length > 0 && <Badge variant="secondary" className="ml-auto text-[10px] h-4">{alerts.length}</Badge>}
         </Button>
         <Button className="w-full gap-2 cursor-pointer" onClick={() => setOrderSheetOpen(true)}>
           <Plus className="h-4 w-4" /> New Trade
@@ -1088,13 +1087,12 @@ function SymbolDetailView() {
 export default function TradingDashboard() {
   const {
     activeTab, setActiveTab, setAccounts, setPortfolio, setAllSymbols, setLivePrices, setWsConnected,
-    accounts, livePrices, allSymbols, selectedSymbol, setSelectedSymbol, alertCount,
+    accounts, livePrices, allSymbols, selectedSymbol, setSelectedSymbol, alerts,
   } = useTradingStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [pageLoaded, setPageLoaded] = useState(false);
-  const untriggeredCount = alertCount();
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
@@ -1176,8 +1174,8 @@ export default function TradingDashboard() {
             </Button>
             <Button variant="ghost" size="icon" className="h-9 w-9 relative cursor-pointer" onClick={() => setAlertsOpen(true)}>
               <Bell className="h-4 w-4" />
-              {untriggeredCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">{untriggeredCount}</span>
+              {alerts.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">{alerts.length}</span>
               )}
             </Button>
             <a href="/auth/signin" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer hover:bg-primary/90 transition-colors">
