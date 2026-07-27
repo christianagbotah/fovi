@@ -1,32 +1,30 @@
 // POST: Create trading account, GET: List accounts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
 
 // Demo fallback data
 const DEMO_ACCOUNTS = [{
   id: 'demo_acc_1',
-  userId: 'usr_demo_1',
-  broker: 'demo',
-  accountType: 'demo',
-  accountId: null,
-  isDefault: true,
-  balance: 100000,
-  currency: 'USD',
-  isActive: true,
+  userId: DEMO_USER_ID,
+  broker: 'demo', accountType: 'demo', accountId: null,
+  isDefault: true, balance: 100000, currency: 'USD', isActive: true,
   lastSyncedAt: new Date().toISOString(),
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
+  createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
 }];
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const userId = 'usr_demo_1';
     const id = uuidv4();
 
     if (!db || !hasModel('tradingAccount')) {
+      return NextResponse.json({ ...DEMO_ACCOUNTS[0], id, broker: body.broker || 'demo', accountType: body.accountType || 'demo', balance: body.balance || 100000 });
+    }
+
+    const userId = await ensureDemoUser();
+    if (!userId) {
       return NextResponse.json({ ...DEMO_ACCOUNTS[0], id, broker: body.broker || 'demo', accountType: body.accountType || 'demo', balance: body.balance || 100000 });
     }
 
@@ -41,18 +39,19 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(account);
   } catch (error) {
-    // ANY database error falls back to demo
     console.warn('[accounts POST] DB error, using fallback:', error);
-    const body = { broker: 'demo', accountType: 'demo', balance: 100000 };
-    return NextResponse.json({ ...DEMO_ACCOUNTS[0], id: uuidv4(), ...body });
+    return NextResponse.json({ ...DEMO_ACCOUNTS[0], id: uuidv4(), broker: 'demo', accountType: 'demo', balance: 100000 });
   }
 }
 
 export async function GET() {
   try {
-    const userId = 'usr_demo_1';
-
     if (!db || !hasModel('tradingAccount')) {
+      return NextResponse.json(DEMO_ACCOUNTS);
+    }
+
+    const userId = await ensureDemoUser();
+    if (!userId) {
       return NextResponse.json(DEMO_ACCOUNTS);
     }
 
@@ -67,7 +66,7 @@ export async function GET() {
           data: { userId, broker: 'demo', accountType: 'demo', isDefault: count === 0, balance: 100000, currency: 'USD' },
         });
       }
-    } catch { /* seed may fail, that's ok */ }
+    } catch { /* seed may fail, ok */ }
 
     const accounts = await db.tradingAccount.findMany({
       where: { userId },
@@ -75,7 +74,6 @@ export async function GET() {
     });
     return NextResponse.json(accounts);
   } catch (error) {
-    // ANY database error falls back to demo
     console.warn('[accounts GET] DB error, using fallback:', error);
     return NextResponse.json(DEMO_ACCOUNTS);
   }

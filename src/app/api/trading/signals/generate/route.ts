@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { generateSignals } from '@/lib/ai/signals';
 import { getDemoCandles, getAssetType } from '@/lib/broker/demo';
@@ -45,7 +45,10 @@ export async function POST(req: NextRequest) {
   if (db && hasModel('tradingAccount') && hasModel('tradingSignal')) {
     try {
       const body = await req.json();
-      const userId = 'usr_demo_1';
+      const userId = await ensureDemoUser();
+      if (!userId) {
+        return NextResponse.json(DEMO_SIGNALS);
+      }
       const symbol = body.symbol || 'AAPL';
       const timeframe = body.timeframe || '1h';
       const riskTolerance = body.riskTolerance || 'medium';

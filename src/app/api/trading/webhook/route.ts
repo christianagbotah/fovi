@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 
 // Simple HMAC-SHA1 verification using Web Crypto API
 async function verifySignature(payload: string, signature: string, secret: string): Promise<boolean> {
@@ -102,7 +102,16 @@ export async function POST(req: NextRequest) {
   }
   try {
     // Find the default account to attach the signal to
-    const userId = 'usr_demo_1';
+    const userId = await ensureDemoUser();
+    if (!userId) {
+      // Still process — return signal even if no account
+      return NextResponse.json({
+        success: true,
+        processed: true,
+        signal: signalPayload,
+        persisted: false,
+      });
+    }
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
     });

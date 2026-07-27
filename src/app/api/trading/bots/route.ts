@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
 
 const DEMO_BOTS = [
   {
@@ -160,7 +160,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(created);
   }
   try {
-    const userId = 'usr_demo_1';
+    const userId = await ensureDemoUser();
+    if (!userId) {
+      // Fallback to demo response if DB or user unavailable
+      const fallback = {
+        id: `bot_demo_${Date.now()}`,
+        userId: DEMO_USER_ID,
+        accountId: 'acc_demo_1',
+        name: body.name || 'New Bot',
+        strategy: body.strategy || 'signal_based',
+        symbols: body.symbols || 'BTC',
+        timeframe: body.timeframe || '1h',
+        allocationAmount: body.allocationAmount ?? 10000,
+        enabled: body.enabled ?? false,
+        status: 'stopped',
+        config: body.config ? JSON.stringify(body.config) : '{}',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      return NextResponse.json(fallback);
+    }
     // Find or default account
     let account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },

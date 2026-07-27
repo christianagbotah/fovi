@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { runBacktest, type EngineConfig } from '@/lib/trading-engine';
 import { getDemoCandles } from '@/lib/broker/demo';
 import type { CandleData } from '@/lib/types';
@@ -126,33 +126,36 @@ export async function POST(req: NextRequest) {
   // 4) Persist to DB if available (non-blocking — failure here does NOT affect the response)
   if (db && hasModel('backtest')) {
     try {
-      await db.backtest.create({
-        data: {
-          userId: 'usr_demo_1',
-          name: `${strategy} ${symbol} ${timeframe}`,
-          strategy,
-          symbol,
-          timeframe,
-          startDate: new Date(start),
-          endDate: new Date(end),
-          initialBalance: Number(allocationAmount),
-          finalBalance: Number(allocationAmount) + result.stats.totalPnl,
-          totalPnl: result.stats.totalPnl,
-          pnlPercent: result.stats.pnlPercent,
-          totalTrades: result.stats.totalTrades,
-          winTrades: result.stats.winTrades,
-          lossTrades: result.stats.lossTrades,
-          maxDrawdown: result.stats.maxDrawdown,
-          sharpeRatio: result.stats.sharpeRatio,
-          sortinoRatio: result.stats.sortinoRatio,
-          profitFactor: result.stats.profitFactor,
-          avgWin: result.stats.avgWin,
-          avgLoss: result.stats.avgLoss,
-          config: JSON.stringify(config),
-          tradesJson: JSON.stringify(result.trades),
-          equityCurveJson: JSON.stringify(result.equityCurve),
-        },
-      });
+      const userId = await ensureDemoUser();
+      if (userId) {
+        await db.backtest.create({
+          data: {
+            userId,
+            name: `${strategy} ${symbol} ${timeframe}`,
+            strategy,
+            symbol,
+            timeframe,
+            startDate: new Date(start),
+            endDate: new Date(end),
+            initialBalance: Number(allocationAmount),
+            finalBalance: Number(allocationAmount) + result.stats.totalPnl,
+            totalPnl: result.stats.totalPnl,
+            pnlPercent: result.stats.pnlPercent,
+            totalTrades: result.stats.totalTrades,
+            winTrades: result.stats.winTrades,
+            lossTrades: result.stats.lossTrades,
+            maxDrawdown: result.stats.maxDrawdown,
+            sharpeRatio: result.stats.sharpeRatio,
+            sortinoRatio: result.stats.sortinoRatio,
+            profitFactor: result.stats.profitFactor,
+            avgWin: result.stats.avgWin,
+            avgLoss: result.stats.avgLoss,
+            config: JSON.stringify(config),
+            tradesJson: JSON.stringify(result.trades),
+            equityCurveJson: JSON.stringify(result.equityCurve),
+          },
+        });
+      }
     } catch (error) {
       // ANY DB error is non-critical — backtest result is always returned
       console.warn('[backtest] failed to persist result:', error);

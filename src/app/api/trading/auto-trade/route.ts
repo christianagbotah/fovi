@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 
 const DEFAULT_CONFIG = {
   id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
@@ -14,6 +14,7 @@ export async function GET() {
     if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(DEFAULT_CONFIG);
     }
+    await ensureDemoUser();
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { isDefault: true },
     });
@@ -77,6 +78,7 @@ export async function PUT(request: Request) {
   }
 
   try {
+    await ensureDemoUser();
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { isDefault: true },
     });

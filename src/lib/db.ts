@@ -24,8 +24,6 @@ export const dbAvailable = !_dbFailed;
 
 /**
  * Check if a specific Prisma model is available on the db client.
- * This guards against cases where prisma generate was run with an older schema
- * (e.g. on VPS after pulling new code) and the model property is undefined.
  */
 export function hasModel(modelName: string): boolean {
   if (!db) return false;
@@ -34,4 +32,35 @@ export function hasModel(modelName: string): boolean {
 
 export function isDbAvailable(): boolean {
   return !_dbFailed && db !== null;
+}
+
+// ============================================================
+// Demo user — auto-created on first DB access to satisfy FK constraints
+// ============================================================
+export const DEMO_USER_ID = 'usr_demo_1';
+const DEMO_USER_EMAIL = 'demo@fovi.ai';
+let _demoUserEnsured = false;
+
+/**
+ * Ensure the demo user exists in the DB. Call this before any
+ * write operation that references userId. Returns the userId on
+ * success, null if DB is unavailable.
+ *
+ * Only runs the upsert once per process lifecycle.
+ */
+export async function ensureDemoUser(): Promise<string | null> {
+  if (_demoUserEnsured) return DEMO_USER_ID;
+  if (!db || !hasModel('user')) return null;
+  try {
+    await db.user.upsert({
+      where: { email: DEMO_USER_EMAIL },
+      create: { id: DEMO_USER_ID, email: DEMO_USER_EMAIL, name: 'Demo User', passwordHash: 'demo_no_login' },
+      update: {},
+    });
+    _demoUserEnsured = true;
+    return DEMO_USER_ID;
+  } catch (e) {
+    console.warn('[DB] Failed to ensure demo user:', e);
+    return null;
+  }
 }

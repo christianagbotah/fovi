@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!db || !hasModel('tradingAccount')) {
@@ -7,7 +7,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   }
   try {
     const { id } = await params;
-    const userId = 'usr_demo_1';
+    const userId = await ensureDemoUser();
+    if (!userId) {
+      return NextResponse.json({ success: true });
+    }
     await db.tradingAccount.deleteMany({ where: { id, userId } });
     return NextResponse.json({ success: true });
   } catch (error) {

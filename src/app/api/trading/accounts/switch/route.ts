@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
@@ -7,7 +7,10 @@ export async function POST(req: NextRequest) {
   }
   try {
     const { accountId } = await req.json();
-    const userId = 'usr_demo_1';
+    const userId = await ensureDemoUser();
+    if (!userId) {
+      return NextResponse.json({ success: true });
+    }
 
     // Unset all defaults
     await db.tradingAccount.updateMany({

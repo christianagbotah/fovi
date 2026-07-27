@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -38,7 +38,10 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const userId = 'usr_demo_1';
+    const userId = await ensureDemoUser();
+    if (!userId) {
+      return NextResponse.json({ id: 'demo_order', symbol: 'DEMO', status: 'filled', filledQty: 0, filledPrice: 0 }, { status: 200 });
+    }
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
 
 const DEMO_ENTRIES = [
   {
@@ -164,7 +164,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(created);
   }
   try {
-    const userId = 'usr_demo_1';
+    const userId = await ensureDemoUser();
+    if (!userId) {
+      // DB or user unavailable, return demo fallback
+      const fallback = {
+        id: `journal_demo_${Date.now()}`,
+        userId: DEMO_USER_ID,
+        positionId: body.positionId ?? null,
+        orderId: body.orderId ?? null,
+        symbol: body.symbol || 'BTC',
+        side: body.side || 'long',
+        entryPrice: body.entryPrice ?? 0,
+        exitPrice: body.exitPrice ?? null,
+        qty: body.qty ?? 0,
+        pnl: body.pnl ?? null,
+        pnlPercent: body.pnlPercent ?? null,
+        entryReason: body.entryReason ?? null,
+        exitReason: body.exitReason ?? null,
+        aiInsight:
+          body.aiInsight ||
+          'AI Insight (demo): Trade executed within acceptable risk parameters. Consider reviewing position sizing relative to overall portfolio exposure.',
+        lessons: body.lessons ?? null,
+        rating: body.rating ?? null,
+        tags: body.tags ?? null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      return NextResponse.json(fallback);
+    }
     const created = await db.tradeJournal.create({
       data: {
         userId,

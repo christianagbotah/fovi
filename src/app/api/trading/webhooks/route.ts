@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
-
-const DEMO_USER_ID = 'usr_demo_1';
+import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
 
 // Demo webhook configs (persisted in-memory for this session)
 const demoWebhooks: Array<{
@@ -109,9 +107,15 @@ export async function POST(req: NextRequest) {
     }
 
     try {
+      const userId = await ensureDemoUser();
+      if (!userId) {
+        const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
+        demoWebhooks.unshift(item);
+        return NextResponse.json(item, { status: 201 });
+      }
       const created = await db.webhookConfig.create({
         data: {
-          userId: DEMO_USER_ID,
+          userId,
           name: trimmed,
           url: `/api/trading/webhook?token=${id}`,
           secret,
