@@ -44,7 +44,7 @@ function CandlestickShape(props: any) {
 
   const isUp = payload.close >= payload.open;
   const color = isUp ? '#10b981' : '#ef4444';
-  const chartHeight = background?.height || height;
+  const chartHeight = background?.height || 300;
   const yMin = background?.y || 0;
   const yMax = yMin + chartHeight;
 
@@ -285,7 +285,7 @@ export function PriceChart() {
           <button
             key={ct.value}
             onClick={() => setChartType(ct.value)}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+            className={`cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
               chartType === ct.value
                 ? 'bg-primary text-primary-foreground'
                 : 'text-muted-foreground hover:bg-accent'
