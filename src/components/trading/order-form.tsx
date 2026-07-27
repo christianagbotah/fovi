@@ -5,9 +5,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { getDemoPrice, getDemoSymbolName } from '@/lib/broker/demo';
@@ -68,7 +65,6 @@ export function OrderForm() {
       seen.add(s.symbol);
       return true;
     });
-    // Add popular symbols not already present
     POPULAR_SYMBOLS.forEach(ps => {
       if (!seen.has(ps.symbol)) unique.push(ps);
     });
@@ -105,10 +101,7 @@ export function OrderForm() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symbol,
-          side,
-          type: orderType,
-          qty: parseFloat(qty),
+          symbol, side, type: orderType, qty: parseFloat(qty),
           limitPrice: limitPrice ? parseFloat(limitPrice) : undefined,
           stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
           takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
@@ -140,13 +133,13 @@ export function OrderForm() {
 
   return (
     <Sheet open={orderSheetOpen} onOpenChange={setOrderSheetOpen}>
-      <SheetContent side="bottom" className="h-auto max-h-[85vh] rounded-t-2xl max-w-2xl mx-auto">
+      <SheetContent side="bottom" className="h-auto max-h-[85vh] rounded-t-2xl max-w-2xl mx-auto flex flex-col">
         {/* Drag Handle */}
-        <div className="flex justify-center pt-2 pb-1">
+        <div className="flex justify-center pt-2 pb-1 shrink-0">
           <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
         </div>
 
-        <SheetHeader className="px-6 pb-2">
+        <SheetHeader className="px-6 pb-2 shrink-0">
           {/* Symbol Selector Dropdown */}
           <div className="relative mb-3">
             <button
@@ -212,7 +205,8 @@ export function OrderForm() {
           </div>
         </SheetHeader>
 
-        <div className="px-6 pb-8 space-y-5">
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto min-h-0 px-6 space-y-5">
           {/* Buy/Sell Tabs */}
           <Tabs value={side} onValueChange={(v) => setSide(v as OrderSide)}>
             <TabsList className="w-full h-12 grid grid-cols-2">
@@ -286,24 +280,26 @@ export function OrderForm() {
             </div>
           </div>
 
-          {/* Total & Submit */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Est. Cost</span>
-              <span className="font-semibold">${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            </div>
-            <Button
-              onClick={handleSubmit} disabled={submitting}
-              className={`w-full h-12 text-base font-semibold ${
-                side === 'buy'
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  : 'bg-red-600 hover:bg-red-700 text-white'
-              }`}
-            >
-              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {side === 'buy' ? 'Buy' : 'Sell'} {symbol}
-            </Button>
+          {/* Est. Cost */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Est. Cost</span>
+            <span className="font-semibold">${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
+        </div>
+
+        {/* Sticky Submit Button */}
+        <div className="px-6 pt-3 pb-6 shrink-0 border-t border-border/50">
+          <Button
+            onClick={handleSubmit} disabled={submitting}
+            className={`w-full h-12 text-base font-semibold ${
+              side === 'buy'
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : 'bg-red-600 hover:bg-red-700 text-white'
+            }`}
+          >
+            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {side === 'buy' ? 'Buy' : 'Sell'} {symbol}
+          </Button>
         </div>
       </SheetContent>
     </Sheet>
