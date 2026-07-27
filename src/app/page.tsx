@@ -1096,9 +1096,19 @@ export default function TradingDashboard() {
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
-  // Hydrate alerts from localStorage on first mount
+  // Hydrate alerts & accounts from localStorage on first mount (instant, no API wait)
   useEffect(() => {
     hydrateAlertsFromStorage();
+    // If no accounts loaded yet, seed from localStorage
+    const { accounts: currentAccounts } = useTradingStore.getState();
+    if (currentAccounts.length === 0) {
+      try {
+        const stored = localStorage.getItem('fovi_accounts');
+        if (stored) {
+          setAccounts(JSON.parse(stored));
+        }
+      } catch { /* ignore */ }
+    }
   }, []);
 
   // Simulate initial page load — show preloader for ~2s
