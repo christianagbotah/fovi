@@ -1127,10 +1127,25 @@ export default function TradingDashboard() {
           fetch('/api/trading/portfolio'),
           fetch('/api/trading/market/symbols'),
         ]);
-        if (accRes.ok) setAccounts(await accRes.json());
-        if (portRes.ok) setPortfolio(await portRes.json());
-        if (symRes.ok) setAllSymbols(await symRes.json());
-      } catch { /* */ }
+        if (accRes.ok) {
+          const accData = await accRes.json();
+          if (Array.isArray(accData) && accData.length > 0) {
+            setAccounts(accData);
+          }
+        }
+        if (portRes.ok) {
+          const portData = await portRes.json();
+          if (portData && typeof portData === 'object' && !portData.error) {
+            setPortfolio(portData);
+          }
+        }
+        if (symRes.ok) {
+          const symData = await symRes.json();
+          if (Array.isArray(symData) && symData.length > 0) {
+            setAllSymbols(symData);
+          }
+        }
+      } catch { /* network error — keep existing state */ }
     }
     loadData();
     const interval = setInterval(loadData, 15000);

@@ -20,7 +20,25 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
 import { useTradingStore } from '@/lib/store/trading-store';
-import type { TradingAccount, BrokerProvider } from '@/lib/types';
+import type { TradingAccount } from '@/lib/types';
+
+// ============================================================
+// localStorage helpers for accounts (demo mode persistence)
+// ============================================================
+const ACC_STORAGE_KEY = 'fovi_accounts';
+
+function loadAccountsLS(): TradingAccount[] | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(ACC_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveAccountsLS(accounts: TradingAccount[]): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(ACC_STORAGE_KEY, JSON.stringify(accounts)); } catch { /* quota */ }
+}
 
 export function AccountSwitcher() {
   const {
@@ -50,15 +68,7 @@ export function AccountSwitcher() {
     };
   }, [dropdownOpen]);
 
-  const handleSwitch = async (id: string) => {
-    if (id === activeAccountId) return;
-    try {
-      await fetch('/api/trading/accounts/switch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: id }),
-      });
-    } catch { /* non-critical */ }
+  const handleSwitch = (id: string) => {
     setActiveAccount(id);
     setDropdownOpen(false);
     setMobileSheetOpen(false);
@@ -68,26 +78,51 @@ export function AccountSwitcher() {
     e.preventDefault();
     const form = e.currentTarget;
     const data = new FormData(form);
-    await fetch('/api/trading/accounts', {
+    const broker = data.get('broker') as string || 'demo';
+    const accountType = data.get('accountType') as string || 'demo';
+    const balance = parseFloat(data.get('balance') as string) || 100000;
+
+    const newAccount: TradingAccount = {
+      id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      userId: 'usr_demo_1',
+      broker,
+      accountType,
+      accountId: null,
+      isDefault: accounts.length === 0,
+      balance,
+      currency: 'USD',
+      isActive: true,
+      lastSyncedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Try API in background (best-effort, don't block)
+    fetch('/api/trading/accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        broker: data.get('broker'),
-        accountType: data.get('accountType'),
-        balance: parseFloat(data.get('balance') as string) || 100000,
-      }),
-    });
+      body: JSON.stringify({ broker, accountType, balance }),
+    }).catch(() => {});
+
+    // Update local state immediately
+    const updated = [...accounts, newAccount];
+    setAccounts(updated);
+    saveAccountsLS(updated);
+    setActiveAccount(newAccount.id);
     setShowAddDialog(false);
-    const res = await fetch('/api/trading/accounts');
-    const accs = await res.json();
-    setAccounts(accs);
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/trading/accounts/${id}`, { method: 'DELETE' });
-    const res = await fetch('/api/trading/accounts');
-    const accs = await res.json();
-    setAccounts(accs);
+    // Try API in background
+    fetch(`/api/trading/accounts/${id}`, { method: 'DELETE' }).catch(() => {});
+
+    // Update local state immediately
+    const updated = accounts.filter(a => a.id !== id);
+    setAccounts(updated);
+    saveAccountsLS(updated);
+    if (activeAccountId === id) {
+      setActiveAccount(updated[0]?.id || null);
+    }
   };
 
   const openAddDialog = () => {
@@ -96,7 +131,7 @@ export function AccountSwitcher() {
     setTimeout(() => setShowAddDialog(true), 100);
   };
 
-  const accountRow = (acc: TradingAccount, onClose: () => void) => (
+  const accountRow = (acc: TradingAccount) => (
     <div
       key={acc.id}
       className={`flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-accent/50 transition-colors ${
@@ -107,7 +142,7 @@ export function AccountSwitcher() {
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
         acc.accountType === 'live' ? 'bg-emerald-500/15' : 'bg-amber-500/15'
       }`}>
-        {acc.accountType === 'live' 
+        {acc.accountType === 'live'
           ? <Briefcase className="h-4 w-4 text-emerald-500" />
           : <Zap className="h-4 w-4 text-amber-500" />}
       </div>
@@ -160,9 +195,9 @@ export function AccountSwitcher() {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
           </span>
-        ) : (
+        ) : activeAccount ? (
           <span className="flex h-2 w-2 rounded-full bg-amber-500" />
-        )}
+        ) : null}
         <span className="text-sm font-medium">
           {activeAccount ? `${activeAccount.accountType.toUpperCase()} · $${activeAccount.balance.toLocaleString()}` : 'Select Account'}
         </span>
@@ -187,7 +222,7 @@ export function AccountSwitcher() {
                 </div>
               </div>
               <div className="max-h-64 overflow-y-auto">
-                {accounts.map(acc => accountRow(acc, () => setDropdownOpen(false)))}
+                {accounts.map(acc => accountRow(acc))}
               </div>
             </motion.div>
           )}
@@ -207,7 +242,7 @@ export function AccountSwitcher() {
             </SheetTitle>
           </SheetHeader>
           <div className="divide-y divide-border max-h-[50vh] overflow-y-auto -mx-6 px-6">
-            {accounts.map(acc => accountRow(acc, () => setMobileSheetOpen(false)))}
+            {accounts.map(acc => accountRow(acc))}
             {accounts.length === 0 && (
               <div className="py-8 text-center text-muted-foreground text-sm">
                 No accounts. Tap Add to create one.

@@ -165,11 +165,22 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     saveToLS('fovi_active_account', id);
   },
   setAccounts: (accounts) => {
+    // Merge with any locally-added accounts from localStorage
+    const lsAccounts = loadFromLS<TradingAccount[] | null>('fovi_accounts', null);
+    let merged = accounts;
+    if (lsAccounts && lsAccounts.length > accounts.length) {
+      // User added accounts locally that aren't in API response
+      const apiIds = new Set(accounts.map(a => a.id));
+      const localOnly = lsAccounts.filter(a => !apiIds.has(a.id));
+      if (localOnly.length > 0) {
+        merged = [...accounts, ...localOnly];
+      }
+    }
     const savedActiveId = loadFromLS<string | null>('fovi_active_account', null);
-    const activeId = savedActiveId && accounts.find(a => a.id === savedActiveId)
+    const activeId = savedActiveId && merged.find(a => a.id === savedActiveId)
       ? savedActiveId
-      : accounts.find(a => a.isDefault)?.id || accounts[0]?.id || null;
-    set({ accounts, activeAccountId: activeId });
+      : merged.find(a => a.isDefault)?.id || merged[0]?.id || null;
+    set({ accounts: merged, activeAccountId: activeId });
   },
 
   // Market
