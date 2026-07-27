@@ -26,7 +26,7 @@ export function AutoTradePanel() {
   const [showActivity, setShowActivity] = useState(false);
   const [amountWarning, setAmountWarning] = useState(false);
 
-  // Load config on mount only
+  // Load config on mount — try API first, then localStorage fallback
   useEffect(() => {
     async function load() {
       try {
@@ -34,7 +34,22 @@ export function AutoTradePanel() {
           fetch('/api/trading/auto-trade'),
           fetch('/api/trading/auto-trade/activity'),
         ]);
-        if (configRes.ok) setBotConfig(await configRes.json());
+        if (configRes.ok) {
+          const config = await configRes.json();
+          setBotConfig(prev => {
+            // If API returned default (stopped) but localStorage has running state, prefer localStorage
+            const saved = localStorage.getItem('fovi_autotrade_config');
+            if (saved) {
+              try {
+                const parsed = JSON.parse(saved);
+                if (parsed.enabled && config.status === 'stopped' && !config.id) {
+                  return { ...prev, ...parsed };
+                }
+              } catch { /* ignore */ }
+            }
+            return config;
+          });
+        }
         if (activityRes.ok) setAutoTradeActivity(await activityRes.json());
       } catch { /* use defaults */ }
       setLoading(false);
@@ -56,6 +71,9 @@ export function AutoTradePanel() {
 
   const saveConfig = useCallback(async (updates: Record<string, unknown>) => {
     setSaving(true);
+    // Persist to localStorage immediately as backup
+    const updated = { ...botConfig, ...updates };
+    localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
     try {
       const res = await fetch('/api/trading/auto-trade', {
         method: 'PUT',
@@ -63,12 +81,13 @@ export function AutoTradePanel() {
         body: JSON.stringify({ id: botConfig.id, ...updates }),
       });
       if (res.ok) {
-        const updated = await res.json();
-        setBotConfig(updated);
+        const serverUpdated = await res.json();
+        setBotConfig(serverUpdated);
+        localStorage.setItem('fovi_autotrade_config', JSON.stringify(serverUpdated));
       }
     } catch { /* */ }
     setSaving(false);
-  }, [botConfig.id, setBotConfig]);
+  }, [botConfig, setBotConfig]);
 
   const handleToggleBot = async () => {
     if (botConfig.allocationAmount <= 0) {

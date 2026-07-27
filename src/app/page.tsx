@@ -383,14 +383,43 @@ function MarkdownContent({ content }: { content: string }) {
 // ============================================================
 function AiChatSheet() {
   const { aiChatOpen, setAiChatOpen, selectedSymbol, wsConnected } = useTradingStore();
-  const [messages, setMessages] = useState<{ role: string; content: string; offline?: boolean }[]>([
-    { role: 'assistant', content: `Welcome to **Fovi AI**. I'm your intelligent trading assistant with real-time market analysis capabilities.\n\nI can help you with:\n• **Technical Analysis** — RSI, MACD, Bollinger Bands, patterns\n• **Trade Ideas** — Entry, stop-loss, take-profit levels\n• **Risk Management** — Position sizing and portfolio analysis\n• **Market Insights** — Real-time market commentary\n\nTry asking: "Analyze AAPL" or "What's the crypto market doing?"` },
-  ]);
+  const [messages, setMessages] = useState<{ role: string; content: string; offline?: boolean }[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const sessionId = useRef(`session_${Date.now()}`);
+  const sessionIdRef = useRef('');
+  const loadedRef = useRef(false);
+
+  // Stable session ID from localStorage
+  if (!sessionIdRef.current && typeof window !== 'undefined') {
+    sessionIdRef.current = localStorage.getItem('fovi_chat_session') || `sess_${Date.now()}`;
+    localStorage.setItem('fovi_chat_session', sessionIdRef.current);
+  }
+
+  // Load conversation history on mount
+  useEffect(() => {
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+    fetch(`/api/trading/ai-chat?sessionId=${sessionIdRef.current}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.messages?.length > 0) {
+          setMessages(data.messages.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })));
+        } else {
+          setMessages([{
+            role: 'assistant',
+            content: `Welcome to **Fovi AI**. I'm your intelligent trading assistant with real-time market analysis capabilities.\n\nI can help you with:\n• **Technical Analysis** — RSI, MACD, Bollinger Bands, patterns\n• **Trade Ideas** — Entry, stop-loss, take-profit levels\n• **Risk Management** — Position sizing and portfolio analysis\n• **Market Insights** — Real-time market commentary\n\nTry asking: \"Analyze AAPL\" or \"What's the crypto market doing?"`,
+          }]);
+        }
+      })
+      .catch(() => {
+        setMessages([{
+          role: 'assistant',
+          content: `Welcome to **Fovi AI**. I'm your intelligent trading assistant.\n\nAsk me to analyze any symbol or get market insights!`,
+        }]);
+      });
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -399,6 +428,20 @@ function AiChatSheet() {
   useEffect(() => {
     if (aiChatOpen && inputRef.current) setTimeout(() => inputRef.current?.focus(), 300);
   }, [aiChatOpen]);
+
+  const handleClear = useCallback(async () => {
+    try {
+      await fetch(`/api/trading/ai-chat?sessionId=${sessionIdRef.current}`, { method: 'DELETE' });
+    } catch { /* non-critical */ }
+    // Generate a new session so old messages don't reload
+    const newSession = `sess_${Date.now()}`;
+    localStorage.setItem('fovi_chat_session', newSession);
+    sessionIdRef.current = newSession;
+    setMessages([{
+      role: 'assistant',
+      content: 'Conversation cleared. How can I help you with your trading today?',
+    }]);
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || sending) return;
@@ -409,7 +452,7 @@ function AiChatSheet() {
     try {
       const res = await fetch('/api/trading/ai-chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg, sessionId: sessionId.current }),
+        body: JSON.stringify({ message: userMsg, sessionId: sessionIdRef.current }),
       });
       const data = await res.json();
       if (data.success) {
@@ -448,7 +491,7 @@ function AiChatSheet() {
               <p className="text-[11px] text-muted-foreground">AI Trading Assistant</p>
             </div>
             <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer"
-              onClick={() => setMessages([{ role: 'assistant', content: 'Conversation cleared. How can I help you with your trading today?' }])}>
+              onClick={handleClear}>
               <RefreshCw className="h-4 w-4" />
             </Button>
           </SheetTitle>

@@ -89,15 +89,13 @@ function buildSymbolAnalysis(symbol: string): string {
 // Fallback AI response using simple rule-based analysis when SDK is unavailable
 function generateFallbackResponse(message: string, marketContext: string, symbolContext: string): string {
   const lower = message.toLowerCase();
-  
-  // Check for specific symbol queries
   const symbolMatch = message.match(/\b([A-Z]{2,6})\b/);
   const symbol = symbolMatch ? symbolMatch[1] : null;
-  
+
   if (lower.includes('help') || lower.includes('what can')) {
     return `**Fovi AI Trading Assistant** 🤖\n\nI can help you with:\n- **Market Analysis** — Ask about any symbol (e.g., "Analyze AAPL" or "What's happening with BTC?")\n- **Trading Signals** — I provide AI-generated signals based on technical analysis\n- **Risk Management** — Position sizing and portfolio advice\n- **Market Overview** — Current market conditions and trends\n\n*Note: AI chat is currently running in offline mode. Full AI capabilities require network connectivity.*`;
   }
-  
+
   if (symbol && (lower.includes('analyze') || lower.includes('analysis') || lower.includes('what') || lower.includes('how') || lower.includes('price') || lower.includes('buy') || lower.includes('sell'))) {
     const symbols = getAllDemoSymbols();
     const sym = symbols.find(s => s.symbol === symbol.toUpperCase());
@@ -107,14 +105,52 @@ function generateFallbackResponse(message: string, marketContext: string, symbol
       return `**${sym.symbol} Analysis** (${sym.assetType})\n\n**Current Price:** $${sym.price.toFixed(2)} ${arrow} ${sym.changePercent >= 0 ? '+' : ''}${sym.changePercent.toFixed(2)}%\n**Trend:** ${trend.charAt(0).toUpperCase() + trend.slice(1)}\n\n${symbolContext ? '**Technical Indicators:**' + symbolContext : ''}\n\n*⚠️ AI chat is in offline mode. Full technical analysis requires network connectivity. Connect Alpaca or Binance for live data.*`;
     }
   }
-  
+
   if (lower.includes('market') || lower.includes('overview') || lower.includes('summary')) {
     return `**Market Overview**\n\n${marketContext}\n*⚠️ Running in offline mode. Real-time AI analysis requires network connectivity.*`;
   }
-  
+
   return `I'm currently running in **offline mode** — full AI capabilities require network connectivity to the Fovi AI backend.\n\nYou can still:\n- View real-time prices and charts\n- Place and manage trades\n- Receive AI trading signals\n- Connect your broker accounts\n\nTry asking me to **analyze a specific symbol** (e.g., "Analyze NVDA") for a quick technical overview, or check the **Markets** tab for live data.`;
 }
 
+// ============================================================
+// GET — Load conversation history from DB
+// ============================================================
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const sessionId = searchParams.get('sessionId') || 'default';
+
+  // Try DB first
+  if (db && hasModel('aiConversation') && hasModel('aiMessage')) {
+    try {
+      const messages = await db.aiMessage.findMany({
+        where: { conversationId: sessionId },
+        orderBy: { createdAt: 'asc' },
+        take: 50,
+      });
+      if (messages.length > 0) {
+        return NextResponse.json({ messages, source: 'db' });
+      }
+    } catch {
+      // fall through to in-memory
+    }
+  }
+
+  // Fallback: in-memory
+  const history = conversations.get(sessionId);
+  if (history && history.length > 1) {
+    return NextResponse.json({
+      messages: history.slice(1).map(m => ({ role: m.role, content: m.content })),
+      source: 'memory',
+    });
+  }
+
+  return NextResponse.json({ messages: [], source: 'empty' });
+}
+
+// ============================================================
+// POST — Send message, get AI response, persist to DB
+// ============================================================
 export async function POST(req: NextRequest) {
   try {
     const { message, sessionId = 'default' } = await req.json();
@@ -126,10 +162,7 @@ export async function POST(req: NextRequest) {
     const zai = await getZAI();
     const history = getConversation(sessionId);
 
-    // Build enhanced prompt with market context
     const marketContext = buildMarketContext();
-
-    // Check if user is asking about a specific symbol
     const symbolMatch = message.match(/\b([A-Z]{2,6})\b/);
     let symbolContext = '';
     if (symbolMatch) {
@@ -140,7 +173,6 @@ export async function POST(req: NextRequest) {
     let aiResponse: string;
 
     if (zai) {
-      // Full AI mode — SDK is available
       const enhancedMessage = symbolContext
         ? `${message}\n\n[Here is the current technical analysis data for context:]${symbolContext}${marketContext}`
         : `${message}${marketContext}`;
@@ -156,64 +188,42 @@ export async function POST(req: NextRequest) {
           })),
           thinking: { type: 'disabled' },
         });
-
-        aiResponse = completion.choices[0]?.message?.content ||
-          'I apologize, but I was unable to generate a response. Please try again.';
+        aiResponse = completion.choices[0]?.message?.content || 'I apologize, but I was unable to generate a response. Please try again.';
       } catch (sdkErr) {
         console.error('[ZAI SDK] Chat completion failed:', sdkErr instanceof Error ? sdkErr.message : sdkErr);
         zaiInitFailed = true;
         zaiInstance = null;
-        // Fallback to offline response
         history.push({ role: 'user', content: message });
         aiResponse = generateFallbackResponse(message, marketContext, symbolContext);
       }
     } else {
-      // Offline mode — SDK unavailable
       history.push({ role: 'user', content: message });
       aiResponse = generateFallbackResponse(message, marketContext, symbolContext);
     }
 
-    // Save to DB for persistence (non-critical)
-    if (db && hasModel('aiConversation')) {
+    // Persist to DB
+    if (db && hasModel('aiConversation') && hasModel('aiMessage')) {
       try {
         const userId = 'usr_demo_1';
-        let conversation = await db.aiConversation.findFirst({
-          where: { userId, id: sessionId },
-        });
-
+        let conversation = await db.aiConversation.findFirst({ where: { userId, id: sessionId } });
         if (!conversation) {
-          conversation = await db.aiConversation.create({
-            data: { id: sessionId, userId, title: message.slice(0, 50) },
-          });
+          conversation = await db.aiConversation.create({ data: { id: sessionId, userId, title: message.slice(0, 50) } });
         }
-
         await db.aiMessage.createMany({
           data: [
             { conversationId: conversation.id, role: 'user', content: message },
             { conversationId: conversation.id, role: 'assistant', content: aiResponse },
           ],
         });
-      } catch (error) {
-        // DB save is non-critical — keep returning the AI response as fallback.
-        // Includes Prisma validation errors (e.g., "Error validating datasource `db`:
-        // the URL must start with the protocol `postgresql://`") which happen when
-        // PrismaClient construction succeeded but the DB URL is misconfigured.
-        if (error instanceof Error && error.message.includes('validating datasource')) {
-          console.warn('[AI Chat] DB unavailable (Prisma validation error) — skipping persistence');
-        }
+      } catch {
+        // non-critical
       }
     }
 
-    // Update history (store the original message, not the enhanced one)
     history.push({ role: 'assistant', content: aiResponse });
     conversations.set(sessionId, trimConversation(history));
 
-    return NextResponse.json({
-      success: true,
-      response: aiResponse,
-      offline: !zai,
-      messageCount: history.length - 1,
-    });
+    return NextResponse.json({ success: true, response: aiResponse, offline: !zai, messageCount: history.length - 1 });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'AI chat failed';
     console.error('[AI Chat Error]', msg);
@@ -221,9 +231,24 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// ============================================================
+// DELETE — Clear conversation from both memory and DB
+// ============================================================
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get('sessionId') || 'default';
+
+  // Clear in-memory
   conversations.delete(sessionId);
+
+  // Clear from DB
+  if (db && hasModel('aiMessage')) {
+    try {
+      await db.aiMessage.deleteMany({ where: { conversationId: sessionId } });
+    } catch {
+      // non-critical
+    }
+  }
+
   return NextResponse.json({ success: true });
 }
