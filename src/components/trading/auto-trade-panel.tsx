@@ -26,6 +26,9 @@ export function AutoTradePanel() {
   const [showActivity, setShowActivity] = useState(false);
   const [amountWarning, setAmountWarning] = useState(false);
 
+  // Ensure autoTradeActivity is always an array
+  const activityList = Array.isArray(autoTradeActivity) ? autoTradeActivity : [];
+
   // Load config on mount — try API first, then localStorage fallback
   useEffect(() => {
     async function load() {
@@ -50,7 +53,10 @@ export function AutoTradePanel() {
             return config;
           });
         }
-        if (activityRes.ok) setAutoTradeActivity(await activityRes.json());
+        if (activityRes.ok) {
+          const actData = await activityRes.json();
+          if (Array.isArray(actData)) setAutoTradeActivity(actData);
+        }
       } catch { /* use defaults */ }
       setLoading(false);
     }
@@ -63,7 +69,10 @@ export function AutoTradePanel() {
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/trading/auto-trade/activity');
-        if (res.ok) setAutoTradeActivity(await res.json());
+        if (res.ok) {
+          const actData = await res.json();
+          if (Array.isArray(actData)) setAutoTradeActivity(actData);
+        }
       } catch { /* */ }
     }, 30000);
     return () => clearInterval(interval);
@@ -518,7 +527,7 @@ export function AutoTradePanel() {
                     className="overflow-hidden"
                   >
                     <div className="space-y-1.5 max-h-64 overflow-y-auto -mx-1">
-                      {autoTradeActivity.map(act => (
+                      {activityList.map(act => (
                         <ActivityRow key={act.id} activity={act} />
                       ))}
                     </div>
