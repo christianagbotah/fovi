@@ -1,5 +1,5 @@
 // ============================================================
-// Fovi Trading Store - Global state management
+// Fovi Trading Store - Global state management with localStorage persistence
 // ============================================================
 
 import { create } from 'zustand';
@@ -49,6 +49,41 @@ export interface AutoTradeActivity {
   signalType: string | null;
   createdAt: string;
 }
+
+export interface PriceAlert {
+  id: string;
+  symbol: string;
+  condition: 'above' | 'below';
+  targetPrice: number;
+  currentPrice: number;
+  triggered: boolean;
+}
+
+// ============================================================
+// localStorage helpers (safe for SSR)
+// ============================================================
+function loadFromLS<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+
+function saveToLS(key: string, value: unknown): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* quota */ }
+}
+
+// ============================================================
+// Default alerts (shown only on first-ever visit)
+// ============================================================
+const DEFAULT_ALERTS: PriceAlert[] = [
+  { id: '1', symbol: 'BTC', condition: 'above', targetPrice: 72000, currentPrice: 67842.5, triggered: false },
+  { id: '2', symbol: 'AAPL', condition: 'below', targetPrice: 185, currentPrice: 198.32, triggered: false },
+  { id: '3', symbol: 'ETH', condition: 'above', targetPrice: 4200, currentPrice: 3891.2, triggered: true },
+  { id: '4', symbol: 'NVDA', condition: 'above', targetPrice: 145, currentPrice: 138.67, triggered: false },
+];
 
 interface TradingState {
   // Accounts
@@ -112,17 +147,30 @@ interface TradingState {
   setBotConfig: (config: Partial<BotConfigState>) => void;
   autoTradeActivity: AutoTradeActivity[];
   setAutoTradeActivity: (activity: AutoTradeActivity[]) => void;
+
+  // Price Alerts (persisted in localStorage)
+  alerts: PriceAlert[];
+  addAlert: (alert: PriceAlert) => void;
+  removeAlert: (id: string) => void;
+  setAlerts: (alerts: PriceAlert[]) => void;
+  alertCount: () => number;  // untriggered count for badges
 }
 
-export const useTradingStore = create<TradingState>((set) => ({
+export const useTradingStore = create<TradingState>((set, get) => ({
   // Accounts
   accounts: [],
   activeAccountId: null,
-  setActiveAccount: (id) => set({ activeAccountId: id }),
-  setAccounts: (accounts) => set({
-    accounts,
-    activeAccountId: accounts.find(a => a.isDefault)?.id || accounts[0]?.id || null,
-  }),
+  setActiveAccount: (id) => {
+    set({ activeAccountId: id });
+    saveToLS('fovi_active_account', id);
+  },
+  setAccounts: (accounts) => {
+    const savedActiveId = loadFromLS<string | null>('fovi_active_account', null);
+    const activeId = savedActiveId && accounts.find(a => a.id === savedActiveId)
+      ? savedActiveId
+      : accounts.find(a => a.isDefault)?.id || accounts[0]?.id || null;
+    set({ accounts, activeAccountId: activeId });
+  },
 
   // Market
   watchlist: [],
@@ -186,4 +234,36 @@ export const useTradingStore = create<TradingState>((set) => ({
   })),
   autoTradeActivity: [],
   setAutoTradeActivity: (activity) => set({ autoTradeActivity: activity }),
+
+  // Price Alerts — persisted in localStorage
+  alerts: [],
+  addAlert: (alert) => {
+    const updated = [...get().alerts, alert];
+    set({ alerts: updated });
+    saveToLS('fovi_price_alerts', updated);
+  },
+  removeAlert: (id) => {
+    const updated = get().alerts.filter(a => a.id !== id);
+    set({ alerts: updated });
+    saveToLS('fovi_price_alerts', updated);
+  },
+  setAlerts: (alerts) => {
+    set({ alerts });
+    saveToLS('fovi_price_alerts', alerts);
+  },
+  alertCount: () => get().alerts.filter(a => !a.triggered).length,
 }));
+
+// ============================================================
+// Hydrate alerts from localStorage on client side
+// Call this once in the root layout or page on mount.
+// ============================================================
+export function hydrateAlertsFromStorage() {
+  const stored = loadFromLS<PriceAlert[] | null>('fovi_price_alerts', null);
+  if (stored) {
+    useTradingStore.getState().setAlerts(stored);
+  } else {
+    // First visit — seed with defaults
+    useTradingStore.getState().setAlerts(DEFAULT_ALERTS);
+  }
+}

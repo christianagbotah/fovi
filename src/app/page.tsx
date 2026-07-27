@@ -10,7 +10,7 @@ import {
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
   ArrowLeft, User, Lock, Mail, Phone, ChevronDown,
 } from 'lucide-react';
-import { useTradingStore } from '@/lib/store/trading-store';
+import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
 import { PriceChart } from '@/components/trading/price-chart';
 import { PositionsPanel } from '@/components/trading/positions-panel';
@@ -37,6 +37,7 @@ import { formatPnl, formatPrice, formatVolume } from '@/lib/market-sim';
 import { useMarketSocket } from '@/hooks/use-market-socket';
 import { useTradeNotifications } from '@/hooks/use-trade-notifications';
 import { PagePreloader } from '@/components/page-preloader';
+
 
 // ============================================================
 // Mobile Bottom Tab Bar
@@ -557,23 +558,9 @@ function AiChatSheet() {
 // ============================================================
 // Alerts Sheet
 // ============================================================
-interface PriceAlert {
-  id: string;
-  symbol: string;
-  condition: 'above' | 'below';
-  targetPrice: number;
-  currentPrice: number;
-  triggered: boolean;
-}
 
 function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { allSymbols } = useTradingStore();
-  const [alerts, setAlerts] = useState<PriceAlert[]>([
-    { id: '1', symbol: 'BTC', condition: 'above', targetPrice: 72000, currentPrice: 67842.5, triggered: false },
-    { id: '2', symbol: 'AAPL', condition: 'below', targetPrice: 185, currentPrice: 198.32, triggered: false },
-    { id: '3', symbol: 'ETH', condition: 'above', targetPrice: 4200, currentPrice: 3891.2, triggered: true },
-    { id: '4', symbol: 'NVDA', condition: 'above', targetPrice: 145, currentPrice: 138.67, triggered: false },
-  ]);
+  const { alerts, addAlert, removeAlert, allSymbols } = useTradingStore();
   const [showForm, setShowForm] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
   const [newPrice, setNewPrice] = useState('');
@@ -582,14 +569,12 @@ function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
   const handleAdd = () => {
     if (!newSymbol || !newPrice) return;
     const sym = allSymbols.find(s => s.symbol.toUpperCase() === newSymbol.toUpperCase());
-    setAlerts(prev => [...prev, {
+    addAlert({
       id: Date.now().toString(), symbol: newSymbol.toUpperCase(), condition: newCondition,
       targetPrice: parseFloat(newPrice), currentPrice: sym?.price || 0, triggered: false,
-    }]);
+    });
     setNewSymbol(''); setNewPrice(''); setShowForm(false);
   };
-
-  const handleRemove = (id: string) => setAlerts(prev => prev.filter(a => a.id !== id));
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -660,7 +645,7 @@ function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
                     Current: ${alert.currentPrice.toLocaleString()} · {diff >= 0 ? '+' : ''}{diff.toFixed(2)}%
                   </p>
                 </div>
-                <button onClick={() => handleRemove(alert.id)} className="cursor-pointer p-1 hover:bg-muted rounded-lg transition-colors">
+                <button onClick={() => removeAlert(alert.id)} className="cursor-pointer p-1 hover:bg-muted rounded-lg transition-colors">
                   <X className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               </div>
@@ -890,8 +875,9 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 // Desktop Sidebar
 // ============================================================
 function DesktopSidebar() {
-  const { activeTab, setActiveTab, setOrderSheetOpen } = useTradingStore();
+  const { activeTab, setActiveTab, setOrderSheetOpen, alertCount } = useTradingStore();
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const untriggeredCount = alertCount();
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -943,7 +929,7 @@ function DesktopSidebar() {
 
       <div className="p-3 space-y-2 border-t border-border">
         <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer" onClick={() => setAlertsOpen(true)}>
-          <Bell className="h-4 w-4" /> Alerts <Badge variant="secondary" className="ml-auto text-[10px] h-4">4</Badge>
+          <Bell className="h-4 w-4" /> Alerts {untriggeredCount > 0 && <Badge variant="secondary" className="ml-auto text-[10px] h-4">{untriggeredCount}</Badge>}
         </Button>
         <Button className="w-full gap-2 cursor-pointer" onClick={() => setOrderSheetOpen(true)}>
           <Plus className="h-4 w-4" /> New Trade
@@ -1102,14 +1088,20 @@ function SymbolDetailView() {
 export default function TradingDashboard() {
   const {
     activeTab, setActiveTab, setAccounts, setPortfolio, setAllSymbols, setLivePrices, setWsConnected,
-    accounts, livePrices, allSymbols, selectedSymbol, setSelectedSymbol,
+    accounts, livePrices, allSymbols, selectedSymbol, setSelectedSymbol, alertCount,
   } = useTradingStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [pageLoaded, setPageLoaded] = useState(false);
+  const untriggeredCount = alertCount();
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
+
+  // Hydrate alerts from localStorage on first mount
+  useEffect(() => {
+    hydrateAlertsFromStorage();
+  }, []);
 
   // Simulate initial page load — show preloader for ~2s
   useEffect(() => {
@@ -1184,7 +1176,9 @@ export default function TradingDashboard() {
             </Button>
             <Button variant="ghost" size="icon" className="h-9 w-9 relative cursor-pointer" onClick={() => setAlertsOpen(true)}>
               <Bell className="h-4 w-4" />
-              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">3</span>
+              {untriggeredCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">{untriggeredCount}</span>
+              )}
             </Button>
             <a href="/auth/signin" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer hover:bg-primary/90 transition-colors">
               <Briefcase className="h-3.5 w-3.5" />
