@@ -26,7 +26,7 @@ export function AutoTradePanel() {
   const [showActivity, setShowActivity] = useState(false);
   const [amountWarning, setAmountWarning] = useState(false);
 
-  // Load config on mount
+  // Load config on mount only
   useEffect(() => {
     async function load() {
       try {
@@ -40,17 +40,19 @@ export function AutoTradePanel() {
       setLoading(false);
     }
     load();
-    // Refresh activity every 30s when bot is running
+  }, [setBotConfig, setAutoTradeActivity]);
+
+  // Refresh activity periodically when bot is running
+  useEffect(() => {
+    if (botConfig.status !== 'running') return;
     const interval = setInterval(async () => {
-      if (botConfig.status === 'running') {
-        try {
-          const res = await fetch('/api/trading/auto-trade/activity');
-          if (res.ok) setAutoTradeActivity(await res.json());
-        } catch { /* */ }
-      }
+      try {
+        const res = await fetch('/api/trading/auto-trade/activity');
+        if (res.ok) setAutoTradeActivity(await res.json());
+      } catch { /* */ }
     }, 30000);
     return () => clearInterval(interval);
-  }, [setBotConfig, setAutoTradeActivity, botConfig.status]);
+  }, [botConfig.status, setAutoTradeActivity]);
 
   const saveConfig = useCallback(async (updates: Record<string, unknown>) => {
     setSaving(true);

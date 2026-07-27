@@ -178,7 +178,7 @@ export function AccountSwitcher() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.96 }}
               transition={{ duration: 0.15 }}
-              className="absolute top-full mt-2 right-0 w-80 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden"
+              className="absolute top-full mt-2 left-0 w-80 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden"
             >
               <div className="p-3 border-b border-border">
                 <div className="flex items-center justify-between">
@@ -218,11 +218,13 @@ export function AccountSwitcher() {
       </Sheet>
 
       {/* Add Account Dialog — rendered at TOP LEVEL, not nested inside dropdown/sheet */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog} modal={false}>
         <DialogContent
           className="max-w-sm"
           onInteractOutside={(e) => e.preventDefault()}
           onOpenAutoFocus={(e) => e.preventDefault()}
+          onFocusOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader>
             <DialogTitle>Add Trading Account</DialogTitle>
