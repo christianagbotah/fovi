@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,7 +16,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
@@ -42,7 +41,6 @@ export function AccountSwitcher() {
         setDropdownOpen(false);
       }
     };
-    // Use a small delay to avoid closing immediately on the same click
     const timer = setTimeout(() => {
       document.addEventListener('mousedown', handler);
     }, 10);
@@ -92,6 +90,12 @@ export function AccountSwitcher() {
     setAccounts(accs);
   };
 
+  const openAddDialog = () => {
+    setDropdownOpen(false);
+    setMobileSheetOpen(false);
+    setTimeout(() => setShowAddDialog(true), 100);
+  };
+
   const accountRow = (acc: TradingAccount, onClose: () => void) => (
     <div
       key={acc.id}
@@ -132,65 +136,10 @@ export function AccountSwitcher() {
     </div>
   );
 
-  const addAccountDialog = (
-    <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 cursor-pointer">
-          <Plus className="h-3.5 w-3.5" /> Add
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-sm" onInteractOutside={(e: React.MouseEvent) => e.preventDefault()} onOpenAutoFocus={(e: Event) => e.preventDefault()}>
-        <DialogHeader>
-          <DialogTitle>Add Trading Account</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleAddAccount} className="space-y-4 mt-4">
-          <div className="space-y-2">
-            <Label>Broker</Label>
-            <Select name="broker" defaultValue="demo">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="demo">
-                  <span className="flex items-center gap-2"><Zap className="h-4 w-4" /> Demo (Simulated)</span>
-                </SelectItem>
-                <SelectItem value="alpaca">
-                  <span className="flex items-center gap-2"><Briefcase className="h-4 w-4" /> Alpaca (Stocks)</span>
-                </SelectItem>
-                <SelectItem value="binance">
-                  <span className="flex items-center gap-2"><Wallet className="h-4 w-4" /> Binance (Crypto)</span>
-                </SelectItem>
-                <SelectItem value="okx">
-                  <span className="flex items-center gap-2"><Landmark className="h-4 w-4" /> OKX (Crypto)</span>
-                </SelectItem>
-                <SelectItem value="deriv">
-                  <span className="flex items-center gap-2"><ArrowLeftRight className="h-4 w-4" /> Deriv (Forex/Synthetic)</span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Account Type</Label>
-            <Select name="accountType" defaultValue="demo">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="demo">
-                  <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border-amber-500/20 mr-2">Demo</Badge>
-                  Paper Trading
-                </SelectItem>
-                <SelectItem value="live">
-                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 mr-2">Live</Badge>
-                  Real Money
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Starting Balance ($)</Label>
-            <Input name="balance" type="number" defaultValue="100000" />
-          </div>
-          <Button type="submit" className="w-full cursor-pointer">Create Account</Button>
-        </form>
-      </DialogContent>
-    </Dialog>
+  const addButton = (
+    <Button variant="ghost" size="sm" className="h-7 gap-1 cursor-pointer" onClick={openAddDialog}>
+      <Plus className="h-3.5 w-3.5" /> Add
+    </Button>
   );
 
   return (
@@ -198,7 +147,6 @@ export function AccountSwitcher() {
       {/* Trigger Button */}
       <button
         onClick={() => {
-          // Use Sheet on mobile, dropdown on desktop
           if (window.innerWidth < 1024) {
             setMobileSheetOpen(true);
           } else {
@@ -235,7 +183,7 @@ export function AccountSwitcher() {
               <div className="p-3 border-b border-border">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">Trading Accounts</h3>
-                  {addAccountDialog}
+                  {addButton}
                 </div>
               </div>
               <div className="max-h-64 overflow-y-auto">
@@ -255,7 +203,7 @@ export function AccountSwitcher() {
                 <Briefcase className="h-5 w-5" />
                 Trading Accounts
               </div>
-              {addAccountDialog}
+              {addButton}
             </SheetTitle>
           </SheetHeader>
           <div className="divide-y divide-border max-h-[50vh] overflow-y-auto -mx-6 px-6">
@@ -268,6 +216,65 @@ export function AccountSwitcher() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Add Account Dialog — rendered at TOP LEVEL, not nested inside dropdown/sheet */}
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent
+          className="max-w-sm"
+          onInteractOutside={(e) => e.preventDefault()}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>Add Trading Account</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleAddAccount} className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label>Broker</Label>
+              <Select name="broker" defaultValue="demo">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="demo">
+                    <span className="flex items-center gap-2"><Zap className="h-4 w-4" /> Demo (Simulated)</span>
+                  </SelectItem>
+                  <SelectItem value="alpaca">
+                    <span className="flex items-center gap-2"><Briefcase className="h-4 w-4" /> Alpaca (Stocks)</span>
+                  </SelectItem>
+                  <SelectItem value="binance">
+                    <span className="flex items-center gap-2"><Wallet className="h-4 w-4" /> Binance (Crypto)</span>
+                  </SelectItem>
+                  <SelectItem value="okx">
+                    <span className="flex items-center gap-2"><Landmark className="h-4 w-4" /> OKX (Crypto)</span>
+                  </SelectItem>
+                  <SelectItem value="deriv">
+                    <span className="flex items-center gap-2"><ArrowLeftRight className="h-4 w-4" /> Deriv (Forex/Synthetic)</span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Account Type</Label>
+              <Select name="accountType" defaultValue="demo">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="demo">
+                    <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border-amber-500/20 mr-2">Demo</Badge>
+                    Paper Trading
+                  </SelectItem>
+                  <SelectItem value="live">
+                    <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 mr-2">Live</Badge>
+                    Real Money
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Starting Balance ($)</Label>
+              <Input name="balance" type="number" defaultValue="100000" />
+            </div>
+            <Button type="submit" className="w-full cursor-pointer">Create Account</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

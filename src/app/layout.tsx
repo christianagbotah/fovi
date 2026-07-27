@@ -18,7 +18,11 @@ export const metadata: Metadata = {
   title: "Fovi AI — Intelligent Auto-Trading Platform",
   description: "World-class AI-powered trading platform with real-time signals, technical analysis, and automated execution across stocks, crypto, and forex.",
   icons: {
-    icon: "/logo.svg",
+    icon: [
+      { url: '/logo.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/logo.svg',
+    apple: '/logo.svg',
   },
 };
 
