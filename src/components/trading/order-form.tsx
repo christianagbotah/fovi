@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,15 +14,39 @@ import { getDemoPrice, getDemoSymbolName } from '@/lib/broker/demo';
 import { formatPrice } from '@/lib/market-sim';
 import { toast } from 'sonner';
 import type { OrderSide, OrderType } from '@/lib/types';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Search, ChevronDown } from 'lucide-react';
+
+const POPULAR_SYMBOLS = [
+  { symbol: 'AAPL', name: 'Apple Inc.' },
+  { symbol: 'GOOGL', name: 'Alphabet Inc.' },
+  { symbol: 'MSFT', name: 'Microsoft Corp.' },
+  { symbol: 'AMZN', name: 'Amazon.com Inc.' },
+  { symbol: 'TSLA', name: 'Tesla Inc.' },
+  { symbol: 'BTC/USD', name: 'Bitcoin' },
+  { symbol: 'ETH/USD', name: 'Ethereum' },
+  { symbol: 'SOL/USD', name: 'Solana' },
+  { symbol: 'EUR/USD', name: 'Euro / US Dollar' },
+  { symbol: 'GBP/USD', name: 'British Pound / US Dollar' },
+  { symbol: 'NVDA', name: 'NVIDIA Corp.' },
+  { symbol: 'META', name: 'Meta Platforms' },
+  { symbol: 'NFLX', name: 'Netflix Inc.' },
+  { symbol: 'XRP/USD', name: 'Ripple' },
+  { symbol: 'DOGE/USD', name: 'Dogecoin' },
+];
 
 export function OrderForm() {
   const {
-    orderSheetOpen, setOrderSheetOpen, orderSymbol,
+    orderSheetOpen, setOrderSheetOpen, orderSymbol, setOrderSymbol,
     selectedSymbol, setSelectedSymbol, positions, setPositions,
+    allSymbols, livePrices,
   } = useTradingStore();
 
-  const symbol = orderSymbol || selectedSymbol || 'AAPL';
+  const effectiveSymbol = orderSymbol || selectedSymbol || 'AAPL';
+  const [localSymbol, setLocalSymbol] = useState(effectiveSymbol);
+  const [symbolSearch, setSymbolSearch] = useState('');
+  const [symbolDropdownOpen, setSymbolDropdownOpen] = useState(false);
+
+  const symbol = localSymbol;
   const currentPrice = getDemoPrice(symbol);
 
   const [side, setSide] = useState<OrderSide>('buy');
@@ -32,6 +56,39 @@ export function OrderForm() {
   const [stopLoss, setStopLoss] = useState('');
   const [takeProfit, setTakeProfit] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Merge all available symbols
+  const symbolList = useMemo(() => {
+    const live = livePrices.map(p => ({ symbol: p.symbol, name: p.name || p.symbol }));
+    const stored = allSymbols.map(s => ({ symbol: s.symbol, name: s.name || s.symbol }));
+    const combined = [...live, ...stored];
+    const seen = new Set<string>();
+    const unique = combined.filter(s => {
+      if (seen.has(s.symbol)) return false;
+      seen.add(s.symbol);
+      return true;
+    });
+    // Add popular symbols not already present
+    POPULAR_SYMBOLS.forEach(ps => {
+      if (!seen.has(ps.symbol)) unique.push(ps);
+    });
+    return unique;
+  }, [livePrices, allSymbols]);
+
+  const filteredSymbols = useMemo(() => {
+    if (!symbolSearch.trim()) return symbolList;
+    const q = symbolSearch.toLowerCase();
+    return symbolList.filter(s =>
+      s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+    );
+  }, [symbolList, symbolSearch]);
+
+  const selectedSymbolData = symbolList.find(s => s.symbol === symbol);
+
+  // Sync when store symbol changes
+  useState(() => {
+    if (effectiveSymbol) setLocalSymbol(effectiveSymbol);
+  });
 
   const totalCost = orderType === 'limit' && limitPrice
     ? parseFloat(limitPrice) * parseFloat(qty || '0')
@@ -62,7 +119,6 @@ export function OrderForm() {
         toast.success(`${side === 'buy' ? 'Buy' : 'Sell'} order filled: ${symbol} x${qty}`);
         setOrderSheetOpen(false);
         setQty('1'); setLimitPrice(''); setStopLoss(''); setTakeProfit('');
-        // Refresh positions
         const posRes = await fetch('/api/trading/positions');
         if (posRes.ok) setPositions(await posRes.json());
       } else {
@@ -75,21 +131,84 @@ export function OrderForm() {
     }
   };
 
+  const handleSymbolSelect = (sym: string) => {
+    setLocalSymbol(sym);
+    setSymbolDropdownOpen(false);
+    setSymbolSearch('');
+    setOrderSymbol(sym);
+  };
+
   return (
     <Sheet open={orderSheetOpen} onOpenChange={setOrderSheetOpen}>
-      <SheetContent side="bottom" className="h-auto max-h-[85vh] rounded-t-2xl">
+      <SheetContent side="bottom" className="h-auto max-h-[85vh] rounded-t-2xl max-w-2xl mx-auto">
         {/* Drag Handle */}
         <div className="flex justify-center pt-2 pb-1">
           <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
         </div>
 
         <SheetHeader className="px-6 pb-2">
+          {/* Symbol Selector Dropdown */}
+          <div className="relative mb-3">
+            <button
+              onClick={() => setSymbolDropdownOpen(!symbolDropdownOpen)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border bg-muted/30 hover:bg-accent/50 transition-colors cursor-pointer text-left"
+            >
+              <div className="flex-1">
+                <span className="text-lg font-bold">{symbol}</span>
+                {selectedSymbolData && (
+                  <span className="text-sm text-muted-foreground ml-2">{selectedSymbolData.name}</span>
+                )}
+              </div>
+              <span className="text-lg font-semibold tabular-nums">
+                {formatPrice(currentPrice, symbol)}
+              </span>
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </button>
+
+            {symbolDropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-xl border border-border bg-popover shadow-xl overflow-hidden">
+                <div className="p-2 border-b border-border">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <input
+                      type="text"
+                      placeholder="Search stocks, crypto, forex..."
+                      value={symbolSearch}
+                      onChange={e => setSymbolSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-muted/50 rounded-lg border-0 outline-none focus:ring-1 focus:ring-primary"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {filteredSymbols.length === 0 ? (
+                    <p className="p-3 text-sm text-muted-foreground text-center">No symbols found</p>
+                  ) : (
+                    filteredSymbols.slice(0, 20).map(s => (
+                      <button
+                        key={s.symbol}
+                        onClick={() => handleSymbolSelect(s.symbol)}
+                        className={`w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-accent/50 transition-colors cursor-pointer ${
+                          s.symbol === symbol ? 'bg-primary/10 text-primary' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-semibold">{s.symbol}</span>
+                          <span className="text-xs text-muted-foreground">{s.name}</span>
+                        </div>
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {formatPrice(getDemoPrice(s.symbol), s.symbol)}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-3">
-            <SheetTitle className="text-lg">{symbol}</SheetTitle>
-            <span className="text-sm text-muted-foreground">{getDemoSymbolName(symbol)}</span>
-            <span className="text-sm font-semibold tabular-nums ml-auto">
-              {formatPrice(currentPrice, symbol)}
-            </span>
+            <SheetTitle className="text-lg">New Order</SheetTitle>
           </div>
         </SheetHeader>
 

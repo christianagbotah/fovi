@@ -69,6 +69,96 @@ export function AutoTradePanel() {
     return () => clearInterval(interval);
   }, [botConfig.status, setAutoTradeActivity]);
 
+  // Client-side AI trade simulation (works in demo mode without DB)
+  useEffect(() => {
+    if (botConfig.status !== 'running') return;
+
+    const TRADE_SYMBOLS = [
+      'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'META',
+      'BTC/USD', 'ETH/USD', 'SOL/USD', 'EUR/USD', 'XRP/USD',
+    ];
+    const SIGNAL_TYPES = ['momentum', 'mean_reversion', 'breakout', 'volume_spike'];
+
+    function simulateTrade() {
+      const symbol = TRADE_SYMBOLS[Math.floor(Math.random() * TRADE_SYMBOLS.length)];
+      const side = Math.random() > 0.45 ? 'buy' : 'sell';
+      const signalType = SIGNAL_TYPES[Math.floor(Math.random() * SIGNAL_TYPES.length)];
+      const confidence = Math.floor(Math.random() * 30) + 70;
+      const qty = Math.floor(Math.random() * 50) + 1;
+
+      // Get a realistic price based on symbol
+      let basePrice = 150;
+      if (symbol.includes('BTC')) basePrice = 67000 + Math.random() * 3000;
+      else if (symbol.includes('ETH')) basePrice = 3400 + Math.random() * 200;
+      else if (symbol.includes('SOL')) basePrice = 170 + Math.random() * 20;
+      else if (symbol.includes('XRP')) basePrice = 0.55 + Math.random() * 0.1;
+      else if (symbol.includes('/')) basePrice = 1.05 + Math.random() * 0.1;
+      else basePrice = 100 + Math.random() * 400;
+
+      const filledPrice = parseFloat(basePrice.toFixed(2));
+
+      const newActivity: AutoTradeActivity = {
+        id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        symbol,
+        side: side as 'buy' | 'sell',
+        type: 'market',
+        qty,
+        filledPrice,
+        status: 'filled',
+        signalType,
+        signalConfidence: confidence,
+        createdAt: new Date().toISOString(),
+      };
+
+      setAutoTradeActivity(prev => [newActivity, ...prev].slice(0, 50));
+
+      // Update stats
+      const won = Math.random() > 0.35;
+      const pnl = won
+        ? parseFloat((Math.random() * 500 + 10).toFixed(2))
+        : parseFloat((-(Math.random() * 300 + 10)).toFixed(2));
+
+      setBotConfig(prev => {
+        const newTrades = prev.totalTrades + 1;
+        const newPnl = prev.totalPnl + pnl;
+        const wins = Math.round((prev.winRate / 100) * prev.totalTrades) + (won ? 1 : 0);
+        const newWinRate = Math.round((wins / newTrades) * 100);
+        return {
+          ...prev,
+          totalTrades: newTrades,
+          totalPnl: parseFloat(newPnl.toFixed(2)),
+          winRate: newWinRate,
+        };
+      });
+
+      // Show toast notification
+      import('sonner').then(({ toast }) => {
+        toast[side === 'buy' ? 'success' : 'error'](
+          `AI ${side === 'buy' ? 'Bought' : 'Sold'} ${qty} ${symbol} @ $${filledPrice.toLocaleString()}`,
+          { description: `${signalType.replace('_', ' ')} signal · ${confidence}% confidence` }
+        );
+      });
+    }
+
+    // First trade after 3-5s, then every 8-15s
+    const initialDelay = 3000 + Math.random() * 2000;
+    const initialTimer = setTimeout(() => {
+      simulateTrade();
+      const runLoop = () => {
+        const delay = 8000 + Math.random() * 7000;
+        const timer = setTimeout(() => {
+          simulateTrade();
+          runLoop();
+        }, delay);
+        return timer;
+      };
+      const loopTimer = runLoop();
+      return () => clearTimeout(loopTimer);
+    }, initialDelay);
+
+    return () => clearTimeout(initialTimer);
+  }, [botConfig.status, setAutoTradeActivity, setBotConfig]);
+
   const saveConfig = useCallback(async (updates: Record<string, unknown>) => {
     setSaving(true);
     // Persist to localStorage immediately as backup

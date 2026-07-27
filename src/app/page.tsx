@@ -842,9 +842,6 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
                 <Badge variant="outline" className="text-[10px]">v1.1.0</Badge>
-                <Badge variant="outline" className="text-[10px]">Next.js 16</Badge>
-                <Badge variant="outline" className="text-[10px]">Prisma</Badge>
-                <Badge variant="outline" className="text-[10px]">4 Brokers</Badge>
               </div>
             </div>
 
@@ -930,7 +927,7 @@ function DesktopSidebar() {
         <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer" onClick={() => setAlertsOpen(true)}>
           <Bell className="h-4 w-4" /> Alerts {alerts.length > 0 && <Badge variant="secondary" className="ml-auto text-[10px] h-4">{alerts.length}</Badge>}
         </Button>
-        <Button className="w-full gap-2 cursor-pointer" onClick={() => setOrderSheetOpen(true)}>
+        <Button className="w-full gap-2 cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOrderSheetOpen(true)}>
           <Plus className="h-4 w-4" /> New Trade
         </Button>
       </div>
@@ -996,7 +993,7 @@ function MobileNavSheet({ open, onOpenChange, onOpenSettings }: { open: boolean;
         </div>
 
         <div className="p-3 space-y-2 border-t border-border shrink-0">
-          <Button className="w-full gap-2 cursor-pointer" onClick={() => { setOrderSheetOpen(true); onOpenChange(false); }}>
+          <Button className="w-full gap-2 cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => { setOrderSheetOpen(true); onOpenChange(false); }}>
             <Plus className="h-4 w-4" /> New Trade
           </Button>
           <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer" onClick={() => { onOpenSettings(); onOpenChange(false); }}>
@@ -1025,7 +1022,7 @@ function SymbolDetailView() {
       <div className="space-y-4">
         {/* Back button + header */}
         <div className="flex items-center gap-3">
-          <button onClick={() => { setShowDetail(false); setSelectedSymbol(null); }}
+          <button onClick={() => setSelectedSymbol(null)}
             className="p-2 rounded-lg hover:bg-accent transition-colors cursor-pointer">
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -1070,7 +1067,7 @@ function SymbolDetailView() {
         )}
 
         {/* Chart */}
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden min-h-[400px]">
           <PriceChart />
         </Card>
       </div>
@@ -1262,7 +1259,7 @@ export default function TradingDashboard() {
                         <Wallet className="h-4 w-4" />
                         <h3 className="text-sm font-semibold">Open Positions</h3>
                       </div>
-                      <Button size="sm" className="h-7 gap-1 cursor-pointer" onClick={() => useTradingStore.getState().setOrderSheetOpen(true)}>
+                      <Button size="sm" className="h-7 gap-1 cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => useTradingStore.getState().setOrderSheetOpen(true)}>
                         <Plus className="h-3 w-3" /> New Trade
                       </Button>
                     </div>
