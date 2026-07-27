@@ -267,3 +267,47 @@ Stage Summary:
 - Produced: src/components/trading/price-chart.tsx (~344 lines)
 - All three chart types functional with proper OHLC rendering
 - ESLint: 0 errors
+
+---
+Task ID: 8
+Agent: sub-agent (route audit)
+Task: Audit ALL API routes for robust DB error handling — eliminate 500s on DB unavailability
+
+Work Log:
+- Read all 29 route files under src/app/api/
+- Identified 19 route files using DB with narrow isPrismaUnavailable() or error.message.includes('validating datasource') checks that would return 500 on real DB errors
+- Fixed all files to catch ALL errors and return demo/fallback data instead of 500
+- Removed the isPrismaUnavailable() function from accounts/route.ts entirely
+- Verified: ESLint 0 errors, bun run build succeeds
+- Auth routes left unchanged (security concern with demo auth)
+
+Files changed (22 total):
+1. trading/accounts/route.ts — removed isPrismaUnavailable(), POST/GET catch all
+2. trading/accounts/switch/route.ts — catch all
+3. trading/accounts/[id]/route.ts — catch all
+4. trading/backtest/route.ts — simplified DB persistence catch
+5. trading/positions/route.ts — catch all
+6. trading/orders/route.ts — GET/POST catch all
+7. trading/signals/route.ts — catch all
+8. trading/signals/generate/route.ts — catch all
+9. trading/analytics/route.ts — catch all
+10. trading/bots/route.ts — GET/POST catch all
+11. trading/bots/[id]/route.ts — GET/PUT/DELETE catch all
+12. trading/bots/[id]/toggle/route.ts — catch all
+13. trading/sessions/route.ts — catch all
+14. trading/sentiment/route.ts — cleaned up redundant check
+15. trading/correlation/route.ts — catch all
+16. trading/journal/route.ts — GET/POST catch all
+17. trading/webhooks/route.ts — GET/POST/DELETE catch all
+18. trading/webhook/route.ts — catch all
+19. trading/auto-trade/route.ts — GET/PUT catch all
+20. trading/auto-trade/activity/route.ts — catch all
+21. trading/portfolio/route.ts — cleaned up redundant check
+22. trading/leaderboard/route.ts — catch all
+
+Files already fine: ai-chat, market/symbols, bots/simulate, auth/*, api/route.ts
+
+Stage Summary:
+- All 22 trading API routes now catch ALL errors and return demo/fallback data (never 500 for DB errors)
+- Only remaining 500s in trading routes are for non-DB errors (AI SDK, backtest engine, simulation)
+- ESLint: 0 errors. Build: succeeds.

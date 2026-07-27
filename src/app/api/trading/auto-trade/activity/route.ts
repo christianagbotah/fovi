@@ -54,11 +54,8 @@ export async function GET() {
 
     return NextResponse.json(activity);
   } catch (error) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      // Prisma validation error (e.g., wrong DB URL) — return demo activity like the !db path
-      return NextResponse.json(DEMO_ACTIVITY);
-    }
-    console.error('GET /api/trading/auto-trade/activity error:', error);
-    return NextResponse.json([]);
+    // ANY error falls back to demo activity
+    console.warn('[auto-trade/activity GET] DB error, using fallback:', error);
+    return NextResponse.json(DEMO_ACTIVITY);
   }
 }

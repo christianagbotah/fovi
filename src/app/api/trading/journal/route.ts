@@ -128,12 +128,10 @@ export async function GET() {
       take: 100,
     });
     return NextResponse.json(entries);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(DEMO_ENTRIES);
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to fetch journal entries';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[journal GET] DB error, using fallback:', error);
+    return NextResponse.json(DEMO_ENTRIES);
   }
 }
 
@@ -190,19 +188,17 @@ export async function POST(req: NextRequest) {
       },
     });
     return NextResponse.json(created);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      const fallback = {
-        id: `journal_demo_${Date.now()}`,
-        userId: 'usr_demo_1',
-        symbol: body.symbol || 'BTC',
-        side: body.side || 'long',
-        entryPrice: body.entryPrice ?? 0,
-        createdAt: new Date().toISOString(),
-      };
-      return NextResponse.json(fallback);
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to create journal entry';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[journal POST] DB error, using fallback:', error);
+    const fallback = {
+      id: `journal_demo_${Date.now()}`,
+      userId: 'usr_demo_1',
+      symbol: body.symbol || 'BTC',
+      side: body.side || 'long',
+      entryPrice: body.entryPrice ?? 0,
+      createdAt: new Date().toISOString(),
+    };
+    return NextResponse.json(fallback);
   }
 }

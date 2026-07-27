@@ -153,13 +153,9 @@ export async function POST(req: NextRequest) {
           equityCurveJson: JSON.stringify(result.equityCurve),
         },
       });
-    } catch (error: unknown) {
-      if (error instanceof Error && error.message.includes('validating datasource')) {
-        // Ignore — return the result anyway
-      } else {
-        // Log but do not fail the response — backtest result is more important than DB persistence
-        console.warn('[backtest] failed to persist result:', error);
-      }
+    } catch (error) {
+      // ANY DB error is non-critical — backtest result is always returned
+      console.warn('[backtest] failed to persist result:', error);
     }
   }
 

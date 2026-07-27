@@ -32,9 +32,8 @@ export async function GET() {
       : 0;
     return NextResponse.json({ ...config, winRate, accountBalance: defaultAccount.balance });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(DEFAULT_CONFIG);
-    }
+    // ANY error falls back to default config
+    console.warn('[auto-trade GET] DB error, using fallback:', error);
     return NextResponse.json(DEFAULT_CONFIG);
   }
 }
@@ -127,11 +126,8 @@ export async function PUT(request: Request) {
       ? Math.round((config.winTrades / config.totalTrades) * 100) : 0;
     return NextResponse.json({ ...config, winRate });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      // Prisma validation error (e.g., wrong DB URL) — return demo config like the !db path
-      return buildDemoResponse();
-    }
-    console.error('PUT /api/trading/auto-trade error:', error);
-    return NextResponse.json({ error: 'Failed to update config' }, { status: 500 });
+    // ANY database error falls back to demo config
+    console.warn('[auto-trade PUT] DB error, using fallback:', error);
+    return buildDemoResponse();
   }
 }

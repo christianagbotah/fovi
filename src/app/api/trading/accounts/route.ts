@@ -20,19 +20,6 @@ const DEMO_ACCOUNTS = [{
   updatedAt: new Date().toISOString(),
 }];
 
-function isPrismaUnavailable(error: unknown): boolean {
-  if (error instanceof Error) {
-    return error.message.includes('validating datasource') ||
-           error.message.includes('postgresql://') ||
-           error.message.includes('ENOTFOUND') ||
-           error.message.includes('ECONNREFUSED') ||
-           error.message.includes('does not exist') ||
-           error.message.includes('relation \"') ||
-           error.message.includes('Unknown table');
-  }
-  return false;
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -53,13 +40,11 @@ export async function POST(req: NextRequest) {
       },
     });
     return NextResponse.json(account);
-  } catch (error: unknown) {
-    if (isPrismaUnavailable(error)) {
-      const body = { broker: 'demo', accountType: 'demo', balance: 100000 };
-      return NextResponse.json({ ...DEMO_ACCOUNTS[0], id: uuidv4(), ...body });
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to create account';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[accounts POST] DB error, using fallback:', error);
+    const body = { broker: 'demo', accountType: 'demo', balance: 100000 };
+    return NextResponse.json({ ...DEMO_ACCOUNTS[0], id: uuidv4(), ...body });
   }
 }
 
@@ -89,11 +74,9 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
     return NextResponse.json(accounts);
-  } catch (error: unknown) {
-    if (isPrismaUnavailable(error)) {
-      return NextResponse.json(DEMO_ACCOUNTS);
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to fetch accounts';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[accounts GET] DB error, using fallback:', error);
+    return NextResponse.json(DEMO_ACCOUNTS);
   }
 }

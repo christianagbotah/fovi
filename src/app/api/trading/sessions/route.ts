@@ -75,11 +75,9 @@ export async function GET() {
   }
   try {
     return NextResponse.json(buildSessionStatus());
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(buildSessionStatus());
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to compute sessions';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[sessions GET] DB error, using fallback:', error);
+    return NextResponse.json(buildSessionStatus());
   }
 }

@@ -253,11 +253,9 @@ export async function GET() {
         lossTrades: losses.length,
       },
     });
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(buildDemoAnalytics());
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to fetch analytics';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[analytics GET] DB error, using fallback:', error);
+    return NextResponse.json(buildDemoAnalytics());
   }
 }

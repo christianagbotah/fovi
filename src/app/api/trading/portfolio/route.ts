@@ -46,13 +46,9 @@ export async function GET() {
       winRate: closedOrders.length > 0 ? 62 : 0,
       totalTrades: closedOrders.length,
     });
-  } catch (error: unknown) {
-    // Prisma validation errors (e.g., wrong DB URL) are caught here and fall back
-    // to demo data, matching the !db path above.
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(DEMO_PORTFOLIO);
-    }
-    // Return demo data on any other error as well
+  } catch (error) {
+    // ANY error falls back to demo portfolio data
+    console.warn('[portfolio GET] DB error, using fallback:', error);
     return NextResponse.json(DEMO_PORTFOLIO);
   }
 }

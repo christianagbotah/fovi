@@ -88,10 +88,9 @@ export async function POST(req: NextRequest) {
         savedSignals.push(signal);
       }
       return NextResponse.json(savedSignals);
-    } catch (error: unknown) {
-      if (error instanceof Error && error.message.includes('validating datasource')) {
-        return NextResponse.json(DEMO_SIGNALS);
-      }
+    } catch (error) {
+      // ANY database error falls through to demo fallback below
+      console.warn('[signals/generate POST] DB error, falling through to demo:', error);
     }
   }
 

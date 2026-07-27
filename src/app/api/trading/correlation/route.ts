@@ -100,12 +100,10 @@ export async function GET() {
       computedAt: new Date().toISOString(),
       source: 'db',
     });
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(buildDemoResponse());
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to compute correlation';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[correlation GET] DB error, using fallback:', error);
+    return NextResponse.json(buildDemoResponse());
   }
 }
 

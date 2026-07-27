@@ -166,13 +166,9 @@ export async function GET(): Promise<NextResponse<LeaderboardResponse | { error:
   }
   try {
     return NextResponse.json(buildLeaderboard());
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      // Prisma validation error (e.g., wrong DB URL) — return the
-      // deterministic leaderboard just like the !db path.
-      return NextResponse.json(buildLeaderboard());
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to build leaderboard';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[leaderboard GET] DB error, using fallback:', error);
+    return NextResponse.json(buildLeaderboard());
   }
 }

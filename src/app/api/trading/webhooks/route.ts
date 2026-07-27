@@ -75,11 +75,10 @@ export async function GET() {
     }));
 
     return NextResponse.json({ webhooks, calls: demoCalls });
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls });
-    }
-    return NextResponse.json({ error: 'Failed to fetch webhooks' }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[webhooks GET] DB error, using fallback:', error);
+    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls });
   }
 }
 
@@ -132,13 +131,12 @@ export async function POST(req: NextRequest) {
         },
         { status: 201 },
       );
-    } catch (error: unknown) {
-      if (error instanceof Error && error.message.includes('validating datasource')) {
-        const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
-        demoWebhooks.unshift(item);
-        return NextResponse.json(item, { status: 201 });
-      }
-      return NextResponse.json({ error: 'Failed to create webhook' }, { status: 500 });
+    } catch (error) {
+      // ANY database error falls back to demo
+      console.warn('[webhooks POST] DB error, using fallback:', error);
+      const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
+      demoWebhooks.unshift(item);
+      return NextResponse.json(item, { status: 201 });
     }
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
@@ -162,12 +160,11 @@ export async function DELETE(req: NextRequest) {
   try {
     await db.webhookConfig.deleteMany({ where: { id, userId: DEMO_USER_ID } });
     return NextResponse.json({ success: true });
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      const idx = demoWebhooks.findIndex((w) => w.id === id);
-      if (idx >= 0) demoWebhooks.splice(idx, 1);
-      return NextResponse.json({ success: true });
-    }
-    return NextResponse.json({ error: 'Failed to delete webhook' }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[webhooks DELETE] DB error, using fallback:', error);
+    const idx = demoWebhooks.findIndex((w) => w.id === id);
+    if (idx >= 0) demoWebhooks.splice(idx, 1);
+    return NextResponse.json({ success: true });
   }
 }

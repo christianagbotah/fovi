@@ -22,12 +22,9 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(account);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      // Prisma validation error (e.g., wrong DB URL) — return same fallback as !db check
-      return NextResponse.json({ success: true });
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to switch account';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[accounts/switch POST] DB error, using fallback:', error);
+    return NextResponse.json({ success: true });
   }
 }

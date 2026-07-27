@@ -55,12 +55,9 @@ export async function GET(req: NextRequest) {
       orderBy: { openedAt: 'desc' },
     });
     return NextResponse.json(positions);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      // Prisma validation error (e.g., wrong DB URL) — return same fallback as !db check
-      return NextResponse.json([]);
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to fetch positions';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[positions GET] DB error, using fallback:', error);
+    return NextResponse.json([]);
   }
 }

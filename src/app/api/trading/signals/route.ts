@@ -20,11 +20,9 @@ export async function GET(req: NextRequest) {
       take: 30,
     });
     return NextResponse.json(signals);
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : '';
-    if (msg.includes('validating datasource') || msg.includes('postgresql://')) {
-      return NextResponse.json([]);
-    }
-    return NextResponse.json({ error: msg || 'Failed' }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[signals GET] DB error, using fallback:', error);
+    return NextResponse.json([]);
   }
 }

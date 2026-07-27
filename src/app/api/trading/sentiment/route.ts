@@ -252,10 +252,9 @@ export async function GET() {
       headlines,
       source,
     });
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(buildDemoResponse());
-    }
+  } catch (error) {
+    // ANY error falls back to demo sentiment data
+    console.warn('[sentiment GET] DB error, using fallback:', error);
     return NextResponse.json(buildDemoResponse());
   }
 }

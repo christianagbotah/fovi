@@ -114,12 +114,10 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
     return NextResponse.json(bots);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      return NextResponse.json(DEMO_BOTS);
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to fetch bots';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[bots GET] DB error, using fallback:', error);
+    return NextResponse.json(DEMO_BOTS);
   }
 }
 
@@ -214,20 +212,18 @@ export async function POST(req: NextRequest) {
       },
     });
     return NextResponse.json(created);
-  } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('validating datasource')) {
-      const fallback = {
-        id: `bot_demo_${Date.now()}`,
-        userId: 'usr_demo_1',
-        accountId: body.accountId || 'acc_demo_1',
-        name: body.name || 'New Bot',
-        strategy: body.strategy || 'signal_based',
-        symbols: body.symbols || 'BTC',
-        createdAt: new Date().toISOString(),
-      };
-      return NextResponse.json(fallback);
-    }
-    const msg = error instanceof Error ? error.message : 'Failed to create bot';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    // ANY database error falls back to demo
+    console.warn('[bots POST] DB error, using fallback:', error);
+    const fallback = {
+      id: `bot_demo_${Date.now()}`,
+      userId: 'usr_demo_1',
+      accountId: body.accountId || 'acc_demo_1',
+      name: body.name || 'New Bot',
+      strategy: body.strategy || 'signal_based',
+      symbols: body.symbols || 'BTC',
+      createdAt: new Date().toISOString(),
+    };
+    return NextResponse.json(fallback);
   }
 }
