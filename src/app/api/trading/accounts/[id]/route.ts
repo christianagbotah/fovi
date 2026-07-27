@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json({ success: true });
   }
   try {

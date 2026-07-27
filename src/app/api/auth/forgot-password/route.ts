@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, isDbAvailable } from '@/lib/db';
+import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { generateResetToken } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (isDbAvailable() && db) {
+    if (isDbAvailable() && db && hasModel('user')) {
       const user = await db.user.findUnique({ where: { email: emailLower } });
 
       if (user) {

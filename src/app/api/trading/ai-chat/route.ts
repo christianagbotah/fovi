@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { getAllDemoSymbols } from '@/lib/broker/demo';
 import { generateAnalysisSummary } from '@/lib/ai/signals';
 import { getDemoCandles } from '@/lib/broker/demo';
@@ -174,7 +174,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Save to DB for persistence (non-critical)
-    if (db) {
+    if (db && hasModel('aiConversation')) {
       try {
         const userId = 'usr_demo_1';
         let conversation = await db.aiConversation.findFirst({

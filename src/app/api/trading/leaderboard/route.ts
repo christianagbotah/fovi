@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 // ============================================================
 // GET /api/trading/leaderboard
@@ -161,7 +161,7 @@ export async function GET(): Promise<NextResponse<LeaderboardResponse | { error:
   // doesn't depend on the database. We still honor the project's import
   // convention and DB-resilience pattern so this route degrades the
   // same way every other trading route does.
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(buildLeaderboard());
   }
   try {

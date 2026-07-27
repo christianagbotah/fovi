@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 const DEFAULT_CONFIG = {
   id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
@@ -11,7 +11,7 @@ const DEFAULT_CONFIG = {
 // GET /api/trading/auto-trade
 export async function GET() {
   try {
-    if (!db) {
+    if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(DEFAULT_CONFIG);
     }
     const defaultAccount = await db.tradingAccount.findFirst({
@@ -72,7 +72,7 @@ export async function PUT(request: Request) {
     });
   };
 
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     // Return updated config without persisting (demo mode)
     return buildDemoResponse();
   }

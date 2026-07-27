@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!db) {
+  if (!db || !hasModel('bot')) {
     return NextResponse.json({ success: true, id, message: 'demo mode' });
   }
   try {
@@ -30,7 +30,7 @@ export async function PUT(
 ) {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  if (!db) {
+  if (!db || !hasModel('bot')) {
     return NextResponse.json({ success: true, id, updated: body });
   }
   try {
@@ -59,7 +59,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!db) {
+  if (!db || !hasModel('bot')) {
     return NextResponse.json({ success: true });
   }
   try {

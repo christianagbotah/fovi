@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json([]);
   }
   try {
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json({ id: 'demo_order', symbol: 'DEMO', status: 'filled', filledQty: 0, filledPrice: 0 }, { status: 200 });
   }
   try {

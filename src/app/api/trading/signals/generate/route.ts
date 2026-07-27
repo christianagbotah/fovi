@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { generateSignals } from '@/lib/ai/signals';
 import { getDemoCandles, getAssetType } from '@/lib/broker/demo';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(req: NextRequest) {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
   try {

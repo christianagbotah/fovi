@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 
 const DEMO_PORTFOLIO = {
@@ -10,7 +10,7 @@ const DEMO_PORTFOLIO = {
 
 export async function GET() {
   try {
-    if (!db) {
+    if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(DEMO_PORTFOLIO);
     }
     const userId = 'usr_demo_1';

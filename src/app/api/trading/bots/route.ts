@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 const DEMO_BOTS = [
   {
@@ -104,7 +104,7 @@ const DEMO_BOTS = [
 ];
 
 export async function GET() {
-  if (!db) {
+  if (!db || !hasModel('bot')) {
     return NextResponse.json(DEMO_BOTS);
   }
   try {
@@ -125,7 +125,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  if (!db) {
+  if (!db || !hasModel('bot')) {
     const created = {
       id: `bot_demo_${Date.now()}`,
       userId: 'usr_demo_1',

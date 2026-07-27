@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { getDemoPrice, BASE_PRICES } from '@/lib/broker/demo';
 
 // -- Lazy ZAI SDK initialization (same pattern as ai-chat) ------
@@ -262,3 +262,4 @@ export async function GET() {
 
 // Touch db to ensure the import is meaningful in case db becomes required later
 void db;
+void hasModel;

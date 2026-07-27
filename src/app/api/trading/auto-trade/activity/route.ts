@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 // GET /api/trading/auto-trade/activity — recent bot activity (orders where aiGenerated=true)
 const DEMO_ACTIVITY = [
@@ -11,7 +11,7 @@ const DEMO_ACTIVITY = [
 ];
 
 export async function GET() {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(DEMO_ACTIVITY);
   }
   try {

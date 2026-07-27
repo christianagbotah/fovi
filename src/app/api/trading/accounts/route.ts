@@ -1,7 +1,7 @@
 // POST: Create trading account, GET: List accounts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
 
 // Demo fallback data
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     const userId = 'usr_demo_1';
     const id = uuidv4();
 
-    if (!db) {
+    if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json({ ...DEMO_ACCOUNTS[0], id, broker: body.broker || 'demo', accountType: body.accountType || 'demo', balance: body.balance || 100000 });
     }
 
@@ -64,7 +64,7 @@ export async function GET() {
   try {
     const userId = 'usr_demo_1';
 
-    if (!db) {
+    if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(DEMO_ACCOUNTS);
     }
 

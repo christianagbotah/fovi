@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 const DEMO_USER_ID = 'usr_demo_1';
 
@@ -55,7 +55,7 @@ function randomId(len = 12): string {
 
 // GET: list all webhook configs + recent calls
 export async function GET() {
-  if (!db) {
+  if (!db || !hasModel('webhookConfig')) {
     return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls });
   }
 
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     const id = `wh_${randomId(8)}`;
     const secret = `sk_live_${randomId(10)}`;
 
-    if (!db) {
+    if (!db || !hasModel('webhookConfig')) {
       const item = {
         id,
         name: trimmed,
@@ -153,7 +153,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Webhook ID required' }, { status: 400 });
   }
 
-  if (!db) {
+  if (!db || !hasModel('webhookConfig')) {
     const idx = demoWebhooks.findIndex((w) => w.id === id);
     if (idx >= 0) demoWebhooks.splice(idx, 1);
     return NextResponse.json({ success: true });

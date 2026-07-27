@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 // Generate demo analytics data when db is unavailable
 function buildDemoAnalytics() {
@@ -71,7 +71,7 @@ function buildDemoAnalytics() {
 }
 
 export async function GET() {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(buildDemoAnalytics());
   }
   try {

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { getDemoPrice, getAssetType } from '@/lib/broker/demo';
 
 export async function GET(req: NextRequest) {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json([]);
   }
   try {

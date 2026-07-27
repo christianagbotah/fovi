@@ -22,6 +22,16 @@ if (!_dbFailed) {
 export const db = _db;
 export const dbAvailable = !_dbFailed;
 
+/**
+ * Check if a specific Prisma model is available on the db client.
+ * This guards against cases where prisma generate was run with an older schema
+ * (e.g. on VPS after pulling new code) and the model property is undefined.
+ */
+export function hasModel(modelName: string): boolean {
+  if (!db) return false;
+  return (db as unknown as Record<string, unknown>)[modelName] !== undefined;
+}
+
 export function isDbAvailable(): boolean {
   return !_dbFailed && db !== null;
 }

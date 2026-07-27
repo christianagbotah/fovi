@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, isDbAvailable } from '@/lib/db';
+import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     const emailLower = email.toLowerCase().trim();
 
-    if (isDbAvailable() && db) {
+    if (isDbAvailable() && db && hasModel('user')) {
       // Check if user already exists
       const existing = await db.user.findUnique({ where: { email: emailLower } });
       if (existing) {

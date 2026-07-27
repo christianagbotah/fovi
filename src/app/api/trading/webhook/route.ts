@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 // Simple HMAC-SHA1 verification using Web Crypto API
 async function verifySignature(payload: string, signature: string, secret: string): Promise<boolean> {
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     raw: body,
   };
 
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json({
       success: true,
       processed: true,

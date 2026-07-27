@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 interface SessionDef {
   id: string;
@@ -70,7 +70,7 @@ export async function GET() {
   // Sessions are derived purely from server time, so they don't depend on db.
   // We still touch db to honor the project's import convention and to allow
   // future persistence of custom session overrides.
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(buildSessionStatus());
   }
   try {

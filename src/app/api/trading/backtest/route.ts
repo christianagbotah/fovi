@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 import { runBacktest, type EngineConfig } from '@/lib/trading-engine';
 import { getDemoCandles } from '@/lib/broker/demo';
 import type { CandleData } from '@/lib/types';
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 4) Persist to DB if available (non-blocking — failure here does NOT affect the response)
-  if (db) {
+  if (db && hasModel('backtest')) {
     try {
       await db.backtest.create({
         data: {

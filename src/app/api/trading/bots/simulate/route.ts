@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 // -- Lazy imports with fallback ---------------------------------
 let _demoCandles: typeof import('@/lib/broker/demo').getDemoCandles | null = null;
@@ -261,3 +261,4 @@ export async function POST(req: NextRequest) {
 
 // Touch db for DB resilience pattern consistency
 void db;
+void hasModel;

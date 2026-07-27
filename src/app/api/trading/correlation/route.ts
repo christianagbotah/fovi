@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 const PORTFOLIO_SYMBOLS = ['BTC', 'ETH', 'AAPL', 'NVDA', 'TSLA', 'SOL', 'GOOGL'];
 
@@ -29,7 +29,7 @@ function buildDemoResponse() {
 }
 
 export async function GET() {
-  if (!db) {
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(buildDemoResponse());
   }
   try {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
 
 const DEMO_ENTRIES = [
   {
@@ -114,8 +114,10 @@ const DEMO_ENTRIES = [
   },
 ];
 
+const DB_MODEL = 'tradeJournal';
+
 export async function GET() {
-  if (!db) {
+  if (!db || !hasModel(DB_MODEL)) {
     return NextResponse.json(DEMO_ENTRIES);
   }
   try {
@@ -137,7 +139,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  if (!db) {
+  if (!db || !hasModel(DB_MODEL)) {
     const created = {
       id: `journal_demo_${Date.now()}`,
       userId: 'usr_demo_1',
