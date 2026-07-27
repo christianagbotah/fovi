@@ -36,6 +36,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { formatPnl, formatPrice, formatVolume } from '@/lib/market-sim';
 import { useMarketSocket } from '@/hooks/use-market-socket';
 import { useTradeNotifications } from '@/hooks/use-trade-notifications';
+import { PagePreloader } from '@/components/page-preloader';
 
 // ============================================================
 // Mobile Bottom Tab Bar
@@ -1063,8 +1064,15 @@ export default function TradingDashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [pageLoaded, setPageLoaded] = useState(false);
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
+
+  // Simulate initial page load — show preloader for ~2s
+  useEffect(() => {
+    const timer = setTimeout(() => setPageLoaded(true), 2000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Real-time trade-notification toasts — polls
   // /api/trading/auto-trade/activity every 15s and fires a Sonner
@@ -1098,6 +1106,10 @@ export default function TradingDashboard() {
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-background">
+      <PagePreloader isLoaded={pageLoaded} onComplete={() => {}} />
+
+      {/* ====== APP CONTENT ====== */}
+      <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-500 ${pageLoaded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
       {/* ====== TOP BAR ====== */}
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-xl border-b border-border/50">
         <div className="flex items-center justify-between h-14 px-4">
@@ -1341,6 +1353,7 @@ export default function TradingDashboard() {
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
       <AlertsSheet open={alertsOpen} onOpenChange={setAlertsOpen} />
       <MobileNavSheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} onOpenSettings={() => setSettingsOpen(true)} />
+      </div>
     </div>
   );
 }
