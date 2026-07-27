@@ -8,6 +8,7 @@ import {
   ArrowDownRight, Activity, Radio, Briefcase, Clock, Shield, Target, Trophy,
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
+  ArrowLeft, User, Lock, Mail, Phone, ChevronDown,
 } from 'lucide-react';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
@@ -302,7 +303,7 @@ function PortfolioCards() {
 // Ticker Strip
 // ============================================================
 function TickerStrip() {
-  const { livePrices, allSymbols, wsConnected, setSelectedSymbol, setAllSymbols } = useTradingStore();
+  const { livePrices, allSymbols, wsConnected, setSelectedSymbol, setAllSymbols, setActiveTab } = useTradingStore();
   const prices = livePrices.length > 0 ? livePrices : allSymbols;
   const topMovers = useMemo(() =>
     [...prices].sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent)).slice(0, 12),
@@ -322,7 +323,7 @@ function TickerStrip() {
           {topMovers.map(sym => {
             const isUp = sym.changePercent >= 0;
             return (
-              <button key={sym.symbol} onClick={() => setSelectedSymbol(sym.symbol)}
+              <button key={sym.symbol} onClick={() => { setSelectedSymbol(sym.symbol); setActiveTab('markets'); }}
                 className="flex items-center gap-1.5 shrink-0 hover:opacity-80 transition-opacity cursor-pointer">
                 <span className="text-[11px] font-semibold">{sym.symbol}</span>
                 <span className={`text-[11px] font-medium tabular-nums ${isUp ? 'text-emerald-500' : 'text-red-500'}`}>
@@ -430,7 +431,7 @@ function AiChatSheet() {
 
   return (
     <Sheet open={aiChatOpen} onOpenChange={setAiChatOpen}>
-      <SheetContent side="right" className="w-full sm:max-w-md p-0 flex flex-col">
+      <SheetContent side="right" className="w-full sm:max-w-md p-0 flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
           <SheetTitle className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
@@ -452,7 +453,7 @@ function AiChatSheet() {
           </SheetTitle>
         </SheetHeader>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 px-5 py-4 space-y-4">
           {messages.map((msg, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2 }} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -548,7 +549,7 @@ function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col">
+      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
           <SheetTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5" />
@@ -557,7 +558,7 @@ function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
           </SheetTitle>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        <div className="flex-1 overflow-y-auto min-h-0 px-5 py-4 space-y-3">
           {!showForm ? (
             <Button variant="outline" className="w-full gap-2 border-dashed cursor-pointer" onClick={() => setShowForm(true)}>
               <Plus className="h-4 w-4" /> Create Alert
@@ -707,7 +708,7 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col">
+      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
           <SheetTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
@@ -715,7 +716,7 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
           </SheetTitle>
         </SheetHeader>
 
-        <ScrollArea className="flex-1">
+        <div className="flex-1 overflow-y-auto min-h-0">
           <div className="px-5 py-5 space-y-6">
             {/* Connected Accounts */}
             <div>
@@ -835,7 +836,7 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
               </p>
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );
@@ -867,7 +868,7 @@ function DesktopSidebar() {
   ];
 
   return (
-    <aside className="hidden lg:flex flex-col w-56 border-r border-border bg-card/30 shrink-0">
+    <aside className="hidden lg:flex flex-col w-56 border-r border-border bg-card/30 shrink-0 min-h-0">
       <div className="p-4">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20">
@@ -880,7 +881,7 @@ function DesktopSidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto min-h-0">
         {sidebarItems.map(item => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -911,15 +912,157 @@ function DesktopSidebar() {
 }
 
 // ============================================================
+// Mobile Navigation Sheet (hamburger menu)
+// ============================================================
+function MobileNavSheet({ open, onOpenChange, onOpenSettings }: { open: boolean; onOpenChange: (o: boolean) => void; onOpenSettings: () => void }) {
+  const { activeTab, setActiveTab, setOrderSheetOpen } = useTradingStore();
+
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'autotrade', label: 'AI Auto-Trade', icon: Bot },
+    { id: 'bots', label: 'Bot Manager', icon: LineChart },
+    { id: 'backtest', label: 'Backtesting', icon: FlaskConical },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
+    { id: 'markets', label: 'Markets', icon: Search },
+    { id: 'positions', label: 'Positions', icon: Wallet },
+    { id: 'journal', label: 'Trade Journal', icon: BookOpen },
+    { id: 'sentiment', label: 'Sentiment', icon: Globe },
+    { id: 'correlation', label: 'Correlation', icon: GitBranch },
+    { id: 'sessions', label: 'Sessions', icon: Timer },
+    { id: 'webhook', label: 'Webhooks', icon: Activity },
+    { id: 'history', label: 'History', icon: Clock },
+    { id: 'signals', label: 'AI Signals', icon: Sparkles },
+  ];
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="left" className="w-72 p-0 flex flex-col overflow-hidden">
+        <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
+          <SheetTitle className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20">
+              <Zap className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <div>
+              <span className="font-bold text-base">Fovi AI</span>
+              <p className="text-[10px] text-muted-foreground font-medium">Auto-Trading Platform</p>
+            </div>
+          </SheetTitle>
+        </SheetHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 px-3 py-3 space-y-0.5">
+          {navItems.map(item => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button key={item.id} onClick={() => { setActiveTab(item.id); onOpenChange(false); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                }`}>
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="p-3 space-y-2 border-t border-border shrink-0">
+          <Button className="w-full gap-2 cursor-pointer" onClick={() => { setOrderSheetOpen(true); onOpenChange(false); }}>
+            <Plus className="h-4 w-4" /> New Trade
+          </Button>
+          <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer" onClick={() => { onOpenSettings(); onOpenChange(false); }}>
+            <Settings className="h-4 w-4" /> Settings
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ============================================================
+// Symbol Detail View (Markets tab with chart + list)
+// ============================================================
+function SymbolDetailView() {
+  const { allSymbols, selectedSymbol, setSelectedSymbol, setActiveTab, livePrices } = useTradingStore();
+  const showDetail = !!selectedSymbol;
+  const symbols = livePrices.length > 0 ? livePrices : allSymbols;
+
+  const selectedData = symbols.find(s => s.symbol === selectedSymbol);
+  const lastCandle = selectedData;
+  const isUp = (lastCandle?.changePercent ?? 0) >= 0;
+
+  if (showDetail && selectedSymbol) {
+    return (
+      <div className="space-y-4">
+        {/* Back button + header */}
+        <div className="flex items-center gap-3">
+          <button onClick={() => { setShowDetail(false); setSelectedSymbol(null); }}
+            className="p-2 rounded-lg hover:bg-accent transition-colors cursor-pointer">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold">{selectedSymbol}</h2>
+              {lastCandle && (
+                <Badge variant={isUp ? 'default' : 'destructive'} className={isUp ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border-0' : ''}>
+                  {isUp ? '+' : ''}{(lastCandle.changePercent ?? 0).toFixed(2)}%
+                </Badge>
+              )}
+            </div>
+            {lastCandle && (
+              <p className="text-2xl font-bold tabular-nums mt-0.5">
+                {formatPrice(lastCandle.price, selectedSymbol)}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-9 px-4 cursor-pointer"
+              onClick={() => { useTradingStore.getState().setOrderSymbol(selectedSymbol); useTradingStore.getState().setOrderSheetOpen(true); }}>Buy</Button>
+            <Button size="sm" variant="outline" className="text-red-500 border-red-500/30 hover:bg-red-500/10 h-9 px-4 cursor-pointer"
+              onClick={() => { useTradingStore.getState().setOrderSymbol(selectedSymbol); useTradingStore.getState().setOrderSheetOpen(true); }}>Sell</Button>
+          </div>
+        </div>
+
+        {/* Market info strip */}
+        {lastCandle && (
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'Open', value: formatPrice(lastCandle.price * (1 - (lastCandle.changePercent || 0) / 100 * 0.5), selectedSymbol) },
+              { label: 'High', value: formatPrice((lastCandle.high24h || lastCandle.price * 1.02), selectedSymbol) },
+              { label: 'Low', value: formatPrice((lastCandle.low24h || lastCandle.price * 0.98), selectedSymbol) },
+              { label: 'Vol', value: formatVolume(lastCandle.volume || 0) },
+            ].map(item => (
+              <div key={item.label} className="p-2.5 rounded-lg bg-muted/50 border border-border/30">
+                <p className="text-[10px] text-muted-foreground font-medium">{item.label}</p>
+                <p className="text-sm font-bold tabular-nums mt-0.5">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Chart */}
+        <Card className="overflow-hidden">
+          <PriceChart />
+        </Card>
+      </div>
+    );
+  }
+
+  // Symbol list view
+  return <MarketOverview />;
+}
+
+// ============================================================
 // Main Trading Dashboard Page
 // ============================================================
 export default function TradingDashboard() {
   const {
-    activeTab, setAccounts, setPortfolio, setAllSymbols, setLivePrices, setWsConnected,
-    accounts, livePrices, allSymbols,
+    activeTab, setActiveTab, setAccounts, setPortfolio, setAllSymbols, setLivePrices, setWsConnected,
+    accounts, livePrices, allSymbols, selectedSymbol, setSelectedSymbol,
   } = useTradingStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
@@ -954,12 +1097,12 @@ export default function TradingDashboard() {
   }, [setAccounts, setPortfolio, setAllSymbols]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="h-screen overflow-hidden flex flex-col bg-background">
       {/* ====== TOP BAR ====== */}
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-xl border-b border-border/50">
         <div className="flex items-center justify-between h-14 px-4">
           <div className="flex items-center gap-3">
-            <button className="lg:hidden cursor-pointer" onClick={() => setSettingsOpen(true)}>
+            <button className="lg:hidden cursor-pointer" onClick={() => setMobileMenuOpen(true)}>
               <Menu className="h-5 w-5" />
             </button>
             <div className="flex items-center gap-2 lg:hidden">
@@ -1003,10 +1146,10 @@ export default function TradingDashboard() {
       <TickerStrip />
 
       {/* ====== MAIN LAYOUT ====== */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         <DesktopSidebar />
 
-        <main className="flex-1 overflow-y-auto pb-20 lg:pb-4">
+        <main className="flex-1 overflow-y-auto min-h-0 pb-20 lg:pb-4">
           <AnimatePresence mode="wait">
             {/* ====== DASHBOARD TAB ====== */}
             {activeTab === 'dashboard' && (
@@ -1184,7 +1327,7 @@ export default function TradingDashboard() {
             {activeTab === 'markets' && (
               <motion.div key="markets" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
-                <div className="p-4" style={{ paddingBottom: '100px' }}><MarketOverview /></div>
+                <div className="p-4" style={{ paddingBottom: '100px' }}><SymbolDetailView /></div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -1197,6 +1340,7 @@ export default function TradingDashboard() {
       <AiChatSheet />
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
       <AlertsSheet open={alertsOpen} onOpenChange={setAlertsOpen} />
+      <MobileNavSheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} onOpenSettings={() => setSettingsOpen(true)} />
     </div>
   );
 }
