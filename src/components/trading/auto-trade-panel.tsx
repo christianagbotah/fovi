@@ -23,37 +23,48 @@ export function AutoTradePanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
+  const [showActivity, setShowActivity] = useState(true);
   const [amountWarning, setAmountWarning] = useState(false);
 
   // Ensure autoTradeActivity is always an array
   const activityList = Array.isArray(autoTradeActivity) ? autoTradeActivity : [];
 
-  // Load config on mount — try API first, then localStorage fallback
+  // Load config on mount — localStorage is source of truth, API is fallback
   useEffect(() => {
+    // 1. Immediately hydrate from localStorage (instant, no flicker)
+    try {
+      const savedConfig = localStorage.getItem('fovi_autotrade_config');
+      if (savedConfig) {
+        const parsed = JSON.parse(savedConfig);
+        if (parsed.status === 'running' || parsed.enabled) {
+          setBotConfig(parsed);
+        }
+      }
+      const savedActivity = localStorage.getItem('fovi_autotrade_activity');
+      if (savedActivity) {
+        const parsed = JSON.parse(savedActivity);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAutoTradeActivity(parsed);
+        }
+      }
+    } catch { /* ignore */ }
+
+    // 2. Then try API — but never overwrite a running state from localStorage
     async function load() {
       try {
         const [configRes, activityRes] = await Promise.all([
           fetch('/api/trading/auto-trade'),
           fetch('/api/trading/auto-trade/activity'),
         ]);
-        if (configRes.ok) {
+        // Only apply API config if NOT already running from localStorage
+        const current = useTradingStore.getState().botConfig;
+        if (configRes.ok && current.status !== 'running') {
           const config = await configRes.json();
-          setBotConfig(prev => {
-            // If API returned default (stopped) but localStorage has running state, prefer localStorage
-            const saved = localStorage.getItem('fovi_autotrade_config');
-            if (saved) {
-              try {
-                const parsed = JSON.parse(saved);
-                if (parsed.enabled && config.status === 'stopped' && !config.id) {
-                  return { ...prev, ...parsed };
-                }
-              } catch { /* ignore */ }
-            }
-            return config;
-          });
+          setBotConfig(config);
         }
-        if (activityRes.ok) {
+        // Only apply API activity if we don't have local activity
+        const currentActivity = useTradingStore.getState().autoTradeActivity;
+        if (activityRes.ok && !(Array.isArray(currentActivity) && currentActivity.length > 0)) {
           const actData = await activityRes.json();
           if (Array.isArray(actData)) setAutoTradeActivity(actData);
         }
@@ -119,26 +130,39 @@ export function AutoTradePanel() {
         createdAt: new Date().toISOString(),
       };
 
-      setAutoTradeActivity(prev => [newActivity, ...prev].slice(0, 50));
-
-      // Update stats
+      // Compute simulated P&L for this trade
       const won = Math.random() > 0.35;
       const pnl = won
         ? parseFloat((Math.random() * 500 + 10).toFixed(2))
         : parseFloat((-(Math.random() * 300 + 10)).toFixed(2));
 
+      const activityWithPnl = { ...newActivity, pnl };
+      setAutoTradeActivity(prev => {
+        const updated = [activityWithPnl, ...prev].slice(0, 50);
+        // Persist activity to localStorage
+        try { localStorage.setItem('fovi_autotrade_activity', JSON.stringify(updated)); } catch { /* */ }
+        return updated;
+      });
+
+      // Update stats and persist
       setBotConfig(prev => {
         const newTrades = prev.totalTrades + 1;
         const newPnl = prev.totalPnl + pnl;
         const wins = Math.round((prev.winRate / 100) * prev.totalTrades) + (won ? 1 : 0);
         const newWinRate = Math.round((wins / newTrades) * 100);
-        return {
+        const updated = {
           ...prev,
           totalTrades: newTrades,
           totalPnl: parseFloat(newPnl.toFixed(2)),
           winRate: newWinRate,
+          lastTradeAt: new Date().toISOString(),
         };
+        try { localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated)); } catch { /* */ }
+        return updated;
       });
+
+      // Auto-open activity log on first trade
+      setShowActivity(true);
 
       // Show toast notification
       import('sonner').then(({ toast }) => {
@@ -504,7 +528,7 @@ export function AutoTradePanel() {
           </AnimatePresence>
 
           {/* === Activity Log Toggle === */}
-          {autoTradeActivity.length > 0 && (
+          {activityList.length > 0 && (
             <>
               <button
                 onClick={() => setShowActivity(!showActivity)}
@@ -512,7 +536,7 @@ export function AutoTradePanel() {
               >
                 <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5" /> Recent Activity
-                  <Badge variant="secondary" className="text-[9px] h-4 ml-1">{autoTradeActivity.length}</Badge>
+                  <Badge variant="secondary" className="text-[9px] h-4 ml-1">{activityList.length}</Badge>
                 </span>
                 {showActivity ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
               </button>
@@ -545,8 +569,10 @@ export function AutoTradePanel() {
 // ============================================================
 // Activity Row Component
 // ============================================================
-function ActivityRow({ activity }: { activity: AutoTradeActivity }) {
+function ActivityRow({ activity }: { activity: AutoTradeActivity & { pnl?: number } }) {
   const isBuy = activity.side === 'buy';
+  const pnl = (activity as Record<string, unknown>).pnl as number | undefined;
+  const pnlPositive = pnl != null && pnl >= 0;
   const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; bg: string; label: string }> = {
     filled: { icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10', label: 'Filled' },
     pending: { icon: Clock, color: 'text-amber-500', bg: 'bg-amber-500/10', label: 'Pending' },
@@ -588,6 +614,15 @@ function ActivityRow({ activity }: { activity: AutoTradeActivity }) {
           {activity.qty} · {activity.filledPrice ? `$${activity.filledPrice.toLocaleString()}` : '—'} · {timeAgo(activity.createdAt)}
         </p>
       </div>
+      {/* P&L Badge */}
+      {pnl != null && (
+        <div className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-[10px] font-bold tabular-nums ${
+          pnlPositive ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
+        }`}>
+          {pnlPositive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+          {pnlPositive ? '+' : ''}{pnl.toFixed(2)}
+        </div>
+      )}
       <div className={`flex items-center gap-1 px-2 py-1 rounded-md ${sc.bg}`}>
         <StatusIcon className={`h-3 w-3 ${sc.color}`} />
         <span className={`text-[10px] font-semibold ${sc.color}`}>{sc.label}</span>
