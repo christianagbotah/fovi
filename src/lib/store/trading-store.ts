@@ -267,7 +267,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   assetFilter: 'all',
   setAssetFilter: (filter) => set({ assetFilter: filter }),
 
-  // AI Auto-Trade
+  // AI Auto-Trade — DB is source of truth for botConfig.
+  // We still load from localStorage for instant UI on mount, but the
+  // init useEffect in ai-trading-dashboard always reconciles with the API.
   botConfig: loadFromLS<BotConfigState>('fovi_autotrade_config', {
     id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
     maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
@@ -278,10 +280,14 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   setBotConfig: (config) => {
     const updated = { ...get().botConfig, ...config };
     set({ botConfig: updated });
+    // Cache to localStorage for instant UI on next mount.
+    // The init useEffect will reconcile with the DB anyway.
     saveToLS('fovi_autotrade_config', updated);
   },
   autoTradeActivity: [],
   setAutoTradeActivity: (activity) => set({ autoTradeActivity: activity }),
+  // AI positions/trades are transient simulation data.
+  // Stored in localStorage for session persistence until DB persistence is added.
   aiOpenPositions: loadFromLS<AIOpenPosition[]>('fovi_ai_positions', []),
   setAIOpenPositions: (positions) => { set({ aiOpenPositions: positions }); saveToLS('fovi_ai_positions', positions); },
   aiClosedTrades: loadFromLS<AIClosedTrade[]>('fovi_ai_closed_trades', []),

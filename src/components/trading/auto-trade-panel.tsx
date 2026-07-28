@@ -29,17 +29,12 @@ export function AutoTradePanel() {
   // Ensure autoTradeActivity is always an array
   const activityList = Array.isArray(autoTradeActivity) ? autoTradeActivity : [];
 
-  // Load config on mount — localStorage is source of truth, API is fallback
+  // Load config on mount — DB is source of truth for bot config
+  // NOTE: This component is currently unused (dead code).
+  // Kept in sync with ai-trading-dashboard.tsx patterns.
   useEffect(() => {
-    // 1. Immediately hydrate from localStorage (instant, no flicker)
+    // Load transient activity data from localStorage
     try {
-      const savedConfig = localStorage.getItem('fovi_autotrade_config');
-      if (savedConfig) {
-        const parsed = JSON.parse(savedConfig);
-        if (parsed.status === 'running' || parsed.enabled) {
-          setBotConfig(parsed);
-        }
-      }
       const savedActivity = localStorage.getItem('fovi_autotrade_activity');
       if (savedActivity) {
         const parsed = JSON.parse(savedActivity);
@@ -49,16 +44,14 @@ export function AutoTradePanel() {
       }
     } catch { /* ignore */ }
 
-    // 2. Then try API — but never overwrite a running state from localStorage
     async function load() {
       try {
         const [configRes, activityRes] = await Promise.all([
           fetch('/api/trading/auto-trade'),
           fetch('/api/trading/auto-trade/activity'),
         ]);
-        // Only apply API config if NOT already running from localStorage
-        const current = useTradingStore.getState().botConfig;
-        if (configRes.ok && current.status !== 'running') {
+        // DB is source of truth — always use API config
+        if (configRes.ok) {
           const config = await configRes.json();
           setBotConfig(config);
         }

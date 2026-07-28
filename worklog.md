@@ -136,3 +136,63 @@ Stage Summary:
 - Close All & Stop: visible when bot running or positions open, closes at current price with levy deduction
 - Toasts: swipeable on touch devices via Sonner's built-in swipeable prop
 - Balance: AI dashboard's setPortfolio() takes precedence while bot is running; API refetch resumes when bot stops
+
+---
+Task ID: 9
+Agent: Main
+Task: Fix localStorage vs DB data persistence, Stop button not closing positions, AI re-enabling on reload, differentiate Stop vs Toggle
+
+Work Log:
+- Audited all localStorage usage: identified fovi_autotrade_config, fovi_ai_positions, fovi_ai_closed_trades, fovi_autotrade_activity, fovi_alloc_deducted, fovi_accounts
+- Found root cause of re-enable bug: init useEffect treated localStorage as primary, API as fallback. If stop's fire-and-forget API call failed, DB retained enabled:true, and on reload the API response could override the correct stopped state
+- Found Stop button only cleared client-side store, never awaited API confirmation
+- Found no meaningful difference between Stop button and Toggle switch
+
+- Updated /api/trading/auto-trade (route.ts):
+  - PUT now persists all fields (totalTrades, winTrades, totalPnl) to DB BotConfig table
+  - Properly handles 'paused' status (not just running/stopped)
+  - Returns 500 on DB error instead of silently falling back to demo config
+  - GET includes adminLevyPercent and accountBalance in response
+
+- Rewrote ai-trading-dashboard.tsx init logic:
+  - DB is now source of truth for bot config (enabled, status, allocation, stats)
+  - localStorage only used for transient simulation data (positions, trades, activity)
+  - Init useEffect always applies API config, never conditionally skips it
+  - Added comments explaining the data ownership model
+
+- Made confirmCloseAllAndStop async:
+  - Awaits API call to persist stopped state to DB before updating UI
+  - Shows error toast if API fails ("Bot may restart on reload")
+  - Records closed trades, returns equity to main account, then persists
+
+- Differentiated Toggle vs Stop:
+  - Toggle (Switch) = Pause/Resume: keeps positions open, no equity returned. Shows 'Pause' when running, 'Resume' when paused
+  - Stop (Hand button) = Close all positions, record P&L, return equity, disable bot, persist to DB
+  - Added 'paused' status with amber UI (badge, gradient border, icon)
+
+- Removed fovi_alloc_deducted flag:
+  - Replaced with DB-aware allocation tracking via useEffect that watches botConfig.status and botConfig.allocationAmount
+  - No more separate localStorage flag for double-deduction prevention
+
+- Updated UI for paused state:
+  - Amber PAUSED badge with Clock icon
+  - Toggle label changes: 'Start' → 'Pause' → 'Resume'
+  - Stop button visible when paused (not just running)
+  - Allocation input disabled when paused
+  - Status description: 'AI paused — positions held. Toggle to resume or Stop to close all.'
+
+- Fixed auto-trade-panel.tsx (dead code): updated init to use DB as source of truth
+- Updated store comments to document data ownership model
+
+- Browser verified all flows:
+  1. Start → LIVE badge, positions opening, toggle says 'Pause'
+  2. Pause → PAUSED badge (amber), positions held, toggle says 'Resume'
+  3. Pause + Reload → stays PAUSED (was the main bug)
+  4. Resume → back to LIVE, trading resumes
+  5. Stop → confirmation dialog with P&L breakdown, closes positions, returns equity
+  6. Stop + Reload → stays STOPPED (was the re-enable bug)
+
+Stage Summary:
+- Files changed: src/app/api/trading/auto-trade/route.ts, src/components/trading/ai-trading-dashboard.tsx, src/lib/store/trading-store.ts, src/components/trading/auto-trade-panel.tsx
+- All 3 bugs fixed: Stop closes positions properly (await API), AI no longer re-enables on reload, Stop vs Toggle clearly differentiated
+- localStorage now only holds transient simulation data; DB is source of truth for bot config

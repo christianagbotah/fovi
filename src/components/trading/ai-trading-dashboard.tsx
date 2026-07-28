@@ -133,6 +133,8 @@ export function AITradingDashboard() {
   const availableBalance = Math.max(0, parseFloat((accountEquity - investedAmount).toFixed(2)));
   const isLiquidated = botConfig.status === 'liquidated';
   const isRunning = botConfig.status === 'running';
+  const isPaused = botConfig.status === 'paused';
+  const isActive = isRunning || isPaused;
   const equityPercent = allocation > 0 ? parseFloat(((totalPnl / allocation) * 100).toFixed(2)) : 0;
   const mainAcc = accounts.find(a => a.id === activeAccountId);
   const mainBalanceDisplay = mainAcc ? mainAcc.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---';
@@ -272,11 +274,9 @@ export function AITradingDashboard() {
 
       // On liquidation, equity is $0 — nothing to return to main account.
       // The allocation was already deducted when user set it.
-      // Just reset the tracking ref.
       prevAllocationRef.current = 0;
-      try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
 
-      // Sync to API so DB knows we liquidated
+      // Sync liquidation to DB (await)
       const liqConfig = useTradingStore.getState().botConfig;
       fetch('/api/trading/auto-trade', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(liqConfig),
@@ -488,7 +488,7 @@ export function AITradingDashboard() {
   }, [botConfig.status, botConfig.allocationAmount, botConfig.maxPositions, botConfig.stopLossPercent, botConfig.takeProfitPercent, levyPercent, allocation, setAutoTradeActivity, setBotConfig, setAIOpenPositions, setAIClosedTrades]);
 
   // ---- Handlers ----
-  const handleAllocationChange = (newVal: number) => {
+  const handleAllocationChange = async (newVal: number) => {
     // Only sync balance when AI is NOT running
     if (isRunning) return;
     const oldVal = prevAllocationRef.current;
@@ -498,18 +498,19 @@ export function AITradingDashboard() {
       if (acc) {
         const newBalance = Math.max(0, acc.balance - delta);
         syncAccountBalance(newBalance, 'allocation ' + (delta > 0 ? 'deducted' : 'returned') + ' $' + Math.abs(delta).toFixed(2));
-        if (newVal > 0) {
-          try { localStorage.setItem('fovi_alloc_deducted', 'true'); } catch { /* */ }
-        } else {
-          try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
-        }
       }
     }
     prevAllocationRef.current = newVal;
-    setBotConfig({ allocationAmount: newVal });
+    // Persist allocation to DB (not just localStorage)
+    const currentConfig = useTradingStore.getState().botConfig;
+    const updated = { ...currentConfig, allocationAmount: newVal };
+    setBotConfig(updated);
     try {
-      localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: newVal }));
-    } catch { /* */ }
+      await fetch('/api/trading/auto-trade', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: currentConfig.id, allocationAmount: newVal }),
+      });
+    } catch { /* best-effort */ }
   };
 
   // ---- Toggle: Pause / Resume (keeps positions open, no equity return) ----
@@ -546,7 +547,7 @@ export function AITradingDashboard() {
     setSaving(false);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     if (isRunning) {
       toast.error('Stop the bot before resetting');
       return;
@@ -556,25 +557,35 @@ export function AITradingDashboard() {
     if (currentAllocation > 0 && activeAccountId) {
       const acc = accounts.find(a => a.id === activeAccountId);
       if (acc) {
-        // If liquidated, equity is 0 — nothing to return
-        // If stopped, return the current allocation (since reset clears trades)
         if (!isLiquidated) {
           syncAccountBalance(acc.balance + currentAllocation, 'reset: returned $' + currentAllocation.toFixed(2) + ' allocation');
         }
       }
     }
     prevAllocationRef.current = 0;
-    try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
     setAIOpenPositions([]);
     setAIClosedTrades([]);
     setAutoTradeActivity([]);
-    setBotConfig({
-      totalTrades: 0, winTrades: 0, totalPnl: 0, winRate: 0,
-      adminLevyCollected: 0, lastTradeAt: null, status: 'stopped',
-    });
+    // Clear transient localStorage
     try { localStorage.removeItem('fovi_ai_positions'); } catch { /* */ }
     try { localStorage.removeItem('fovi_ai_closed_trades'); } catch { /* */ }
     try { localStorage.removeItem('fovi_autotrade_activity'); } catch { /* */ }
+    try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+
+    // Persist reset to DB
+    const currentConfig = useTradingStore.getState().botConfig;
+    const resetConfig = {
+      ...currentConfig,
+      totalTrades: 0, winTrades: 0, totalPnl: 0, winRate: 0,
+      adminLevyCollected: 0, lastTradeAt: null, status: 'stopped', enabled: false,
+    };
+    setBotConfig(resetConfig);
+    try {
+      await fetch('/api/trading/auto-trade', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resetConfig),
+      });
+    } catch { /* best-effort */ }
     toast.success('Trade history cleared. Allocation returned to main account.');
   };
 
@@ -877,11 +888,11 @@ export function AITradingDashboard() {
       </AlertDialog>
 
       {/* ===== HERO: STATUS + EQUITY + P&L ===== */}
-      <Card className={isRunning ? 'border-2 border-emerald-500/50 overflow-hidden' : isLiquidated ? 'border-2 border-red-500/50 overflow-hidden' : 'border-2 border-border/50 overflow-hidden'}>
-        <div className={isRunning ? 'px-5 py-5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent' : isLiquidated ? 'px-5 py-5 bg-gradient-to-r from-red-500/10 via-red-500/5 to-transparent' : 'px-5 py-5 bg-muted/20'}>
+      <Card className={isRunning ? 'border-2 border-emerald-500/50 overflow-hidden' : isPaused ? 'border-2 border-amber-500/50 overflow-hidden' : isLiquidated ? 'border-2 border-red-500/50 overflow-hidden' : 'border-2 border-border/50 overflow-hidden'}>
+        <div className={isRunning ? 'px-5 py-5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent' : isPaused ? 'px-5 py-5 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent' : isLiquidated ? 'px-5 py-5 bg-gradient-to-r from-red-500/10 via-red-500/5 to-transparent' : 'px-5 py-5 bg-muted/20'}>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={isRunning ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/30' : isLiquidated ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/30' : 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-muted-foreground/20'}>
+              <div className={isRunning ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/30' : isPaused ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-amber-500 to-amber-600 shadow-amber-500/30' : isLiquidated ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/30' : 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-muted-foreground/20'}>
                 <Bot className="h-6 w-6 text-white" />
               </div>
               <div>
@@ -893,6 +904,11 @@ export function AITradingDashboard() {
                       <span className="w-2 h-2 rounded-full bg-emerald-500" /> LIVE
                     </motion.span>
                   )}
+                  {isPaused && (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-bold">
+                      <Clock className="h-3 w-3" /> PAUSED
+                    </span>
+                  )}
                   {isLiquidated && (
                     <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-500/15 text-red-500 text-[10px] font-bold">
                       <AlertTriangle className="h-3 w-3" /> LIQUIDATED
@@ -900,28 +916,28 @@ export function AITradingDashboard() {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {isRunning ? 'AI is actively scanning markets & executing trades' : isLiquidated ? 'Trading allocation has been fully consumed' : botConfig.enabled ? 'AI paused — positions still open. Use Stop to close all.' : 'Configure allocation & start AI trading'}
+                  {isRunning ? 'AI is actively scanning markets & executing trades' : isPaused ? 'AI paused — positions held. Toggle to resume or Stop to close all.' : isLiquidated ? 'Trading allocation has been fully consumed' : 'Configure allocation & start AI trading'}
                 </p>
               </div>
             </div>
             {/* Controls — stacked below title on mobile, beside it on desktop */}
             <div className="flex items-center gap-2 shrink-0">
-              {!isRunning && (
+              {!isRunning && !isPaused && (
                 <button onClick={handleReset} className="p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer" title="Reset trade data">
                   <RotateCcw className="h-4 w-4 text-muted-foreground" />
                 </button>
               )}
               {!isLiquidated && (
                 <div className="flex items-center gap-2 bg-muted/80 rounded-full px-4 py-2">
-                  <span className="text-xs text-muted-foreground font-medium">{isRunning ? 'Pause' : 'Start'}</span>
-                  <Switch checked={botConfig.enabled} onCheckedChange={handleToggle} disabled={saving} className="cursor-pointer" />
+                  <span className="text-xs text-muted-foreground font-medium">{isRunning ? 'Pause' : isPaused ? 'Resume' : 'Start'}</span>
+                  <Switch checked={isRunning} onCheckedChange={handleToggle} disabled={saving || isLiquidated} className="cursor-pointer" />
                 </div>
               )}
               <div className="flex-1" />
-              {(isRunning || openPositions.length > 0) && (
+              {(isActive || openPositions.length > 0) && (
                 <button
                   onClick={handleCloseAllAndStop}
-                  className={"flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-colors cursor-pointer " + (isRunning ? 'bg-red-500/15 text-red-500 hover:bg-red-500/25' : 'bg-muted hover:bg-accent text-muted-foreground')}
+                  className={"flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-colors cursor-pointer " + (isActive ? 'bg-red-500/15 text-red-500 hover:bg-red-500/25' : 'bg-muted hover:bg-accent text-muted-foreground')}
                   title={"Close all " + openPositions.length + " positions and stop AI"}
                 >
                   <Hand className="h-3.5 w-3.5" />
@@ -949,9 +965,9 @@ export function AITradingDashboard() {
                 <Input type="number" placeholder="200" value={botConfig.allocationAmount || ''} onChange={e => {
                   const val = parseFloat(e.target.value) || 0;
                   handleAllocationChange(val);
-                }} disabled={isRunning} className="pl-7 h-11 text-lg font-bold" />
+                }} disabled={isActive} className="pl-7 h-11 text-lg font-bold" />
               </div>
-              {allocation <= 0 && !isRunning && (
+              {allocation <= 0 && !isActive && (
                 <div className="flex gap-1.5">
                   {[50, 100, 200, 500, 1000].map(amt => (
                     <button key={amt} onClick={() => handleAllocationChange(amt)} className={"px-3 py-2 text-xs font-bold rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 transition-colors cursor-pointer"}>
