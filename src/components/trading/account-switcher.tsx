@@ -40,6 +40,24 @@ function saveAccountsLS(accounts: TradingAccount[]): void {
   try { localStorage.setItem(ACC_STORAGE_KEY, JSON.stringify(accounts)); } catch { /* quota */ }
 }
 
+function sortAccounts(accounts: TradingAccount[], activeId: string | null): TradingAccount[] {
+  return [...accounts].sort((a, b) => {
+    // 1. Active account always first
+    if (a.id === activeId) return -1;
+    if (b.id === activeId) return 1;
+    // 2. Live accounts before demo
+    const aLive = a.accountType === 'live' ? 0 : 1;
+    const bLive = b.accountType === 'live' ? 0 : 1;
+    if (aLive !== bLive) return aLive - bLive;
+    // 3. Default before non-default
+    const aDef = a.isDefault ? 0 : 1;
+    const bDef = b.isDefault ? 0 : 1;
+    if (aDef !== bDef) return aDef - bDef;
+    // 4. Most recently updated first
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+}
+
 export function AccountSwitcher() {
   const {
     accounts, activeAccountId, setActiveAccount, setAccounts,
@@ -222,13 +240,7 @@ export function AccountSwitcher() {
                 </div>
               </div>
               <div className="max-h-64 overflow-y-auto">
-                {[...accounts].sort((a, b) => {
-                  if (a.id === activeAccountId) return -1;
-                  if (b.id === activeAccountId) return 1;
-                  if (a.isDefault && !b.isDefault) return -1;
-                  if (!a.isDefault && b.isDefault) return 1;
-                  return 0;
-                }).map(acc => accountRow(acc))}
+                {sortAccounts(accounts, activeAccountId).map(acc => accountRow(acc))}
               </div>
             </motion.div>
           )}
@@ -248,13 +260,7 @@ export function AccountSwitcher() {
             </SheetTitle>
           </SheetHeader>
           <div className="divide-y divide-border max-h-[50vh] overflow-y-auto -mx-6 px-6">
-            {[...accounts].sort((a, b) => {
-              if (a.id === activeAccountId) return -1;
-              if (b.id === activeAccountId) return 1;
-              if (a.isDefault && !b.isDefault) return -1;
-              if (!a.isDefault && b.isDefault) return 1;
-              return 0;
-            }).map(acc => accountRow(acc))}
+            {sortAccounts(accounts, activeAccountId).map(acc => accountRow(acc))}
             {accounts.length === 0 && (
               <div className="py-8 text-center text-muted-foreground text-sm">
                 No accounts. Tap Add to create one.

@@ -549,23 +549,24 @@ export function AITradingDashboard() {
             </div>
           </div>
 
-          {/* Prominent allocation input when not set */}
-          {!isRunning && !isLiquidated && allocation <= 0 && (
-            <div className={"mt-5 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30"}>
-              <div className={"flex items-center gap-2 mb-2"}>
-                <Wallet className="h-4 w-4 text-amber-500" />
-                <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">Set Your Trading Allocation</span>
+          {/* Allocation — always visible & editable */}
+          <div className={"mt-4 p-4 rounded-xl " + (allocation <= 0 ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-muted/50 border border-border/30')}>
+            <div className={"flex items-center gap-2 mb-2"}>
+              <Wallet className={"h-4 w-4 " + (allocation <= 0 ? 'text-amber-500' : 'text-muted-foreground')} />
+              <span className={"text-sm font-semibold " + (allocation <= 0 ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>Trading Allocation</span>
+              {allocation > 0 && <Badge variant="outline" className="text-[10px] h-5 ml-auto">{'$'}{allocation.toLocaleString()}</Badge>}
+            </div>
+            <p className={"text-[11px] text-muted-foreground mb-3" + (allocation <= 0 ? '' : ' hidden')}>Enter the amount you want the AI to trade with. This is the maximum you can lose.</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative w-36">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">{'$'}</span>
+                <Input type="number" placeholder="200" value={botConfig.allocationAmount || ''} onChange={e => {
+                  const val = parseFloat(e.target.value) || 0;
+                  setBotConfig({ allocationAmount: val });
+                  try { localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: val })); } catch { /* */ }
+                }} className="pl-7 h-11 text-lg font-bold" />
               </div>
-              <p className="text-[11px] text-muted-foreground mb-3">Enter the amount you want the AI to trade with. This is the maximum you can lose.</p>
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="relative w-36">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">{'$'}</span>
-                  <Input type="number" placeholder="200" value={botConfig.allocationAmount || ''} onChange={e => {
-                    const val = parseFloat(e.target.value) || 0;
-                    setBotConfig({ allocationAmount: val });
-                    try { localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: val })); } catch { /* */ }
-                  }} className="pl-7 h-11 text-lg font-bold" autoFocus />
-                </div>
+              {allocation <= 0 && (
                 <div className="flex gap-1.5">
                   {[50, 100, 200, 500, 1000].map(amt => (
                     <button key={amt} onClick={() => {
@@ -576,9 +577,9 @@ export function AITradingDashboard() {
                     </button>
                   ))}
                 </div>
-              </div>
+              )}
             </div>
-          )}
+          </div>
 
           <div className="grid grid-cols-3 gap-4 mt-5">
             <div>

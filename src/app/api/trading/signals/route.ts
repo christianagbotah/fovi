@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
-    if (!db || !hasModel('tradingAccount')) return NextResponse.json([]);
+    // Require database for reading stored signals
+    if (!db || !hasModel('tradingAccount') || !hasModel('tradingSignal')) {
+      return NextResponse.json([]);
+    }
 
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-    const userId = 'usr_demo_1';
+
+    // Ensure demo user exists for FK constraints
+    const userId = await ensureDemoUser();
+    if (!userId) return NextResponse.json([]);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
@@ -19,10 +25,16 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'desc' },
       take: 30,
     });
-    return NextResponse.json(signals);
+
+    // Normalize direction field for frontend
+    const normalized = signals.map((s: any) => ({
+      ...s,
+      direction: s.direction === 'long' ? 'bullish' : s.direction === 'short' ? 'bearish' : s.direction,
+    }));
+
+    return NextResponse.json(normalized);
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[signals GET] DB error, using fallback:', error);
+    console.warn('[signals GET] Error:', error);
     return NextResponse.json([]);
   }
 }

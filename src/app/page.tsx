@@ -1100,7 +1100,7 @@ function SymbolDetailView() {
         )}
 
         {/* Chart */}
-        <Card className="overflow-hidden min-h-[400px] flex flex-col">
+        <Card className="overflow-hidden h-[500px] flex flex-col">
           <PriceChart />
         </Card>
       </div>
@@ -1261,7 +1261,7 @@ export default function TradingDashboard() {
                   <PortfolioCards />
                 </div>
                 <div className="flex flex-col lg:flex-row gap-3 p-4 pt-2">
-                  <Card className="flex-1 min-h-[400px] lg:min-h-[500px] overflow-hidden flex flex-col">
+                  <Card className="flex-1 h-[500px] overflow-hidden flex flex-col">
                     <PriceChart />
                   </Card>
                   <Card className="hidden lg:block w-80 overflow-hidden">

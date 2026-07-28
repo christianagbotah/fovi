@@ -310,7 +310,7 @@ export function PriceChart() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Header */}
       <div className="flex items-start justify-between px-4 pt-3 pb-2">
         <div>
