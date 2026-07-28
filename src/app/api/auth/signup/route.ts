@@ -8,18 +8,20 @@ export async function POST(request: NextRequest) {
     const {
       email,
       password,
-      name,
+      fullName,
       phone,
       country,
-      tradingExperience,
-      tradedAssets,
-      tradingConcerns,
-      portfolioSize,
+      experienceLevel,
+      assetTypes,
+      concerns,
+      portfolioRange,
       referralSource,
     } = body;
 
+    const name = fullName || '';
+
     // Validate required fields
-    if (!email || !password || !name) {
+    if (!email || !password || !name.trim()) {
       return NextResponse.json(
         { error: 'Email, password, and name are required' },
         { status: 400 }
@@ -58,10 +60,10 @@ export async function POST(request: NextRequest) {
       const profileData = JSON.stringify({
         phone: phone || null,
         country: country || null,
-        tradingExperience: tradingExperience || null,
-        tradedAssets: tradedAssets || [],
-        tradingConcerns: tradingConcerns || [],
-        portfolioSize: portfolioSize || null,
+        tradingExperience: experienceLevel || null,
+        tradedAssets: assetTypes || [],
+        tradingConcerns: concerns || [],
+        portfolioSize: portfolioRange || null,
         referralSource: referralSource || null,
       });
 

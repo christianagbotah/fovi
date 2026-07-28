@@ -42,13 +42,13 @@ function saveAccountsLS(accounts: TradingAccount[]): void {
 
 function sortAccounts(accounts: TradingAccount[], activeId: string | null): TradingAccount[] {
   return [...accounts].sort((a, b) => {
-    // 1. Active account always first
-    if (a.id === activeId) return -1;
-    if (b.id === activeId) return 1;
-    // 2. Live accounts before demo
+    // 1. Live accounts always before demo (active trading first)
     const aLive = a.accountType === 'live' ? 0 : 1;
     const bLive = b.accountType === 'live' ? 0 : 1;
     if (aLive !== bLive) return aLive - bLive;
+    // 2. Among same type, active account first
+    if (a.id === activeId) return -1;
+    if (b.id === activeId) return 1;
     // 3. Default before non-default
     const aDef = a.isDefault ? 0 : 1;
     const bDef = b.isDefault ? 0 : 1;

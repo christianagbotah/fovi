@@ -556,7 +556,7 @@ export function AITradingDashboard() {
               <span className={"text-sm font-semibold " + (allocation <= 0 ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>Trading Allocation</span>
               {allocation > 0 && <Badge variant="outline" className="text-[10px] h-5 ml-auto">{'$'}{allocation.toLocaleString()}</Badge>}
             </div>
-            <p className={"text-[11px] text-muted-foreground mb-3" + (allocation <= 0 ? '' : ' hidden')}>Enter the amount you want the AI to trade with. This is the maximum you can lose.</p>
+            <p className="text-[11px] text-muted-foreground mb-3">Enter the amount you want the AI to trade with. This is the maximum you can lose.</p>
             <div className="flex items-center gap-3 flex-wrap">
               <div className="relative w-36">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">{'$'}</span>
@@ -661,19 +661,7 @@ export function AITradingDashboard() {
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <Card className="border-border/50">
               <CardContent className="p-4 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground font-medium mb-1 block">Trading Allocation ($)</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                      <Input type="number" value={botConfig.allocationAmount || ''} onChange={e => {
-                        const val = parseFloat(e.target.value) || 0;
-                        setBotConfig({ allocationAmount: val });
-                        try { localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: val })); } catch { /* */ }
-                      }} className="pl-7 h-10" placeholder="200" />
-                    </div>
-                    <p className="text-[9px] text-muted-foreground mt-1">Max you can lose. Equity never goes below $0.</p>
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
                     <label className="text-xs text-muted-foreground font-medium mb-1 flex items-center gap-1">
                       <Percent className="h-3 w-3" /> Admin Levy (%)

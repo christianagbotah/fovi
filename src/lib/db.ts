@@ -39,13 +39,12 @@ export function isDbAvailable(): boolean {
 // ============================================================
 export const DEMO_USER_ID = 'usr_demo_1';
 const DEMO_USER_EMAIL = 'demo@fovi.ai';
+const DEMO_ACCOUNT_ID = 'acc_demo_1';
 let _demoUserEnsured = false;
 
 /**
- * Ensure the demo user exists in the DB. Call this before any
- * write operation that references userId. Returns the userId on
- * success, null if DB is unavailable.
- *
+ * Ensure the demo user AND a default trading account exist.
+ * Returns the userId on success, null if DB is unavailable.
  * Only runs the upsert once per process lifecycle.
  */
 export async function ensureDemoUser(): Promise<string | null> {
@@ -57,6 +56,25 @@ export async function ensureDemoUser(): Promise<string | null> {
       create: { id: DEMO_USER_ID, email: DEMO_USER_EMAIL, name: 'Demo User', passwordHash: 'demo_no_login' },
       update: {},
     });
+
+    // Also ensure a default trading account exists for FK constraints
+    if (hasModel('tradingAccount')) {
+      await db.tradingAccount.upsert({
+        where: { id: DEMO_ACCOUNT_ID },
+        create: {
+          id: DEMO_ACCOUNT_ID,
+          userId: DEMO_USER_ID,
+          broker: 'demo',
+          accountType: 'demo',
+          isDefault: true,
+          balance: 100000,
+          currency: 'USD',
+          isActive: true,
+        },
+        update: {},
+      });
+    }
+
     _demoUserEnsured = true;
     return DEMO_USER_ID;
   } catch (e) {
