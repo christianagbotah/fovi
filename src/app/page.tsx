@@ -1269,7 +1269,7 @@ export default function TradingDashboard() {
                 </div>
                 <div className="flex flex-col lg:flex-row gap-3 p-4 pt-2">
                   <Card className="flex-1 h-[500px] overflow-hidden flex flex-col">
-                    <PriceChart />
+                    <PriceChart autoTick />
                   </Card>
                   <Card className="hidden lg:block w-80 overflow-hidden">
                     <div className="px-4 py-3 border-b border-border flex items-center justify-between">
