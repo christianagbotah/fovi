@@ -118,3 +118,21 @@ Stage Summary:
 - Files created: src/components/trading/position-detail-sheet.tsx, src/components/trading/swipeable-item.tsx, src/app/api/trading/positions/[id]/route.ts
 - Signal→Order: ETH bearish signal correctly pre-fills Sell side, SL: 1929.42, TP: 1876.93
 - Dashboard: all sections (PortfolioCards, Chart, AI Signals, Open Positions) visible and scrollable
+
+---
+Task ID: 8
+Agent: Main
+Task: Close All & Stop button, swipeable toasts, fix account balance overwrite
+
+Work Log:
+- Added handleCloseAllAndStop handler to ai-trading-dashboard.tsx: closes all AI open positions at current market prices, calculates realized P&L with admin levy, stops the bot, updates stats
+- Added 'Close All & Stop' button next to AI Bot toggle: red styling when running, muted when stopped with open positions, responsive text (shorter on mobile)
+- Added swipeable prop to Sonner Toaster in layout.tsx for touch-swipe toast dismissal
+- Fixed portfolio balance overwrite: loadData in page.tsx now checks botConfig.status before calling setPortfolio from API, preventing the 15-second API poll from overwriting AI-managed equity values
+- Browser verified: Click Close All & Stop → bot stops, positions move to trade history (95 trades), no console errors
+
+Stage Summary:
+- Files changed: src/app/layout.tsx, src/app/page.tsx, src/components/trading/ai-trading-dashboard.tsx
+- Close All & Stop: visible when bot running or positions open, closes at current price with levy deduction
+- Toasts: swipeable on touch devices via Sonner's built-in swipeable prop
+- Balance: AI dashboard's setPortfolio() takes precedence while bot is running; API refetch resumes when bot stops
