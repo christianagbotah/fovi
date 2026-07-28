@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bot, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
@@ -44,7 +44,7 @@ export function AITradingDashboard() {
   const {
     botConfig, setBotConfig, autoTradeActivity, setAutoTradeActivity,
     aiOpenPositions, setAIOpenPositions, aiClosedTrades, setAIClosedTrades,
-    setPortfolio,
+    setPortfolio, accounts, setAccounts, activeAccountId,
   } = useTradingStore();
 
   const [loading, setLoading] = useState(true);
@@ -57,6 +57,8 @@ export function AITradingDashboard() {
 
   // Simulated market prices (persists across re-renders within session)
   const simPricesRef = useRef<Record<string, number>>({});
+  // Track previous allocation to compute deltas for main account balance sync
+  const prevAllocationRef = useRef<number>(0);
 
   // Initialize sim prices from symbol data
   useEffect(() => {
@@ -65,7 +67,40 @@ export function AITradingDashboard() {
         simPricesRef.current[sym] = SYMBOL_DATA[sym].price;
       }
     }
+    // Restore previous allocation from localStorage
+    try {
+      const savedConfig = localStorage.getItem('fovi_autotrade_config');
+      if (savedConfig) {
+        const parsed = JSON.parse(savedConfig);
+        prevAllocationRef.current = parsed.allocationAmount || 0;
+      }
+    } catch { /* */ }
   }, []);
+
+  // ---- Sync main account balance with AI allocation ----
+  // This adjusts the active trading account's balance when:
+  // 1. Allocation is set/changed (while AI is stopped) — deducts/returns the difference
+  // 2. AI stops or liquidates — returns the current equity
+  const syncAccountBalance = useCallback((newBalance: number, reason: string) => {
+    if (!activeAccountId) return;
+    const updatedAccounts = accounts.map(acc =>
+      acc.id === activeAccountId
+        ? { ...acc, balance: parseFloat(newBalance.toFixed(2)), updatedAt: new Date().toISOString() }
+        : acc
+    );
+    setAccounts(updatedAccounts);
+    // Persist to localStorage for account-switcher
+    try { localStorage.setItem('fovi_accounts', JSON.stringify(updatedAccounts)); } catch { /* */ }
+    // Sync to DB in background
+    fetch('/api/trading/accounts/' + activeAccountId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ balance: newBalance }),
+    }).catch(() => {});
+    if (reason) {
+      console.log('[AI Trade] Balance sync: ' + reason + ' → $' + newBalance.toFixed(2));
+    }
+  }, [activeAccountId, accounts, setAccounts]);
 
   const activityList = Array.isArray(autoTradeActivity) ? autoTradeActivity : [];
   const openPositions = Array.isArray(aiOpenPositions) ? aiOpenPositions : [];
@@ -412,6 +447,25 @@ export function AITradingDashboard() {
   }, [botConfig.status, botConfig.allocationAmount, botConfig.maxPositions, botConfig.stopLossPercent, botConfig.takeProfitPercent, levyPercent, allocation, setAutoTradeActivity, setBotConfig, setAIOpenPositions, setAIClosedTrades]);
 
   // ---- Handlers ----
+  const handleAllocationChange = (newVal: number) => {
+    // Only sync balance when AI is NOT running
+    if (isRunning) return;
+    const oldVal = prevAllocationRef.current;
+    const delta = newVal - oldVal;
+    if (delta !== 0 && activeAccountId) {
+      const acc = accounts.find(a => a.id === activeAccountId);
+      if (acc) {
+        const newBalance = Math.max(0, acc.balance - delta);
+        syncAccountBalance(newBalance, 'allocation ' + (delta > 0 ? 'deducted' : 'returned') + ' $' + Math.abs(delta).toFixed(2));
+      }
+    }
+    prevAllocationRef.current = newVal;
+    setBotConfig({ allocationAmount: newVal });
+    try {
+      localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: newVal }));
+    } catch { /* */ }
+  };
+
   const handleToggle = async () => {
     if (allocation <= 0) {
       toast.error('Set a trading allocation first');
@@ -441,6 +495,19 @@ export function AITradingDashboard() {
       toast.error('Stop the bot before resetting');
       return;
     }
+    // Return any remaining allocation to main account
+    const currentAllocation = prevAllocationRef.current;
+    if (currentAllocation > 0 && activeAccountId) {
+      const acc = accounts.find(a => a.id === activeAccountId);
+      if (acc) {
+        // If liquidated, equity is 0 — nothing to return
+        // If stopped, return the current allocation (since reset clears trades)
+        if (!isLiquidated) {
+          syncAccountBalance(acc.balance + currentAllocation, 'reset: returned $' + currentAllocation.toFixed(2) + ' allocation');
+        }
+      }
+    }
+    prevAllocationRef.current = 0;
     setAIOpenPositions([]);
     setAIClosedTrades([]);
     setAutoTradeActivity([]);
@@ -451,7 +518,7 @@ export function AITradingDashboard() {
     try { localStorage.removeItem('fovi_ai_positions'); } catch { /* */ }
     try { localStorage.removeItem('fovi_ai_closed_trades'); } catch { /* */ }
     try { localStorage.removeItem('fovi_autotrade_activity'); } catch { /* */ }
-    toast.success('Trade history cleared. Ready for fresh start.');
+    toast.success('Trade history cleared. Allocation returned to main account.');
   };
 
   // Pre-compute P&L for the confirmation dialog
