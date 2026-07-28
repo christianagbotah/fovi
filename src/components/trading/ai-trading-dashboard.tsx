@@ -6,7 +6,7 @@ import {
   Bot, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
   Wallet, Activity, Clock, Target, Zap, Shield, AlertTriangle,
   ChevronDown, ChevronUp, Loader2, RotateCcw, Percent,
-  CheckCircle2, XCircle, Settings2,
+  CheckCircle2, XCircle, Settings2, Square, Hand,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -450,6 +450,72 @@ export function AITradingDashboard() {
     toast.success('Trade history cleared. Ready for fresh start.');
   };
 
+  const handleCloseAllAndStop = () => {
+    const positions = useTradingStore.getState().aiOpenPositions;
+    if (positions.length === 0) {
+      // Just stop the bot
+      const updated = { ...useTradingStore.getState().botConfig, enabled: false, status: 'stopped' };
+      localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
+      setBotConfig(updated);
+      toast.success('AI Bot stopped.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const closedTradesList = useTradingStore.getState().aiClosedTrades;
+    let totalNewLevy = 0;
+
+    const newClosed: AIClosedTrade[] = positions.map(pos => {
+      const closePrice = pos.currentPrice;
+      const gross = pos.side === 'buy'
+        ? parseFloat(((closePrice - pos.entryPrice) * pos.qty).toFixed(2))
+        : parseFloat(((pos.entryPrice - closePrice) * pos.qty).toFixed(2));
+      const levy = gross > 0 ? parseFloat((gross * levyPercent / 100).toFixed(2)) : 0;
+      totalNewLevy += levy;
+      return {
+        id: 'close_all_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        symbol: pos.symbol, side: pos.side, qty: pos.qty,
+        entryPrice: pos.entryPrice, exitPrice: closePrice,
+        realizedPnl: parseFloat((gross - levy).toFixed(2)),
+        grossPnl: gross, adminLevy: levy,
+        signalType: 'manual_close', openedAt: pos.openedAt, closedAt: now,
+      };
+    });
+
+    const allClosed = [...newClosed, ...closedTradesList].slice(0, 100);
+    setAIClosedTrades(allClosed);
+    setAIOpenPositions([]);
+
+    const allTrades = allClosed;
+    const wins = allTrades.filter(t => t.realizedPnl > 0).length;
+    const totalLevy = allTrades.reduce((s, t) => s + (t.adminLevy || 0), 0);
+    const totalNet = allTrades.reduce((s, t) => s + t.realizedPnl, 0);
+
+    const updated = {
+      ...useTradingStore.getState().botConfig,
+      enabled: false,
+      status: 'stopped',
+      totalTrades: allTrades.length,
+      winTrades: wins,
+      winRate: allTrades.length > 0 ? Math.round((wins / allTrades.length) * 100) : 0,
+      totalPnl: parseFloat(totalNet.toFixed(2)),
+      adminLevyCollected: parseFloat(totalLevy.toFixed(2)),
+      lastTradeAt: now,
+    };
+    localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
+    setBotConfig(updated);
+
+    const totalPnlFromClose = newClosed.reduce((s, t) => s + t.realizedPnl, 0);
+    toast.success(
+      'Closed ' + positions.length + ' position' + (positions.length > 1 ? 's' : '') + ' & stopped AI',
+      {
+        description: 'P&L: ' + (totalPnlFromClose >= 0 ? '+' : '') + '$' + totalPnlFromClose.toFixed(2)
+          + ' | Levy: -$' + totalNewLevy.toFixed(2),
+        duration: 6000,
+      }
+    );
+  };
+
   function timeAgo(dateStr: string) {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
@@ -534,12 +600,23 @@ export function AITradingDashboard() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               {!isLiquidated && (
                 <div className="flex items-center gap-2 bg-muted/80 rounded-full px-4 py-2">
                   <span className="text-xs text-muted-foreground font-medium">AI Bot</span>
                   <Switch checked={botConfig.enabled} onCheckedChange={handleToggle} disabled={saving} className="cursor-pointer" />
                 </div>
+              )}
+              {(isRunning || openPositions.length > 0) && (
+                <button
+                  onClick={handleCloseAllAndStop}
+                  className={"flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-colors cursor-pointer " + (isRunning ? 'bg-red-500/15 text-red-500 hover:bg-red-500/25' : 'bg-muted hover:bg-accent text-muted-foreground')}
+                  title={"Close all " + openPositions.length + " positions and stop AI"}
+                >
+                  <Hand className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Close All & Stop</span>
+                  <span className="sm:hidden">Stop</span>
+                </button>
               )}
               {!isRunning && (
                 <button onClick={handleReset} className="p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer" title="Reset trade data">

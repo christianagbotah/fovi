@@ -1177,7 +1177,10 @@ export default function TradingDashboard() {
             setAccounts(accData);
           }
         }
-        if (portRes.ok) {
+        // Only set portfolio from API when AI bot is NOT running
+        // (AI dashboard manages portfolio state via setPortfolio)
+        const botRunning = useTradingStore.getState().botConfig.status === 'running';
+        if (portRes.ok && !botRunning) {
           const portData = await portRes.json();
           if (portData && typeof portData === 'object' && !portData.error) {
             setPortfolio(portData);
