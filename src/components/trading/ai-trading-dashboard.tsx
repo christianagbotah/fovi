@@ -575,13 +575,13 @@ export function AITradingDashboard() {
       {/* ===== HERO: STATUS + EQUITY + P&L ===== */}
       <Card className={isRunning ? 'border-2 border-emerald-500/50 overflow-hidden' : isLiquidated ? 'border-2 border-red-500/50 overflow-hidden' : 'border-2 border-border/50 overflow-hidden'}>
         <div className={isRunning ? 'px-5 py-5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent' : isLiquidated ? 'px-5 py-5 bg-gradient-to-r from-red-500/10 via-red-500/5 to-transparent' : 'px-5 py-5 bg-muted/20'}>
-          <div className="flex items-start justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className={isRunning ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/30' : isLiquidated ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/30' : 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-muted-foreground/20'}>
                 <Bot className="h-6 w-6 text-white" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-xl font-bold">AI Auto-Trade</h1>
                   {isRunning && (
                     <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 2, repeat: Infinity }}
@@ -600,7 +600,8 @@ export function AITradingDashboard() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            {/* Controls — stacked below title on mobile, beside it on desktop */}
+            <div className="flex items-center gap-2 shrink-0">
               {!isLiquidated && (
                 <div className="flex items-center gap-2 bg-muted/80 rounded-full px-4 py-2">
                   <span className="text-xs text-muted-foreground font-medium">AI Bot</span>
@@ -658,47 +659,54 @@ export function AITradingDashboard() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 mt-5">
-            <div>
-              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Account Equity</p>
-              <p className={'text-2xl font-bold tabular-nums mt-1 ' + (accountEquity >= allocation ? 'text-emerald-500' : 'text-red-500')}>
-                {'$'}{accountEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">of {'$'}{allocation.toLocaleString()} allocated</p>
+          {/* Stats — 3-col on tablet+, stacked cards on mobile */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mt-5">
+            <div className="flex items-center justify-between sm:block p-3 sm:p-0 rounded-lg bg-muted/30 sm:bg-transparent">
+              <div className="sm:mb-0">
+                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Account Equity</p>
+                <p className={'text-xl sm:text-2xl font-bold tabular-nums mt-0.5 sm:mt-1 ' + (accountEquity >= allocation ? 'text-emerald-500' : 'text-red-500')}>
+                  {'$'}{accountEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <p className="text-[10px] text-muted-foreground sm:mt-0.5">of {'$'}{allocation.toLocaleString()} allocated</p>
             </div>
-            <div>
-              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Total P&L</p>
-              <p className={totalPnl >= 0 ? 'text-2xl font-bold tabular-nums mt-1 text-emerald-500' : 'text-2xl font-bold tabular-nums mt-1 text-red-500'}>
-                {totalPnl >= 0 ? '+' : ''}{'$'}{totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-              <p className={equityPercent >= 0 ? 'text-[10px] mt-0.5 text-emerald-500' : 'text-[10px] mt-0.5 text-red-500'}>
+            <div className="flex items-center justify-between sm:block p-3 sm:p-0 rounded-lg bg-muted/30 sm:bg-transparent">
+              <div className="sm:mb-0">
+                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Total P&L</p>
+                <p className={totalPnl >= 0 ? 'text-xl sm:text-2xl font-bold tabular-nums mt-0.5 sm:mt-1 text-emerald-500' : 'text-xl sm:text-2xl font-bold tabular-nums mt-0.5 sm:mt-1 text-red-500'}>
+                  {totalPnl >= 0 ? '+' : ''}{'$'}{totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <p className={equityPercent >= 0 ? 'text-[10px] sm:mt-0.5 text-emerald-500 font-semibold' : 'text-[10px] sm:mt-0.5 text-red-500 font-semibold'}>
                 {equityPercent >= 0 ? '+' : ''}{equityPercent}%
               </p>
             </div>
-            <div>
-              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Open Positions</p>
-              <p className="text-2xl font-bold tabular-nums mt-1">{openPositions.length}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">of {botConfig.maxPositions} max</p>
+            <div className="flex items-center justify-between sm:block p-3 sm:p-0 rounded-lg bg-muted/30 sm:bg-transparent">
+              <div className="sm:mb-0">
+                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Open Positions</p>
+                <p className="text-xl sm:text-2xl font-bold tabular-nums mt-0.5 sm:mt-1">{openPositions.length}</p>
+              </div>
+              <p className="text-[10px] text-muted-foreground sm:mt-0.5">of {botConfig.maxPositions} max</p>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-4 divide-x divide-border/50">
-          <div className="px-4 py-3 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 sm:divide-x divide-border/50">
+          <div className="px-3 sm:px-4 py-3 text-center">
             <p className="text-lg font-bold tabular-nums">{botConfig.totalTrades}</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">Total Trades</p>
           </div>
-          <div className="px-4 py-3 text-center">
+          <div className="px-3 sm:px-4 py-3 text-center">
             <p className={botConfig.winRate >= 50 ? 'text-lg font-bold tabular-nums text-emerald-500' : 'text-lg font-bold tabular-nums text-amber-500'}>{botConfig.winRate}%</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">Win Rate</p>
             <p className={botConfig.winRate >= 50 ? 'text-[9px] mt-0.5 text-emerald-500' : 'text-[9px] mt-0.5 text-amber-500'}>{botConfig.winRate >= 50 ? 'profitable' : 'needs improvement'}</p>
           </div>
-          <div className="px-4 py-3 text-center">
+          <div className="px-3 sm:px-4 py-3 text-center">
             {renderPnlText(netRealizedPnl, false)}
             <p className="text-[10px] text-muted-foreground mt-0.5">Realized P&L</p>
             <p className="text-[9px] mt-0.5 text-muted-foreground">after {levyPercent}% levy</p>
           </div>
-          <div className="px-4 py-3 text-center">
+          <div className="px-3 sm:px-4 py-3 text-center">
             {renderPnlText(unrealizedPnl, false)}
             <p className="text-[10px] text-muted-foreground mt-0.5">Unrealized P&L</p>
             <p className="text-[9px] mt-0.5 text-muted-foreground">open positions</p>
@@ -707,13 +715,13 @@ export function AITradingDashboard() {
 
         {/* Admin Levy + Available Balance bar */}
         {allocation > 0 && (
-          <div className="px-5 py-3 border-t border-border/50 bg-muted/10">
-            <div className="flex items-center justify-between text-[10px]">
-              <div className="flex items-center gap-3">
+          <div className="px-4 sm:px-5 py-3 border-t border-border/50 bg-muted/10">
+            <div className="flex flex-wrap items-center justify-between gap-y-1 text-[10px]">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <span className="text-muted-foreground">Available: <span className="font-semibold text-foreground">${availableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
                 <span className="text-muted-foreground">Invested: <span className="font-semibold text-foreground">${investedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
               </div>
-              <span className="text-muted-foreground">Admin Levy Collected: <span className="font-semibold text-amber-500">${totalAdminLevy.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+              <span className="text-muted-foreground">Levy: <span className="font-semibold text-amber-500">${totalAdminLevy.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
             </div>
             {/* Equity bar */}
             <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
