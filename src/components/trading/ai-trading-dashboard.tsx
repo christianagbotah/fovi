@@ -188,8 +188,15 @@ export function AITradingDashboard() {
       try {
         const configRes = await fetch('/api/trading/auto-trade');
         const current = useTradingStore.getState().botConfig;
-        if (configRes.ok && current.status !== 'running') {
-          setBotConfig(await configRes.json());
+        // Only use API data if we're NOT already running locally
+        // This prevents the API's stale 'running' status from re-enabling the bot after user stopped it
+        if (configRes.ok && current.status === 'stopped' && !current.enabled) {
+          // Already stopped locally — don't let API override
+          // Just make sure the API is also synced
+          fetch('/api/trading/auto-trade', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(current),
+          }).catch(() => {});
         }
       } catch { /* */ }
       setLoading(false);
@@ -293,6 +300,12 @@ export function AITradingDashboard() {
       // Just reset the tracking ref.
       prevAllocationRef.current = 0;
       try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+
+      // Sync to API so DB knows we liquidated
+      const liqConfig = useTradingStore.getState().botConfig;
+      fetch('/api/trading/auto-trade', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(liqConfig),
+      }).catch(() => {});
 
       toast.error('Allocation Depleted — All positions liquidated', {
         description: 'Your trading allocation has been fully consumed. Set a new amount and reset to trade again.',
@@ -433,6 +446,7 @@ export function AITradingDashboard() {
 
     // Price update interval (every 3s)
     const priceInterval = setInterval(() => {
+      if (useTradingStore.getState().botConfig.status !== 'running') return;
       const positions = useTradingStore.getState().aiOpenPositions;
       if (positions.length === 0) return;
       const updated = positions.map(p => {
@@ -470,18 +484,32 @@ export function AITradingDashboard() {
 
     // Trade simulation loop
     const delay = 2000 + Math.random() * 2000;
+    const activeTimers: ReturnType<typeof setTimeout>[] = [];
+    const activeIntervals: ReturnType<typeof setInterval>[] = [];
+
+    activeIntervals.push(priceInterval);
+
     const initialTimer = setTimeout(() => {
+      if (useTradingStore.getState().botConfig.status !== 'running') return;
       simulateTrade();
       const loop = () => {
         if (useTradingStore.getState().botConfig.status !== 'running') return;
         const nextDelay = 6000 + Math.random() * 6000;
-        const t = setTimeout(() => { simulateTrade(); loop(); }, nextDelay);
-        return t;
+        const t = setTimeout(() => {
+          if (useTradingStore.getState().botConfig.status !== 'running') return;
+          simulateTrade();
+          loop();
+        }, nextDelay);
+        activeTimers.push(t);
       };
       loop();
     }, delay);
+    activeTimers.push(initialTimer);
 
-    return () => { clearTimeout(initialTimer); clearInterval(priceInterval); };
+    return () => {
+      activeTimers.forEach(t => clearTimeout(t));
+      activeIntervals.forEach(i => clearInterval(i));
+    };
   }, [botConfig.status, botConfig.allocationAmount, botConfig.maxPositions, botConfig.stopLossPercent, botConfig.takeProfitPercent, levyPercent, allocation, setAutoTradeActivity, setBotConfig, setAIOpenPositions, setAIClosedTrades]);
 
   // ---- Handlers ----
@@ -599,11 +627,21 @@ export function AITradingDashboard() {
   const confirmCloseAllAndStop = () => {
     setShowStopDialog(false);
     const positions = useTradingStore.getState().aiOpenPositions;
+    const now = new Date().toISOString();
+
+    // Build the final stopped config
+    const stopBase = {
+      ...useTradingStore.getState().botConfig,
+      enabled: false,
+      status: 'stopped' as const,
+    };
+
     if (positions.length === 0) {
-      const updated = { ...useTradingStore.getState().botConfig, enabled: false, status: 'stopped' };
-      localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
-      setBotConfig(updated);
-      // Return allocation to main account (no trades happened)
+      localStorage.setItem('fovi_autotrade_config', JSON.stringify(stopBase));
+      setBotConfig(stopBase);
+      fetch('/api/trading/auto-trade', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stopBase),
+      }).catch(() => {});
       const alloc = prevAllocationRef.current;
       if (alloc > 0 && activeAccountId) {
         const acc = accounts.find(a => a.id === activeAccountId);
@@ -617,7 +655,6 @@ export function AITradingDashboard() {
       return;
     }
 
-    const now = new Date().toISOString();
     const closedTradesList = useTradingStore.getState().aiClosedTrades;
     let totalNewLevy = 0;
 
@@ -638,19 +675,10 @@ export function AITradingDashboard() {
       };
     });
 
-    // Immediately clear all open positions so AI can't open new ones
+    // 1. Clear all open positions FIRST so the simulation loop can't reopen
     setAIOpenPositions([]);
 
-    // Stop the bot first
-    const stopConfig = {
-      ...useTradingStore.getState().botConfig,
-      enabled: false,
-      status: 'stopped',
-    };
-    localStorage.setItem('fovi_autotrade_config', JSON.stringify(stopConfig));
-    setBotConfig(stopConfig);
-
-    // Then record closed trades and update stats
+    // 2. Record closed trades and update stats
     const allClosed = [...newClosed, ...closedTradesList].slice(0, 100);
     const allTrades = allClosed;
     const wins = allTrades.filter(t => t.realizedPnl > 0).length;
@@ -658,7 +686,7 @@ export function AITradingDashboard() {
     const totalNet = allTrades.reduce((s, t) => s + t.realizedPnl, 0);
 
     const updated = {
-      ...stopConfig,
+      ...stopBase,
       totalTrades: allTrades.length,
       winTrades: wins,
       winRate: allTrades.length > 0 ? Math.round((wins / allTrades.length) * 100) : 0,
@@ -670,7 +698,12 @@ export function AITradingDashboard() {
     setBotConfig(updated);
     setAIClosedTrades(allClosed);
 
-    // Return equity (allocation + P&L) to main account
+    // 3. Sync to API so DB knows we stopped (prevents re-enabling on reload)
+    fetch('/api/trading/auto-trade', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated),
+    }).catch(() => {});
+
+    // 4. Return equity to main account
     const returnedEquity = Math.max(0, prevAllocationRef.current + totalNet);
     if (activeAccountId) {
       const acc = accounts.find(a => a.id === activeAccountId);
@@ -855,7 +888,7 @@ export function AITradingDashboard() {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {isRunning ? 'AI is actively scanning markets & executing trades' : isLiquidated ? 'Trading allocation has been fully consumed' : 'Configure allocation & start AI trading'}
+                  {isRunning ? 'AI is actively scanning markets & executing trades' : isLiquidated ? 'Trading allocation has been fully consumed' : botConfig.enabled ? 'AI paused — positions still open. Use Stop to close all.' : 'Configure allocation & start AI trading'}
                 </p>
               </div>
             </div>
@@ -868,7 +901,7 @@ export function AITradingDashboard() {
               )}
               {!isLiquidated && (
                 <div className="flex items-center gap-2 bg-muted/80 rounded-full px-4 py-2">
-                  <span className="text-xs text-muted-foreground font-medium">AI Bot</span>
+                  <span className="text-xs text-muted-foreground font-medium">{isRunning ? 'Pause' : 'Start'}</span>
                   <Switch checked={botConfig.enabled} onCheckedChange={handleToggle} disabled={saving} className="cursor-pointer" />
                 </div>
               )}
