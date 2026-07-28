@@ -12,6 +12,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useTradingStore } from '@/lib/store/trading-store';
 import type { AutoTradeActivity, AIOpenPosition, AIClosedTrade } from '@/lib/store/trading-store';
 import { toast } from 'sonner';
@@ -49,6 +52,7 @@ export function AITradingDashboard() {
   const [showConfig, setShowConfig] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<string>('all');
+  const [showStopDialog, setShowStopDialog] = useState(false);
   const [historySymbol, setHistorySymbol] = useState<string>('all');
 
   // Simulated market prices (persists across re-renders within session)
@@ -450,10 +454,41 @@ export function AITradingDashboard() {
     toast.success('Trade history cleared. Ready for fresh start.');
   };
 
+  // Pre-compute P&L for the confirmation dialog
+  const stopDialogData = (() => {
+    const positions = useTradingStore.getState().aiOpenPositions;
+    if (positions.length === 0) return null;
+    let totalGross = 0;
+    let totalLevy = 0;
+    const items = positions.map(pos => {
+      const closePrice = pos.currentPrice;
+      const gross = pos.side === 'buy'
+        ? parseFloat(((closePrice - pos.entryPrice) * pos.qty).toFixed(2))
+        : parseFloat(((pos.entryPrice - closePrice) * pos.qty).toFixed(2));
+      const levy = gross > 0 ? parseFloat((gross * levyPercent / 100).toFixed(2)) : 0;
+      totalGross += gross;
+      totalLevy += levy;
+      const net = parseFloat((gross - levy).toFixed(2));
+      return { symbol: pos.symbol, side: pos.side, gross, levy, net };
+    });
+    return {
+      count: positions.length,
+      items,
+      totalGross: parseFloat(totalGross.toFixed(2)),
+      totalLevy: parseFloat(totalLevy.toFixed(2)),
+      totalNet: parseFloat((totalGross - totalLevy).toFixed(2)),
+      isLoss: totalGross - totalLevy < 0,
+    };
+  })();
+
   const handleCloseAllAndStop = () => {
+    setShowStopDialog(true);
+  };
+
+  const confirmCloseAllAndStop = () => {
+    setShowStopDialog(false);
     const positions = useTradingStore.getState().aiOpenPositions;
     if (positions.length === 0) {
-      // Just stop the bot
       const updated = { ...useTradingStore.getState().botConfig, enabled: false, status: 'stopped' };
       localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
       setBotConfig(updated);
@@ -482,19 +517,27 @@ export function AITradingDashboard() {
       };
     });
 
-    const allClosed = [...newClosed, ...closedTradesList].slice(0, 100);
-    setAIClosedTrades(allClosed);
+    // Immediately clear all open positions so AI can't open new ones
     setAIOpenPositions([]);
 
+    // Stop the bot first
+    const stopConfig = {
+      ...useTradingStore.getState().botConfig,
+      enabled: false,
+      status: 'stopped',
+    };
+    localStorage.setItem('fovi_autotrade_config', JSON.stringify(stopConfig));
+    setBotConfig(stopConfig);
+
+    // Then record closed trades and update stats
+    const allClosed = [...newClosed, ...closedTradesList].slice(0, 100);
     const allTrades = allClosed;
     const wins = allTrades.filter(t => t.realizedPnl > 0).length;
     const totalLevy = allTrades.reduce((s, t) => s + (t.adminLevy || 0), 0);
     const totalNet = allTrades.reduce((s, t) => s + t.realizedPnl, 0);
 
     const updated = {
-      ...useTradingStore.getState().botConfig,
-      enabled: false,
-      status: 'stopped',
+      ...stopConfig,
       totalTrades: allTrades.length,
       winTrades: wins,
       winRate: allTrades.length > 0 ? Math.round((wins / allTrades.length) * 100) : 0,
@@ -504,6 +547,7 @@ export function AITradingDashboard() {
     };
     localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
     setBotConfig(updated);
+    setAIClosedTrades(allClosed);
 
     const totalPnlFromClose = newClosed.reduce((s, t) => s + t.realizedPnl, 0);
     toast.success(
@@ -515,6 +559,64 @@ export function AITradingDashboard() {
       }
     );
   };
+
+  function renderStopDialogContent(): ReactNode {
+    if (!stopDialogData) {
+      return <p>No open positions. The AI bot will simply be stopped.</p>;
+    }
+    const d = stopDialogData;
+    return (
+      <div className="space-y-3">
+        <p>This will immediately close <b>{d.count}</b> open position{d.count > 1 ? 's' : ''} and stop the AI bot.</p>
+        {d.isLoss ? (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-red-500">You are about to lose money</p>
+              <p className="text-xs text-red-400 mt-0.5">Closing now will lock in a net loss of <b className="text-red-500">${Math.abs(d.totalNet).toFixed(2)}</b> (after {levyPercent}% admin levy)</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+            <TrendingUp className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-emerald-500">Profit will be claimed</p>
+              <p className="text-xs text-emerald-400 mt-0.5">Net profit: <b className="text-emerald-500">+${d.totalNet.toFixed(2)}</b> (after {levyPercent}% admin levy)</p>
+            </div>
+          </div>
+        )}
+        <div className="rounded-lg border border-border overflow-hidden">
+          <div className="px-3 py-2 bg-muted/50 border-b border-border text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+            Position Breakdown
+          </div>
+          <div className="max-h-40 overflow-y-auto divide-y divide-border/50">
+            {d.items.map(item => {
+              const isProfit = item.net >= 0;
+              const sideIcon = item.side === 'buy'
+                ? <ArrowUpRight className="h-3 w-3 text-emerald-500" />
+                : <ArrowDownRight className="h-3 w-3 text-red-500" />;
+              return (
+                <div key={item.symbol} className="flex items-center justify-between px-3 py-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    {sideIcon}
+                    <span className="font-semibold">{item.symbol}</span>
+                  </div>
+                  <span className={"font-bold tabular-nums " + (isProfit ? 'text-emerald-500' : 'text-red-500')}>
+                    {isProfit ? '+' : ''}{item.net.toFixed(2)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Gross: <b className={d.totalGross >= 0 ? 'text-foreground' : 'text-red-500'}>{d.totalGross >= 0 ? '+' : ''}{d.totalGross.toFixed(2)}</b></span>
+          <span>Levy: <b className="text-amber-500">-${d.totalLevy.toFixed(2)}</b></span>
+          <span>Net: <b className={d.totalNet >= 0 ? 'text-emerald-500' : 'text-red-500'}>{d.totalNet >= 0 ? '+' : ''}{d.totalNet.toFixed(2)}</b></span>
+        </div>
+      </div>
+    );
+  }
 
   function timeAgo(dateStr: string) {
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -572,6 +674,30 @@ export function AITradingDashboard() {
   // ---- Render ----
   return (
     <div className="space-y-4 pb-24">
+      {/* ===== STOP CONFIRMATION DIALOG ===== */}
+      <AlertDialog open={showStopDialog} onOpenChange={setShowStopDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Hand className="h-5 w-5 text-red-500" />
+              {stopDialogData && stopDialogData.count > 0 ? 'Close All Positions & Stop AI?' : 'Stop AI Bot?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              {renderStopDialogContent()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmCloseAllAndStop}
+              className="bg-red-500 hover:bg-red-600 text-white cursor-pointer"
+            >
+              {stopDialogData && stopDialogData.count > 0 ? 'Close All & Stop' : 'Stop AI'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* ===== HERO: STATUS + EQUITY + P&L ===== */}
       <Card className={isRunning ? 'border-2 border-emerald-500/50 overflow-hidden' : isLiquidated ? 'border-2 border-red-500/50 overflow-hidden' : 'border-2 border-border/50 overflow-hidden'}>
         <div className={isRunning ? 'px-5 py-5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent' : isLiquidated ? 'px-5 py-5 bg-gradient-to-r from-red-500/10 via-red-500/5 to-transparent' : 'px-5 py-5 bg-muted/20'}>
