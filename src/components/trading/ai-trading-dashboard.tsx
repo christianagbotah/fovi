@@ -60,7 +60,7 @@ export function AITradingDashboard() {
   // Track previous allocation to compute deltas for main account balance sync
   const prevAllocationRef = useRef<number>(0);
 
-  // Initialize sim prices from symbol data
+  // Initialize sim prices from symbol data + handle allocation tracking
   useEffect(() => {
     for (const sym of SYMBOLS) {
       if (!simPricesRef.current[sym]) {
@@ -72,7 +72,37 @@ export function AITradingDashboard() {
       const savedConfig = localStorage.getItem('fovi_autotrade_config');
       if (savedConfig) {
         const parsed = JSON.parse(savedConfig);
-        prevAllocationRef.current = parsed.allocationAmount || 0;
+        const savedAlloc = parsed.allocationAmount || 0;
+        const wasDeducted = localStorage.getItem('fovi_alloc_deducted') === 'true';
+        if (wasDeducted) {
+          // Previous session already deducted this amount from main balance
+          prevAllocationRef.current = savedAlloc;
+        } else if (savedAlloc > 0 && (parsed.status === 'running' || parsed.enabled)) {
+          // Bot is running but allocation was never deducted (migration case)
+          // Deduct now and mark as deducted
+          const acc = accounts.find(a => a.id === activeAccountId);
+          if (acc) {
+            const newBal = Math.max(0, acc.balance - savedAlloc);
+            const updatedAccounts = accounts.map(a =>
+              a.id === activeAccountId
+                ? { ...a, balance: parseFloat(newBal.toFixed(2)), updatedAt: new Date().toISOString() }
+                : a
+            );
+            setAccounts(updatedAccounts);
+            try { localStorage.setItem('fovi_accounts', JSON.stringify(updatedAccounts)); } catch { /* */ }
+            fetch('/api/trading/accounts/' + activeAccountId, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ balance: newBal }),
+            }).catch(() => {});
+          }
+          prevAllocationRef.current = savedAlloc;
+          localStorage.setItem('fovi_alloc_deducted', 'true');
+        } else if (parsed.status === 'stopped' || parsed.status === 'liquidated') {
+          // Bot is stopped — allocation was already returned or never deducted
+          prevAllocationRef.current = 0;
+          localStorage.removeItem('fovi_alloc_deducted');
+        }
       }
     } catch { /* */ }
   }, []);
@@ -125,6 +155,8 @@ export function AITradingDashboard() {
   const isLiquidated = botConfig.status === 'liquidated';
   const isRunning = botConfig.status === 'running';
   const equityPercent = allocation > 0 ? parseFloat(((totalPnl / allocation) * 100).toFixed(2)) : 0;
+  const mainAcc = accounts.find(a => a.id === activeAccountId);
+  const mainBalanceDisplay = mainAcc ? mainAcc.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---';
 
   // Trade history filters
   const uniqueSymbols = Array.from(new Set(closedTrades.map(t => t.symbol)));
@@ -256,8 +288,14 @@ export function AITradingDashboard() {
         lastTradeAt: now,
       });
 
+      // On liquidation, equity is $0 — nothing to return to main account.
+      // The allocation was already deducted when user set it.
+      // Just reset the tracking ref.
+      prevAllocationRef.current = 0;
+      try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+
       toast.error('Allocation Depleted — All positions liquidated', {
-        description: 'Your trading allocation has been fully consumed. Set a new amount to trade again.',
+        description: 'Your trading allocation has been fully consumed. Set a new amount and reset to trade again.',
         duration: 8000,
       });
     }
@@ -457,6 +495,11 @@ export function AITradingDashboard() {
       if (acc) {
         const newBalance = Math.max(0, acc.balance - delta);
         syncAccountBalance(newBalance, 'allocation ' + (delta > 0 ? 'deducted' : 'returned') + ' $' + Math.abs(delta).toFixed(2));
+        if (newVal > 0) {
+          try { localStorage.setItem('fovi_alloc_deducted', 'true'); } catch { /* */ }
+        } else {
+          try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+        }
       }
     }
     prevAllocationRef.current = newVal;
@@ -508,6 +551,7 @@ export function AITradingDashboard() {
       }
     }
     prevAllocationRef.current = 0;
+    try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
     setAIOpenPositions([]);
     setAIClosedTrades([]);
     setAutoTradeActivity([]);
@@ -559,7 +603,17 @@ export function AITradingDashboard() {
       const updated = { ...useTradingStore.getState().botConfig, enabled: false, status: 'stopped' };
       localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
       setBotConfig(updated);
-      toast.success('AI Bot stopped.');
+      // Return allocation to main account (no trades happened)
+      const alloc = prevAllocationRef.current;
+      if (alloc > 0 && activeAccountId) {
+        const acc = accounts.find(a => a.id === activeAccountId);
+        if (acc) {
+          syncAccountBalance(acc.balance + alloc, 'stop: returned $' + alloc.toFixed(2) + ' allocation');
+        }
+      }
+      prevAllocationRef.current = 0;
+      try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+      toast.success('AI Bot stopped. Allocation returned to main account.');
       return;
     }
 
@@ -616,12 +670,24 @@ export function AITradingDashboard() {
     setBotConfig(updated);
     setAIClosedTrades(allClosed);
 
+    // Return equity (allocation + P&L) to main account
+    const returnedEquity = Math.max(0, prevAllocationRef.current + totalNet);
+    if (activeAccountId) {
+      const acc = accounts.find(a => a.id === activeAccountId);
+      if (acc) {
+        syncAccountBalance(acc.balance + returnedEquity, 'stop: returned $' + returnedEquity.toFixed(2) + ' equity');
+      }
+    }
+    prevAllocationRef.current = 0;
+    try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+
     const totalPnlFromClose = newClosed.reduce((s, t) => s + t.realizedPnl, 0);
     toast.success(
       'Closed ' + positions.length + ' position' + (positions.length > 1 ? 's' : '') + ' & stopped AI',
       {
         description: 'P&L: ' + (totalPnlFromClose >= 0 ? '+' : '') + '$' + totalPnlFromClose.toFixed(2)
-          + ' | Levy: -$' + totalNewLevy.toFixed(2),
+          + ' | Levy: -$' + totalNewLevy.toFixed(2)
+          + ' | $' + returnedEquity.toFixed(2) + ' returned to account',
         duration: 6000,
       }
     );
@@ -828,23 +894,22 @@ export function AITradingDashboard() {
               <span className={"text-sm font-semibold " + (allocation <= 0 ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>Trading Allocation</span>
               {allocation > 0 && <Badge variant="outline" className="text-[10px] h-5 ml-auto">{'$'}{allocation.toLocaleString()}</Badge>}
             </div>
-            <p className="text-[11px] text-muted-foreground mb-3">Enter the amount you want the AI to trade with. This is the maximum you can lose.</p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[11px] text-muted-foreground">Deducted from main balance. Returned (+P&L) when stopped.</p>
+              <span className="text-[11px] text-muted-foreground shrink-0 ml-2">Main: <b className="text-foreground">${mainBalanceDisplay}</b></span>
+            </div>
             <div className="flex items-center gap-3 flex-wrap">
               <div className="relative w-36">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">{'$'}</span>
                 <Input type="number" placeholder="200" value={botConfig.allocationAmount || ''} onChange={e => {
                   const val = parseFloat(e.target.value) || 0;
-                  setBotConfig({ allocationAmount: val });
-                  try { localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: val })); } catch { /* */ }
-                }} className="pl-7 h-11 text-lg font-bold" />
+                  handleAllocationChange(val);
+                }} disabled={isRunning} className="pl-7 h-11 text-lg font-bold" />
               </div>
-              {allocation <= 0 && (
+              {allocation <= 0 && !isRunning && (
                 <div className="flex gap-1.5">
                   {[50, 100, 200, 500, 1000].map(amt => (
-                    <button key={amt} onClick={() => {
-                      setBotConfig({ allocationAmount: amt });
-                      try { localStorage.setItem('fovi_autotrade_config', JSON.stringify({ ...useTradingStore.getState().botConfig, allocationAmount: amt })); } catch { /* */ }
-                    }} className={"px-3 py-2 text-xs font-bold rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 transition-colors cursor-pointer"}>
+                    <button key={amt} onClick={() => handleAllocationChange(amt)} className={"px-3 py-2 text-xs font-bold rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 transition-colors cursor-pointer"}>
                       {'$'}{amt}
                     </button>
                   ))}
@@ -924,6 +989,19 @@ export function AITradingDashboard() {
                 style={{ width: Math.max(0, Math.min(100, (accountEquity / allocation) * 100)) + '%' }}
               />
             </div>
+            {/* Liquidation warning */}
+            {isRunning && accountEquity < allocation * 0.25 && accountEquity > 0 && (
+              <div className="flex items-center gap-1.5 mt-2 text-[10px] text-red-500">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span className="font-medium">Equity critically low — AI will auto-stop and liquidate all positions if equity reaches $0</span>
+              </div>
+            )}
+            {isRunning && accountEquity <= 0 && (
+              <div className="flex items-center gap-1.5 mt-2 text-[10px] text-red-500 font-bold">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>Allocation fully depleted — positions being liquidated</span>
+              </div>
+            )}
           </div>
         )}
       </Card>
