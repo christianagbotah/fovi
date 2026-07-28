@@ -601,7 +601,7 @@ export function AITradingDashboard() {
               </div>
             </div>
             {/* Controls — stacked below title on mobile, beside it on desktop */}
-            <div className="flex items-center justify-end gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
               {!isRunning && (
                 <button onClick={handleReset} className="p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer" title="Reset trade data">
                   <RotateCcw className="h-4 w-4 text-muted-foreground" />
@@ -613,6 +613,7 @@ export function AITradingDashboard() {
                   <Switch checked={botConfig.enabled} onCheckedChange={handleToggle} disabled={saving} className="cursor-pointer" />
                 </div>
               )}
+              <div className="flex-1" />
               {(isRunning || openPositions.length > 0) && (
                 <button
                   onClick={handleCloseAllAndStop}
