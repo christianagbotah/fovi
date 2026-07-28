@@ -5,10 +5,11 @@ const DEFAULT_CONFIG = {
   id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
   maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
   strategy: 'balanced', status: 'stopped', totalTrades: 0, winTrades: 0,
-  totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 100000,
+  totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 0,
+  adminLevyPercent: 10, adminLevyCollected: 0,
 };
 
-// GET /api/trading/auto-trade
+// GET /api/trading/auto-trade — DB is the source of truth
 export async function GET() {
   try {
     if (!db || !hasModel('tradingAccount')) {
@@ -31,50 +32,52 @@ export async function GET() {
     const winRate = config.totalTrades > 0
       ? Math.round((config.winTrades / config.totalTrades) * 100)
       : 0;
-    return NextResponse.json({ ...config, winRate, accountBalance: defaultAccount.balance });
+    return NextResponse.json({
+      ...config,
+      winRate,
+      accountBalance: defaultAccount.balance,
+      adminLevyPercent: 10,
+      adminLevyCollected: 0,
+    });
   } catch (error) {
-    // ANY error falls back to default config
     console.warn('[auto-trade GET] DB error, using fallback:', error);
     return NextResponse.json(DEFAULT_CONFIG);
   }
 }
 
-// PUT /api/trading/auto-trade
+// PUT /api/trading/auto-trade — Persist ALL fields to DB
 export async function PUT(request: Request) {
   let body: any;
-  let enabled: any, allocationAmount: any, riskTolerance: any, maxPositions: any,
-    maxPositionSize: any, stopLossPercent: any, takeProfitPercent: any,
-    strategy: any, status: any;
   try {
     body = await request.json();
-    ({ enabled, allocationAmount, riskTolerance, maxPositions, maxPositionSize,
-      stopLossPercent, takeProfitPercent, strategy, status } = body);
   } catch (error) {
     console.error('PUT /api/trading/auto-trade JSON parse error:', error);
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Build the demo-mode fallback response (used when !db or DB unavailable)
-  const buildDemoResponse = () => {
-    let newStatus = status || 'stopped';
-    if (enabled && !status) newStatus = 'running';
-    if (enabled === false) newStatus = 'stopped';
+  const {
+    enabled, allocationAmount, riskTolerance, maxPositions,
+    maxPositionSize, stopLossPercent, takeProfitPercent,
+    strategy, status, totalTrades, winTrades, totalPnl,
+    adminLevyPercent, adminLevyCollected,
+  } = body;
+
+  // Derive status from enabled if not explicitly provided
+  let newStatus = status;
+  if (newStatus === undefined || newStatus === null) {
+    if (enabled === true) newStatus = 'running';
+    else if (enabled === false) newStatus = 'stopped';
+    else newStatus = 'stopped';
+  }
+
+  // Demo-mode fallback (no DB available)
+  if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json({
       ...DEFAULT_CONFIG,
-      enabled: enabled ?? false,
-      allocationAmount: allocationAmount ?? 0,
-      riskTolerance: riskTolerance ?? 'medium',
-      maxPositions: maxPositions ?? 5,
-      stopLossPercent: stopLossPercent ?? 2.0,
-      takeProfitPercent: takeProfitPercent ?? 4.0,
-      strategy: strategy ?? 'balanced',
+      ...body,
       status: newStatus,
+      enabled: enabled ?? false,
     });
-  };
-
-  if (!db || !hasModel('tradingAccount')) {
-    // Return updated config without persisting (demo mode)
-    return buildDemoResponse();
   }
 
   try {
@@ -86,33 +89,41 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'No default account found' }, { status: 404 });
     }
 
-    let newStatus = status || 'stopped';
-    if (enabled && !status) newStatus = 'running';
-    if (enabled === false) newStatus = 'stopped';
+    const updateData: Record<string, unknown> = { status: newStatus };
+    if (enabled !== undefined) updateData.enabled = enabled;
+    if (allocationAmount !== undefined) updateData.allocationAmount = allocationAmount;
+    if (riskTolerance !== undefined) updateData.riskTolerance = riskTolerance;
+    if (maxPositions !== undefined) updateData.maxPositions = maxPositions;
+    if (maxPositionSize !== undefined) updateData.maxPositionSize = maxPositionSize;
+    if (stopLossPercent !== undefined) updateData.stopLossPercent = stopLossPercent;
+    if (takeProfitPercent !== undefined) updateData.takeProfitPercent = takeProfitPercent;
+    if (strategy !== undefined) updateData.strategy = strategy;
+    if (totalTrades !== undefined) updateData.totalTrades = totalTrades;
+    if (winTrades !== undefined) updateData.winTrades = winTrades;
+    if (totalPnl !== undefined) updateData.totalPnl = totalPnl;
 
     const config = await db.botConfig.upsert({
       where: { id: body.id || 'nonexistent' },
       create: {
-        userId: defaultAccount.userId, accountId: defaultAccount.id,
-        enabled: enabled ?? false, allocationAmount: allocationAmount ?? 0,
-        riskTolerance: riskTolerance ?? 'medium', maxPositions: maxPositions ?? 5,
-        maxPositionSize: maxPositionSize ?? 0, stopLossPercent: stopLossPercent ?? 2.0,
-        takeProfitPercent: takeProfitPercent ?? 4.0, strategy: strategy ?? 'balanced',
+        userId: defaultAccount.userId,
+        accountId: defaultAccount.id,
+        enabled: enabled ?? false,
+        allocationAmount: allocationAmount ?? 0,
+        riskTolerance: riskTolerance ?? 'medium',
+        maxPositions: maxPositions ?? 5,
+        maxPositionSize: maxPositionSize ?? 0,
+        stopLossPercent: stopLossPercent ?? 2.0,
+        takeProfitPercent: takeProfitPercent ?? 4.0,
+        strategy: strategy ?? 'balanced',
         status: newStatus,
+        totalTrades: totalTrades ?? 0,
+        winTrades: winTrades ?? 0,
+        totalPnl: totalPnl ?? 0,
       },
-      update: {
-        ...(enabled !== undefined && { enabled }),
-        ...(allocationAmount !== undefined && { allocationAmount }),
-        ...(riskTolerance !== undefined && { riskTolerance }),
-        ...(maxPositions !== undefined && { maxPositions }),
-        ...(maxPositionSize !== undefined && { maxPositionSize }),
-        ...(stopLossPercent !== undefined && { stopLossPercent }),
-        ...(takeProfitPercent !== undefined && { takeProfitPercent }),
-        ...(strategy !== undefined && { strategy }),
-        status: newStatus,
-      },
+      update: updateData,
     });
 
+    // Sync UserSettings (non-critical)
     try {
       await db.userSettings.upsert({
         where: { userId: defaultAccount.userId },
@@ -125,11 +136,17 @@ export async function PUT(request: Request) {
     } catch { /* non-critical */ }
 
     const winRate = config.totalTrades > 0
-      ? Math.round((config.winTrades / config.totalTrades) * 100) : 0;
-    return NextResponse.json({ ...config, winRate });
+      ? Math.round((config.winTrades / config.totalTrades) * 100)
+      : 0;
+    return NextResponse.json({
+      ...config,
+      winRate,
+      accountBalance: defaultAccount.balance,
+      adminLevyPercent: 10,
+      adminLevyCollected: 0,
+    });
   } catch (error) {
-    // ANY database error falls back to demo config
-    console.warn('[auto-trade PUT] DB error, using fallback:', error);
-    return buildDemoResponse();
+    console.warn('[auto-trade PUT] DB error:', error);
+    return NextResponse.json({ error: 'Failed to save config' }, { status: 500 });
   }
 }

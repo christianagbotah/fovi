@@ -60,52 +60,31 @@ export function AITradingDashboard() {
   // Track previous allocation to compute deltas for main account balance sync
   const prevAllocationRef = useRef<number>(0);
 
-  // Initialize sim prices from symbol data + handle allocation tracking
+  // Initialize sim prices
   useEffect(() => {
     for (const sym of SYMBOLS) {
       if (!simPricesRef.current[sym]) {
         simPricesRef.current[sym] = SYMBOL_DATA[sym].price;
       }
     }
-    // Restore previous allocation from localStorage
-    try {
-      const savedConfig = localStorage.getItem('fovi_autotrade_config');
-      if (savedConfig) {
-        const parsed = JSON.parse(savedConfig);
-        const savedAlloc = parsed.allocationAmount || 0;
-        const wasDeducted = localStorage.getItem('fovi_alloc_deducted') === 'true';
-        if (wasDeducted) {
-          // Previous session already deducted this amount from main balance
-          prevAllocationRef.current = savedAlloc;
-        } else if (savedAlloc > 0 && (parsed.status === 'running' || parsed.enabled)) {
-          // Bot is running but allocation was never deducted (migration case)
-          // Deduct now and mark as deducted
-          const acc = accounts.find(a => a.id === activeAccountId);
-          if (acc) {
-            const newBal = Math.max(0, acc.balance - savedAlloc);
-            const updatedAccounts = accounts.map(a =>
-              a.id === activeAccountId
-                ? { ...a, balance: parseFloat(newBal.toFixed(2)), updatedAt: new Date().toISOString() }
-                : a
-            );
-            setAccounts(updatedAccounts);
-            try { localStorage.setItem('fovi_accounts', JSON.stringify(updatedAccounts)); } catch { /* */ }
-            fetch('/api/trading/accounts/' + activeAccountId, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ balance: newBal }),
-            }).catch(() => {});
-          }
-          prevAllocationRef.current = savedAlloc;
-          localStorage.setItem('fovi_alloc_deducted', 'true');
-        } else if (parsed.status === 'stopped' || parsed.status === 'liquidated') {
-          // Bot is stopped — allocation was already returned or never deducted
-          prevAllocationRef.current = 0;
-          localStorage.removeItem('fovi_alloc_deducted');
-        }
-      }
-    } catch { /* */ }
   }, []);
+
+  // Track allocation deduction from main account.
+  // We compare the DB account balance with the allocation to detect if
+  // allocation was already deducted (no need for a separate localStorage flag).
+  useEffect(() => {
+    if (!activeAccountId) return;
+    const acc = accounts.find(a => a.id === activeAccountId);
+    if (!acc) return;
+    // If bot is running/paused with an allocation, the main balance should
+    // already reflect the deduction. Track it so we don't double-deduct on
+    // allocation changes.
+    if (botConfig.allocationAmount > 0 && botConfig.status !== 'stopped' && botConfig.status !== 'liquidated') {
+      prevAllocationRef.current = botConfig.allocationAmount;
+    } else {
+      prevAllocationRef.current = 0;
+    }
+  }, [activeAccountId, accounts, botConfig.allocationAmount, botConfig.status]);
 
   // ---- Sync main account balance with AI allocation ----
   // This adjusts the active trading account's balance when:
@@ -167,16 +146,12 @@ export function AITradingDashboard() {
     return true;
   });
 
-  // ---- Load saved state on mount ----
+  // ---- Load state on mount: DB is source of truth for bot config ----
+  // localStorage is ONLY used for transient simulation data (positions, trades, activity)
+  // that isn't persisted to DB yet.
   useEffect(() => {
+    // Load transient simulation data from localStorage (positions, trades, activity)
     try {
-      const savedConfig = localStorage.getItem('fovi_autotrade_config');
-      if (savedConfig) {
-        const parsed = JSON.parse(savedConfig);
-        if (parsed.status === 'running' || parsed.enabled) {
-          setBotConfig(parsed);
-        }
-      }
       const savedActivity = localStorage.getItem('fovi_autotrade_activity');
       if (savedActivity) {
         const parsed = JSON.parse(savedActivity);
@@ -184,24 +159,24 @@ export function AITradingDashboard() {
       }
     } catch { /* */ }
 
-    async function load() {
+    async function loadFromDB() {
       try {
+        // Fetch bot config from API (DB is source of truth)
         const configRes = await fetch('/api/trading/auto-trade');
-        const current = useTradingStore.getState().botConfig;
-        // Only use API data if we're NOT already running locally
-        // This prevents the API's stale 'running' status from re-enabling the bot after user stopped it
-        if (configRes.ok && current.status === 'stopped' && !current.enabled) {
-          // Already stopped locally — don't let API override
-          // Just make sure the API is also synced
-          fetch('/api/trading/auto-trade', {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(current),
-          }).catch(() => {});
+        if (configRes.ok) {
+          const dbConfig = await configRes.json();
+          // Always use the DB config — it is the authoritative state.
+          // If DB says stopped, the bot is stopped regardless of localStorage.
+          // If DB says running, the bot should be running.
+          setBotConfig(dbConfig);
+          console.log('[AI Trade] Loaded config from DB:', dbConfig.status, 'enabled:', dbConfig.enabled);
         }
-      } catch { /* */ }
+      } catch (err) {
+        console.warn('[AI Trade] Failed to load config from API, using defaults:', err);
+      }
       setLoading(false);
     }
-    load();
+    loadFromDB();
   }, [setBotConfig, setAutoTradeActivity]);
 
   // ---- Sync portfolio state for dashboard tab ----
@@ -537,6 +512,7 @@ export function AITradingDashboard() {
     } catch { /* */ }
   };
 
+  // ---- Toggle: Pause / Resume (keeps positions open, no equity return) ----
   const handleToggle = async () => {
     if (allocation <= 0) {
       toast.error('Set a trading allocation first');
@@ -548,16 +524,25 @@ export function AITradingDashboard() {
     }
     setSaving(true);
     const newEnabled = !botConfig.enabled;
-    const updated = { ...botConfig, enabled: newEnabled, status: newEnabled ? 'running' : 'stopped' };
-    localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
-    setBotConfig(updated);
+    const newStatus = newEnabled ? 'running' : 'paused';
+    const updated = { ...botConfig, enabled: newEnabled, status: newStatus };
+
     try {
-      await fetch('/api/trading/auto-trade', {
+      const res = await fetch('/api/trading/auto-trade', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated),
       });
-    } catch { /* */ }
+      if (res.ok) {
+        const dbConfig = await res.json();
+        setBotConfig(dbConfig);
+        toast.success(newEnabled ? 'AI Bot resumed — trading active' : 'AI Bot paused — positions held');
+      } else {
+        toast.error('Failed to ' + (newEnabled ? 'start' : 'pause') + ' bot. Try again.');
+      }
+    } catch {
+      toast.error('Network error. Check your connection.');
+    }
     setSaving(false);
   };
 
@@ -624,7 +609,9 @@ export function AITradingDashboard() {
     setShowStopDialog(true);
   };
 
-  const confirmCloseAllAndStop = () => {
+  // ---- Stop: Close ALL positions, record P&L, return equity, disable bot ----
+  // This is DIFFERENT from Toggle: Stop closes positions and returns money.
+  const confirmCloseAllAndStop = async () => {
     setShowStopDialog(false);
     const positions = useTradingStore.getState().aiOpenPositions;
     const now = new Date().toISOString();
@@ -637,11 +624,7 @@ export function AITradingDashboard() {
     };
 
     if (positions.length === 0) {
-      localStorage.setItem('fovi_autotrade_config', JSON.stringify(stopBase));
-      setBotConfig(stopBase);
-      fetch('/api/trading/auto-trade', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stopBase),
-      }).catch(() => {});
+      // No positions — just stop and return allocation
       const alloc = prevAllocationRef.current;
       if (alloc > 0 && activeAccountId) {
         const acc = accounts.find(a => a.id === activeAccountId);
@@ -650,11 +633,31 @@ export function AITradingDashboard() {
         }
       }
       prevAllocationRef.current = 0;
-      try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+
+      // Persist stopped state to DB FIRST (await — don't fire-and-forget)
+      try {
+        const res = await fetch('/api/trading/auto-trade', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stopBase),
+        });
+        if (res.ok) {
+          const dbConfig = await res.json();
+          setBotConfig(dbConfig);
+        } else {
+          // API failed — still update locally so user sees stopped state
+          setBotConfig(stopBase);
+          toast.error('Failed to sync stop state to server. Bot may restart on reload.');
+          return;
+        }
+      } catch {
+        setBotConfig(stopBase);
+        toast.error('Network error. Bot may restart on reload.');
+        return;
+      }
       toast.success('AI Bot stopped. Allocation returned to main account.');
       return;
     }
 
+    // Has positions — close them all and compute P&L
     const closedTradesList = useTradingStore.getState().aiClosedTrades;
     let totalNewLevy = 0;
 
@@ -678,7 +681,7 @@ export function AITradingDashboard() {
     // 1. Clear all open positions FIRST so the simulation loop can't reopen
     setAIOpenPositions([]);
 
-    // 2. Record closed trades and update stats
+    // 2. Record closed trades and compute final stats
     const allClosed = [...newClosed, ...closedTradesList].slice(0, 100);
     const allTrades = allClosed;
     const wins = allTrades.filter(t => t.realizedPnl > 0).length;
@@ -694,16 +697,9 @@ export function AITradingDashboard() {
       adminLevyCollected: parseFloat(totalLevy.toFixed(2)),
       lastTradeAt: now,
     };
-    localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated));
-    setBotConfig(updated);
     setAIClosedTrades(allClosed);
 
-    // 3. Sync to API so DB knows we stopped (prevents re-enabling on reload)
-    fetch('/api/trading/auto-trade', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated),
-    }).catch(() => {});
-
-    // 4. Return equity to main account
+    // 3. Return equity to main account
     const returnedEquity = Math.max(0, prevAllocationRef.current + totalNet);
     if (activeAccountId) {
       const acc = accounts.find(a => a.id === activeAccountId);
@@ -712,7 +708,23 @@ export function AITradingDashboard() {
       }
     }
     prevAllocationRef.current = 0;
-    try { localStorage.removeItem('fovi_alloc_deducted'); } catch { /* */ }
+
+    // 4. Persist stopped state to DB (AWAIT — this is critical)
+    try {
+      const res = await fetch('/api/trading/auto-trade', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated),
+      });
+      if (res.ok) {
+        const dbConfig = await res.json();
+        setBotConfig(dbConfig);
+      } else {
+        setBotConfig(updated);
+        toast.error('Failed to sync stop state. Bot may restart on reload.');
+      }
+    } catch {
+      setBotConfig(updated);
+      toast.error('Network error. Bot may restart on reload.');
+    }
 
     const totalPnlFromClose = newClosed.reduce((s, t) => s + t.realizedPnl, 0);
     toast.success(
