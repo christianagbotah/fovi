@@ -499,15 +499,35 @@ export function AITradingDashboard() {
               const pnlPos = hasPnl && pnl >= 0;
               const isOpen = !hasPnl || pnl === 0;
 
+              let statusIcon: React.ReactNode;
+              if (isOpen && isBuy) {
+                statusIcon = <ArrowUpRight className="h-4 w-4 text-emerald-500" />;
+              } else if (isOpen) {
+                statusIcon = <ArrowDownRight className="h-4 w-4 text-red-500" />;
+              } else if (pnlPos) {
+                statusIcon = <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+              } else {
+                statusIcon = <XCircle className="h-4 w-4 text-red-500" />;
+              }
+
+              let pnlBadge: React.ReactNode = null;
+              if (hasPnl && pnl !== 0) {
+                const pnlColor = pnlPos ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500';
+                const PnlIcon = pnlPos ? TrendingUp : TrendingDown;
+                pnlBadge = (
+                  <div className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-bold tabular-nums shrink-0 ${pnlColor}`}>
+                    <PnlIcon className="h-3 w-3" />
+                    {pnlPos ? '+' : ''}{pnl!.toFixed(2)}
+                  </div>
+                );
+              }
+
               return (
                 <div key={act.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-border/30 hover:bg-muted/20 transition-colors">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                     isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10'
                   }`>
-                    {isOpen
-                      ? (isBuy ? <ArrowUpRight className="h-4 w-4 text-emerald-500" /> : <ArrowDownRight className="h-4 w-4 text-red-500" />)
-                      : (pnlPos ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <XCircle className="h-4 w-4 text-red-500" />)
-                    }
+                  {statusIcon}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
@@ -526,13 +546,7 @@ export function AITradingDashboard() {
                     </p>
                   </div>
                   {hasPnl && pnl !== 0 && (
-                    <div className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-bold tabular-nums shrink-0 ${
-                      pnlPos ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                    }`>
-                      {pnlPos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                      {pnlPos ? '+' : ''}{pnl.toFixed(2)}
-                    </div>
-                  )}
+                  {pnlBadge}
                   {!isOpen && !hasPnl && (
                     <span className="text-[10px] text-muted-foreground shrink-0">OPEN</span>
                   )}
