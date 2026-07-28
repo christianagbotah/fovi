@@ -1,3 +1,11 @@
+## CRITICAL PROJECT CONFIGURATION
+
+- **Production VPS**: fovi.lightworldtech.com
+- **Production Port**: **3002** (NOT 3000 — port 3000 is reserved for a different app)
+- **Process Manager**: PM2 (`pm2 restart fovi-app`)
+- **Start Command**: `npx next dev -p 3002`
+- **Local Dev**: For local sandbox testing, port 3000 may be used since it's the only available port, but NEVER deploy or configure for port 3000 on the VPS.
+
 ---
 Task ID: 1
 Agent: Main Agent
@@ -13,6 +21,7 @@ Work Log:
 
 Stage Summary:
 - Both files compile without errors
-- ai-trading-dashboard.tsx: 430 lines, clean rewrite avoiding SWC-incompatible patterns
+- ai-trading-dashboard.tsx: ~430 lines, clean rewrite avoiding SWC-incompatible patterns
 - page.tsx: corrupted comment fixed
-- Dev server running on port 3000, page renders successfully
+- Dev server compiles and page renders successfully
+- **IMPORTANT**: On VPS, always use port 3002, never 3000
