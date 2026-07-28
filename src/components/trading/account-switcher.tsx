@@ -222,7 +222,13 @@ export function AccountSwitcher() {
                 </div>
               </div>
               <div className="max-h-64 overflow-y-auto">
-                {accounts.map(acc => accountRow(acc))}
+                {[...accounts].sort((a, b) => {
+                  if (a.id === activeAccountId) return -1;
+                  if (b.id === activeAccountId) return 1;
+                  if (a.isDefault && !b.isDefault) return -1;
+                  if (!a.isDefault && b.isDefault) return 1;
+                  return 0;
+                }).map(acc => accountRow(acc))}
               </div>
             </motion.div>
           )}
@@ -242,7 +248,13 @@ export function AccountSwitcher() {
             </SheetTitle>
           </SheetHeader>
           <div className="divide-y divide-border max-h-[50vh] overflow-y-auto -mx-6 px-6">
-            {accounts.map(acc => accountRow(acc))}
+            {[...accounts].sort((a, b) => {
+              if (a.id === activeAccountId) return -1;
+              if (b.id === activeAccountId) return 1;
+              if (a.isDefault && !b.isDefault) return -1;
+              if (!a.isDefault && b.isDefault) return 1;
+              return 0;
+            }).map(acc => accountRow(acc))}
             {accounts.length === 0 && (
               <div className="py-8 text-center text-muted-foreground text-sm">
                 No accounts. Tap Add to create one.

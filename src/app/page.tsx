@@ -291,7 +291,7 @@ function PortfolioCards() {
             )}
           </div>
           <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isPnlUp ? 'text-emerald-500' : 'text-red-500'}`}>
-            ${'\$'}{effectivePortfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {'$'}{effectivePortfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
             {isPnlUp ? '+' : ''}{effectivePortfolio.dayPnlPercent.toFixed(2)}% today
