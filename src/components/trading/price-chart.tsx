@@ -9,7 +9,7 @@ import {
 import { ArrowUpRight, ArrowDownRight, AreaChart as AreaChartIcon, BarChart3, LineChart as LineChartIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTradingStore } from '@/lib/store/trading-store';
-import type { Timeframe } from '@/lib/types';
+import type { CandleData, Timeframe } from '@/lib/types';
 import { formatPrice } from '@/lib/market-sim';
 
 type ChartType = 'area' | 'candle' | 'line';
@@ -29,6 +29,46 @@ const CHART_TYPES: { value: ChartType; label: string; icon: React.ReactNode }[] 
   { value: 'candle', label: 'Candle', icon: <BarChart3 className="h-4 w-4" /> },
   { value: 'line', label: 'Line', icon: <LineChartIcon className="h-4 w-4" /> },
 ];
+
+// ---------- Simulated candle data for fallback ----------
+function generateSimulatedCandles(symbol: string, count: number = 50): CandleData[] {
+  // Approximate base prices for common symbols
+  const bases: Record<string, number> = {
+    AAPL: 195, GOOGL: 178, MSFT: 445, AMZN: 198, NVDA: 920,
+    TSLA: 245, META: 530, NFLX: 720, AMD: 178, INTC: 32,
+    BTC: 67500, ETH: 3520, SOL: 172, BNB: 595, XRP: 0.58,
+    DOGE: 0.165, ADA: 0.48, AVAX: 38, DOT: 7.35, LINK: 17.8,
+    EURUSD: 1.085, GBPUSD: 1.272, USDJPY: 154.5, AUDUSD: 0.665,
+    XAUUSD: 2385, XAGUSD: 28.5, US30: 39500, NAS100: 18350,
+  };
+  const base = bases[symbol] || 100;
+  const candles: CandleData[] = [];
+  const now = Date.now();
+  const intervalMs = 86400000; // 1 day for simulated data
+
+  let price = base * (0.94 + Math.random() * 0.12);
+  for (let i = count - 1; i >= 0; i--) {
+    const ts = now - i * intervalMs;
+    const volatility = base * 0.006;
+    const drift = (Math.random() - 0.47) * volatility;
+    const open = price;
+    const close = price + drift;
+    const high = Math.max(open, close) + Math.random() * volatility * 0.5;
+    const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+    const volume = Math.floor(Math.random() * 5000000) + 500000;
+    candles.push({ timestamp: ts, open, high, low, close, volume });
+    price = close;
+  }
+  return candles;
+}
+
+// ---------- Helper to avoid JSX in ternaries ----------
+function PriceChangeIcon({ isUp }: { isUp: boolean }) {
+  if (isUp) {
+    return <ArrowUpRight className="h-5 w-5 text-emerald-500" />;
+  }
+  return <ArrowDownRight className="h-5 w-5 text-red-500" />;
+}
 
 const tooltipStyle: React.CSSProperties = {
   backgroundColor: 'hsl(var(--card))',
@@ -123,26 +163,32 @@ export function PriceChart() {
     return () => clearInterval(interval);
   }, [fetchCandles]);
 
+  // Use simulated data when no real candles are available
+  const displayCandles = useMemo(() => {
+    if (candles.length > 0) return candles;
+    if (!selectedSymbol) return [];
+    return generateSimulatedCandles(selectedSymbol);
+  }, [candles, selectedSymbol]);
+
   const chartData = useMemo(() => {
-    return candles.map(c => ({
+    return displayCandles.map(c => ({
       time: new Date(c.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       ...c,
     }));
-  }, [candles]);
+  }, [displayCandles]);
 
-  const lastCandle = candles[candles.length - 1];
-  const prevCandle = candles[candles.length - 2];
+  const lastCandle = displayCandles[displayCandles.length - 1];
+  const prevCandle = displayCandles[displayCandles.length - 2];
   const priceChange = lastCandle && prevCandle ? lastCandle.close - prevCandle.close : 0;
   const priceChangePct = prevCandle ? (priceChange / prevCandle.close) * 100 : 0;
   const isUp = priceChange >= 0;
   const strokeColor = isUp ? '#10b981' : '#ef4444';
-
   const candleDomain = useMemo(() => {
-    if (candles.length === 0) return ['auto', 'auto'] as [number, number];
-    const lows = candles.map(c => c.low);
-    const highs = candles.map(c => c.high);
+    if (displayCandles.length === 0) return ['auto', 'auto'] as [number, number];
+    const lows = displayCandles.map(c => c.low);
+    const highs = displayCandles.map(c => c.high);
     return [Math.min(...lows) * 0.998, Math.max(...highs) * 1.002] as [number, number];
-  }, [candles]);
+  }, [displayCandles]);
 
   const handleBuySell = (side: 'buy' | 'sell') => {
     setOrderSymbol(selectedSymbol);
@@ -158,10 +204,20 @@ export function PriceChart() {
   }
 
   const renderChart = () => {
-    if (isLoading && !candles.length) {
+    // Show loading spinner only when we have no data at all (first load)
+    if (isLoading && candles.length === 0 && displayCandles.length === 0) {
       return (
         <div className="h-full flex items-center justify-center">
           <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      );
+    }
+
+    // If still no data after all fallbacks, show a message
+    if (chartData.length === 0) {
+      return (
+        <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+          No chart data available
         </div>
       );
     }
@@ -260,7 +316,7 @@ export function PriceChart() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold">{selectedSymbol}</h2>
-            {isUp ? <ArrowUpRight className="h-5 w-5 text-emerald-500" /> : <ArrowDownRight className="h-5 w-5 text-red-500" />}
+            <PriceChangeIcon isUp={isUp} />
           </div>
           <div className="flex items-center gap-3 mt-1">
             <span className="text-2xl font-bold tabular-nums">
@@ -318,22 +374,18 @@ export function PriceChart() {
       </div>
 
       {/* Volume Bar Chart */}
-      {candles.length > 0 && candles.some(c => c.volume > 0) && (
+      {displayCandles.length > 0 && displayCandles.some(c => c.volume > 0) && (
         <div className="h-16 px-2 pb-2">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData.slice(-30)} margin={{ top: 0, right: 5, bottom: 0, left: 5 }}>
               <Bar dataKey="volume" isAnimationActive={false} radius={[2, 2, 0, 0]}>
-                {chartData.slice(-30).map((entry, idx) => (
-                  <Cell
-                    key={idx}
-                    fill={
-                      chartType === 'candle'
-                        ? (entry.close >= entry.open ? '#10b981' : '#ef4444')
-                        : 'hsl(var(--muted-foreground))'
-                    }
-                    opacity={chartType === 'candle' ? 0.5 : 0.3}
-                  />
-                ))}
+                {chartData.slice(-30).map((entry, idx) => {
+                  const fill = chartType === 'candle'
+                    ? (entry.close >= entry.open ? '#10b981' : '#ef4444')
+                    : 'hsl(var(--muted-foreground))';
+                  const opacity = chartType === 'candle' ? 0.5 : 0.3;
+                  return <Cell key={idx} fill={fill} opacity={opacity} />;
+                })}
               </Bar>
             </BarChart>
           </ResponsiveContainer>

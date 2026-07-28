@@ -258,21 +258,23 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   setAiChatOpen: (open) => set({ aiChatOpen: open }),
   isLoading: false,
   setIsLoading: (loading) => set({ isLoading: loading }),
-  activeTab: 'dashboard',
+  activeTab: 'autotrade',
   setActiveTab: (tab) => set({ activeTab: tab }),
   assetFilter: 'all',
   setAssetFilter: (filter) => set({ assetFilter: filter }),
 
   // AI Auto-Trade
-  botConfig: {
+  botConfig: loadFromLS<BotConfigState>('fovi_autotrade_config', {
     id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
     maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
     strategy: 'balanced', status: 'stopped', totalTrades: 0, winTrades: 0,
     totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 0,
+  }),
+  setBotConfig: (config) => {
+    const updated = { ...get().botConfig, ...config };
+    set({ botConfig: updated });
+    saveToLS('fovi_autotrade_config', updated);
   },
-  setBotConfig: (config) => set((state) => ({
-    botConfig: { ...state.botConfig, ...config },
-  })),
   autoTradeActivity: [],
   setAutoTradeActivity: (activity) => set({ autoTradeActivity: activity }),
   aiOpenPositions: loadFromLS<AIOpenPosition[]>('fovi_ai_positions', []),

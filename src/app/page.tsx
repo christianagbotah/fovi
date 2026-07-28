@@ -17,9 +17,7 @@ import { PositionsPanel } from '@/components/trading/positions-panel';
 import { SignalsPanel } from '@/components/trading/signals-panel';
 import { OrderForm } from '@/components/trading/order-form';
 import { MarketOverview } from '@/components/trading/market-overview';
-import { AutoTradePanel } from '@/components/trading/auto-trade-panel';
 import { AITradingDashboard } from '@/components/trading/ai-trading-dashboard';
-import { BotsPanel } from '@/components/trading/bots-panel';
 import { BacktestPanel } from '@/components/trading/backtest-panel';
 import { AnalyticsPanel } from '@/components/trading/analytics-panel';
 import { JournalPanel } from '@/components/trading/journal-panel';
@@ -44,9 +42,9 @@ import { PagePreloader } from '@/components/page-preloader';
 // Mobile Bottom Tab Bar
 // ============================================================
 const MOBILE_TABS = [
-  { id: 'dashboard', label: 'Trade', icon: LayoutDashboard },
   { id: 'autotrade', label: 'AI Bot', icon: Bot },
-  { id: 'bots', label: 'Bots', icon: LineChart },
+  { id: 'markets', label: 'Markets', icon: Search },
+  { id: 'signals', label: 'Signals', icon: Sparkles },
   { id: 'analytics', label: 'Stats', icon: BarChart3 },
 ];
 
@@ -877,21 +875,20 @@ function DesktopSidebar() {
   const [alertsOpen, setAlertsOpen] = useState(false);
 
   const sidebarItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'autotrade', label: 'AI Auto-Trade', icon: Bot },
-    { id: 'bots', label: 'Bot Manager', icon: LineChart },
-    { id: 'backtest', label: 'Backtesting', icon: FlaskConical },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
+    { id: 'autotrade', label: 'AI Trading', icon: Bot },
+    { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'markets', label: 'Markets', icon: Search },
+    { id: 'signals', label: 'AI Signals', icon: Sparkles },
     { id: 'positions', label: 'Positions', icon: Wallet },
-    { id: 'journal', label: 'Trade Journal', icon: BookOpen },
+    { id: 'history', label: 'History', icon: Clock },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'backtest', label: 'Backtesting', icon: FlaskConical },
+    { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
+    { id: 'journal', label: 'Journal', icon: BookOpen },
     { id: 'sentiment', label: 'Sentiment', icon: Globe },
     { id: 'correlation', label: 'Correlation', icon: GitBranch },
     { id: 'sessions', label: 'Sessions', icon: Timer },
     { id: 'webhook', label: 'Webhooks', icon: Activity },
-    { id: 'history', label: 'History', icon: Clock },
-    { id: 'signals', label: 'AI Signals', icon: Sparkles },
   ];
 
   return (
@@ -1068,7 +1065,7 @@ function SymbolDetailView() {
         )}
 
         {/* Chart */}
-        <Card className="overflow-hidden min-h-[400px]">
+        <Card className="overflow-hidden min-h-[400px] flex flex-col">
           <PriceChart />
         </Card>
       </div>
@@ -1221,21 +1218,15 @@ export default function TradingDashboard() {
 
         <main className="flex-1 overflow-y-auto min-h-0 pb-20 lg:pb-4">
           <AnimatePresence mode="wait">
-            {/* ====== DASHBOARD TAB ====== */}
+            {/* ====== DASHBOARD / OVERVIEW TAB ====== */}
             {activeTab === 'dashboard' && (
               <motion.div key="dashboard" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
                 <div className="p-4 pb-2">
                   <PortfolioCards />
                 </div>
-                <div className="px-4 pb-2">
-                  <PerformanceMetrics portfolio={{ totalBalance: 100000, totalPnl: 2340.5, totalPnlPercent: 2.34, dayPnl: 567.8, dayPnlPercent: 0.57, openPositions: 3, activeSignals: 5, winRate: 68, totalTrades: 47 }} />
-                </div>
-                <div className="px-4 pb-2">
-                  <AutoTradePanel />
-                </div>
                 <div className="flex flex-col lg:flex-row gap-3 p-4 pt-2">
-                  <Card className="flex-1 min-h-[400px] lg:min-h-[500px] overflow-hidden">
+                  <Card className="flex-1 min-h-[400px] lg:min-h-[500px] overflow-hidden flex flex-col">
                     <PriceChart />
                   </Card>
                   <Card className="hidden lg:block w-80 overflow-hidden">
@@ -1277,14 +1268,6 @@ export default function TradingDashboard() {
               <motion.div key="autotrade" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
                 <div className="p-4"><AITradingDashboard /></div>
-              </motion.div>
-            )}
-
-            {/* ====== BOT MANAGER TAB ====== */}
-            {activeTab === 'bots' && (
-              <motion.div key="bots" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
-                <div className="p-4" style={{ paddingBottom: '100px' }}><BotsPanel /></div>
               </motion.div>
             )}
 

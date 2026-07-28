@@ -27,10 +27,21 @@ export function AITradingDashboard() {
   const [saving, setSaving] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<string>('all');
+  const [historySymbol, setHistorySymbol] = useState<string>('all');
 
   const activityList = Array.isArray(autoTradeActivity) ? autoTradeActivity : [];
   const openPositions = Array.isArray(aiOpenPositions) ? aiOpenPositions : [];
   const closedTrades = Array.isArray(aiClosedTrades) ? aiClosedTrades : [];
+
+  // Trade history filters
+  const uniqueSymbols = Array.from(new Set(closedTrades.map(t => t.symbol)));
+  const filteredTrades = closedTrades.filter(t => {
+    if (historyFilter === 'profit' && t.realizedPnl < 0) return false;
+    if (historyFilter === 'loss' && t.realizedPnl >= 0) return false;
+    if (historySymbol !== 'all' && t.symbol !== historySymbol) return false;
+    return true;
+  });
 
   const isRunning = botConfig.status === 'running';
   const activeAccount = accounts.find(a => a.isDefault) || accounts[0];
@@ -545,7 +556,7 @@ export function AITradingDashboard() {
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4" />
             <h3 className="text-sm font-semibold">Trade History</h3>
-            <Badge variant="secondary" className="text-[10px] h-5">{closedTrades.length} closed</Badge>
+            <Badge variant="secondary" className="text-[10px] h-5">{filteredTrades.length} of {closedTrades.length}</Badge>
           </div>
           {showHistory ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </button>
@@ -553,8 +564,34 @@ export function AITradingDashboard() {
         <AnimatePresence>
           {showHistory && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-              {closedTrades.length === 0 ? (
-                <div className="px-4 py-8 text-center text-muted-foreground text-sm">No closed trades yet</div>
+              {/* Filters */}
+              {closedTrades.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border/50 bg-muted/20">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground font-medium">P&L:</span>
+                    {['all', 'profit', 'loss'].map(f => (
+                      <button key={f} onClick={() => setHistoryFilter(f)}
+                        className={"px-2 py-0.5 text-[10px] font-medium rounded-md transition-colors cursor-pointer " + (historyFilter === f ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent')}>
+                        {f.charAt(0).toUpperCase() + f.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  {uniqueSymbols.length > 1 && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground font-medium">Symbol:</span>
+                      <select value={historySymbol} onChange={e => setHistorySymbol(e.target.value)}
+                        className="h-6 text-[10px] bg-muted border border-border rounded-md px-1.5 outline-none cursor-pointer">
+                        <option value="all">All</option>
+                        {uniqueSymbols.map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+              {filteredTrades.length === 0 ? (
+                <div className="px-4 py-8 text-center text-muted-foreground text-sm">No trades match filters</div>
               ) : (
                 <div className="overflow-x-auto max-h-96 overflow-y-auto">
                   <table className="w-full text-sm">
@@ -570,7 +607,7 @@ export function AITradingDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {closedTrades.map(trade => {
+                      {filteredTrades.map(trade => {
                         const isProfit = trade.realizedPnl >= 0;
                         const duration = Math.round((new Date(trade.closedAt).getTime() - new Date(trade.openedAt).getTime()) / 60000);
                         const sideLabel = trade.side === 'buy' ? 'LONG' : 'SHORT';
