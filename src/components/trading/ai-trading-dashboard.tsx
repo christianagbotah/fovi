@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bot, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
@@ -8,7 +8,6 @@ import {
   ChevronDown, ChevronUp, Loader2,
   CheckCircle2, XCircle, Settings2,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -17,9 +16,6 @@ import { useTradingStore } from '@/lib/store/trading-store';
 import type { AutoTradeActivity, AIOpenPosition, AIClosedTrade } from '@/lib/store/trading-store';
 import { toast } from 'sonner';
 
-// ============================================================
-// AI TRADING COMMAND CENTER — Full-page dashboard
-// ============================================================
 export function AITradingDashboard() {
   const {
     botConfig, setBotConfig, autoTradeActivity, setAutoTradeActivity,
@@ -32,7 +28,6 @@ export function AITradingDashboard() {
   const [showConfig, setShowConfig] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  // Safe arrays
   const activityList = Array.isArray(autoTradeActivity) ? autoTradeActivity : [];
   const openPositions = Array.isArray(aiOpenPositions) ? aiOpenPositions : [];
   const closedTrades = Array.isArray(aiClosedTrades) ? aiClosedTrades : [];
@@ -41,14 +36,12 @@ export function AITradingDashboard() {
   const activeAccount = accounts.find(a => a.isDefault) || accounts[0];
   const accountBalance = activeAccount?.balance || 100000;
 
-  // Calculate equity: balance - invested + unrealized P&L
   const investedAmount = openPositions.reduce((sum, p) => sum + (p.entryPrice * p.qty), 0);
   const unrealizedPnl = openPositions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
   const realizedPnl = closedTrades.reduce((sum, t) => sum + t.realizedPnl, 0);
   const totalEquity = accountBalance - investedAmount + unrealizedPnl;
   const totalPnl = realizedPnl + unrealizedPnl;
 
-  // ---- Hydrate from localStorage on mount ----
   useEffect(() => {
     try {
       const savedConfig = localStorage.getItem('fovi_autotrade_config');
@@ -65,7 +58,6 @@ export function AITradingDashboard() {
       }
     } catch { /* */ }
 
-    // Then try API but never overwrite running state
     async function load() {
       try {
         const configRes = await fetch('/api/trading/auto-trade');
@@ -79,7 +71,6 @@ export function AITradingDashboard() {
     load();
   }, [setBotConfig, setAutoTradeActivity]);
 
-  // ---- AI Trade Simulation ----
   useEffect(() => {
     if (botConfig.status !== 'running') return;
 
@@ -103,12 +94,10 @@ export function AITradingDashboard() {
       const qty = Math.floor(Math.random() * 50) + 1;
       const filledPrice = parseFloat(getPrice(symbol).toFixed(2));
 
-      // Check if we have an open position in this symbol — close it
       const currentPositions = useTradingStore.getState().aiOpenPositions;
       const existingIdx = currentPositions.findIndex(p => p.symbol === symbol);
 
       if (existingIdx >= 0) {
-        // CLOSE existing position
         const pos = currentPositions[existingIdx];
         const closePrice = parseFloat(getPrice(symbol).toFixed(2));
         const tradePnl = pos.side === 'buy'
@@ -128,7 +117,6 @@ export function AITradingDashboard() {
         setAIClosedTrades(updatedClosed);
         setAIOpenPositions(updatedOpen);
 
-        // Activity log
         const act: AutoTradeActivity & { pnl: number } = {
           id: `ai_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
           symbol, side: pos.side === 'buy' ? 'sell' : 'buy', type: 'market',
@@ -142,7 +130,6 @@ export function AITradingDashboard() {
           return updated;
         });
 
-        // Update bot stats
         const won = tradePnl >= 0;
         setBotConfig(prev => {
           const newTrades = prev.totalTrades + 1;
@@ -159,7 +146,6 @@ export function AITradingDashboard() {
           { description: `Entry $${pos.entryPrice.toLocaleString()} → Exit $${closePrice.toLocaleString()}` }
         );
       } else {
-        // OPEN new position
         const newPos: AIOpenPosition = {
           id: `pos_${Date.now()}`,
           symbol, side, qty, entryPrice: filledPrice,
@@ -189,12 +175,11 @@ export function AITradingDashboard() {
       }
     }
 
-    // Simulate price changes on open positions every 3s
     const priceInterval = setInterval(() => {
       const positions = useTradingStore.getState().aiOpenPositions;
       if (positions.length === 0) return;
       const updated = positions.map(p => {
-        const change = (Math.random() - 0.48) * 0.02; // slight upward bias
+        const change = (Math.random() - 0.48) * 0.02;
         const newPrice = parseFloat((p.currentPrice * (1 + change)).toFixed(2));
         const pnl = p.side === 'buy'
           ? parseFloat(((newPrice - p.entryPrice) * p.qty).toFixed(2))
@@ -204,7 +189,6 @@ export function AITradingDashboard() {
       setAIOpenPositions(updated);
     }, 3000);
 
-    // First trade after 2-4s, then every 6-12s
     const delay = 2000 + Math.random() * 2000;
     const initialTimer = setTimeout(() => {
       simulateTrade();
@@ -213,14 +197,12 @@ export function AITradingDashboard() {
         const t = setTimeout(() => { simulateTrade(); loop(); }, nextDelay);
         return t;
       };
-      const loopTimer = loop();
-      return () => clearTimeout(loopTimer);
+      loop();
     }, delay);
 
     return () => { clearTimeout(initialTimer); clearInterval(priceInterval); };
   }, [botConfig.status, setAutoTradeActivity, setBotConfig, setAIOpenPositions, setAIClosedTrades]);
 
-  // ---- Toggle Bot ----
   const handleToggle = async () => {
     if (botConfig.allocationAmount <= 0) {
       toast.error('Set a trading amount first');
@@ -235,7 +217,7 @@ export function AITradingDashboard() {
     setSaving(false);
   };
 
-  const timeAgo = (dateStr: string) => {
+  function timeAgo(dateStr: string) {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return 'Just now';
@@ -243,7 +225,31 @@ export function AITradingDashboard() {
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
     return `${Math.floor(hrs / 24)}d ago`;
-  };
+  }
+
+  function renderStatusIcon(isOpen: boolean, isBuy: boolean, pnlPos: boolean) {
+    if (isOpen && isBuy) return <ArrowUpRight className="h-4 w-4 text-emerald-500" />;
+    if (isOpen) return <ArrowDownRight className="h-4 w-4 text-red-500" />;
+    if (pnlPos) return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+    return <XCircle className="h-4 w-4 text-red-500" />;
+  }
+
+  function renderSideIcon(side: string) {
+    if (side === 'buy') return <ArrowUpRight className="h-3 w-3" />;
+    return <ArrowDownRight className="h-3 w-3" />;
+  }
+
+  function renderPnlBadge(hasPnl: boolean, pnlPos: boolean, pnl: number): ReactNode {
+    if (!hasPnl) return null;
+    const colorCls = pnlPos ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500';
+    const Icon = pnlPos ? TrendingUp : TrendingDown;
+    return (
+      <div className={"flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-bold tabular-nums shrink-0 " + colorCls}>
+        <Icon className="h-3 w-3" />
+        {pnlPos ? '+' : ''}{pnl.toFixed(2)}
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -255,18 +261,12 @@ export function AITradingDashboard() {
 
   return (
     <div className="space-y-4 pb-24">
-      {/* =============== HERO: STATUS + EQUITY + P&L =============== */}
-      <Card className={`border-2 overflow-hidden ${
-        isRunning ? 'border-emerald-500/50' : 'border-border/50'
-      }`}>
-        <div className={`px-5 py-5 ${
-          isRunning ? 'bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent' : 'bg-muted/20'
-        }`}>
+      {/* HERO: STATUS + EQUITY + P&L */}
+      <Card className={isRunning ? 'border-2 border-emerald-500/50 overflow-hidden' : 'border-2 border-border/50 overflow-hidden'}>
+        <div className={isRunning ? 'px-5 py-5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent' : 'px-5 py-5 bg-muted/20'}>
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg ${
-                isRunning ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/30' : 'bg-muted-foreground/20'
-              }`}>
+              <div className={isRunning ? 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/30' : 'w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-muted-foreground/20'}>
                 <Bot className="h-6 w-6 text-white" />
               </div>
               <div>
@@ -292,7 +292,6 @@ export function AITradingDashboard() {
             </div>
           </div>
 
-          {/* Big Equity + P&L Numbers */}
           <div className="grid grid-cols-3 gap-4 mt-5">
             <div>
               <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Account Equity</p>
@@ -300,7 +299,7 @@ export function AITradingDashboard() {
             </div>
             <div>
               <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Total P&L</p>
-              <p className={`text-2xl font-bold tabular-nums mt-1 ${totalPnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+              <p className={totalPnl >= 0 ? 'text-2xl font-bold tabular-nums mt-1 text-emerald-500' : 'text-2xl font-bold tabular-nums mt-1 text-red-500'}>
                 {totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
@@ -311,24 +310,30 @@ export function AITradingDashboard() {
           </div>
         </div>
 
-        {/* Stats Row */}
         <div className="grid grid-cols-4 divide-x divide-border/50">
-          {[
-            { label: 'Total Trades', value: botConfig.totalTrades, sub: null },
-            { label: 'Win Rate', value: `${botConfig.winRate}%`, sub: botConfig.winRate >= 50 ? 'profitable' : 'needs improvement', color: botConfig.winRate >= 50 ? 'text-emerald-500' : 'text-amber-500' },
-            { label: 'Realized P&L', value: `${realizedPnl >= 0 ? '+' : ''}$${realizedPnl.toFixed(2)}`, color: realizedPnl >= 0 ? 'text-emerald-500' : 'text-red-500', sub: 'closed trades' },
-            { label: 'Unrealized P&L', value: `${unrealizedPnl >= 0 ? '+' : ''}$${unrealizedPnl.toFixed(2)}`, color: unrealizedPnl >= 0 ? 'text-emerald-500' : 'text-red-500', sub: 'open positions' },
-          ].map(stat => (
-            <div key={stat.label} className="px-4 py-3 text-center">
-              <p className={`text-lg font-bold tabular-nums ${stat.color || ''}`}>{stat.value}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">{stat.label}</p>
-              {stat.sub && <p className={`text-[9px] mt-0.5 ${stat.color || 'text-muted-foreground'}`}>{stat.sub}</p>}
-            </div>
-          ))}
+          <div className="px-4 py-3 text-center">
+            <p className="text-lg font-bold tabular-nums">{botConfig.totalTrades}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Total Trades</p>
+          </div>
+          <div className="px-4 py-3 text-center">
+            <p className={botConfig.winRate >= 50 ? 'text-lg font-bold tabular-nums text-emerald-500' : 'text-lg font-bold tabular-nums text-amber-500'}>{botConfig.winRate}%</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Win Rate</p>
+            <p className={botConfig.winRate >= 50 ? 'text-[9px] mt-0.5 text-emerald-500' : 'text-[9px] mt-0.5 text-amber-500'}>{botConfig.winRate >= 50 ? 'profitable' : 'needs improvement'}</p>
+          </div>
+          <div className="px-4 py-3 text-center">
+            <p className={realizedPnl >= 0 ? 'text-lg font-bold tabular-nums text-emerald-500' : 'text-lg font-bold tabular-nums text-red-500'}>{realizedPnl >= 0 ? '+' : ''}${realizedPnl.toFixed(2)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Realized P&L</p>
+            <p className="text-[9px] mt-0.5 text-muted-foreground">closed trades</p>
+          </div>
+          <div className="px-4 py-3 text-center">
+            <p className={unrealizedPnl >= 0 ? 'text-lg font-bold tabular-nums text-emerald-500' : 'text-lg font-bold tabular-nums text-red-500'}>{unrealizedPnl >= 0 ? '+' : ''}${unrealizedPnl.toFixed(2)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Unrealized P&L</p>
+            <p className="text-[9px] mt-0.5 text-muted-foreground">open positions</p>
+          </div>
         </div>
       </Card>
 
-      {/* =============== CONFIG (collapsible) =============== */}
+      {/* CONFIG (collapsible) */}
       <button onClick={() => setShowConfig(!showConfig)} className="w-full flex items-center justify-between py-1 cursor-pointer">
         <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
           <Settings2 className="h-3.5 w-3.5" /> Trading Configuration
@@ -366,17 +371,17 @@ export function AITradingDashboard() {
                   <div>
                     <label className="text-xs text-muted-foreground font-medium mb-1 block">Strategy</label>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {[{ id: 'conservative', icon: Shield, label: 'Conservative', c: 'text-emerald-500' },
-                       { id: 'balanced', icon: Target, label: 'Balanced', c: 'text-amber-500' },
-                       { id: 'aggressive', icon: Zap, label: 'Aggressive', c: 'text-red-500' },
-                       { id: 'scalping', icon: Activity, label: 'Scalping', c: 'text-primary' },
+                      {[
+                        { id: 'conservative', icon: Shield, label: 'Conservative', c: 'text-emerald-500' },
+                        { id: 'balanced', icon: Target, label: 'Balanced', c: 'text-amber-500' },
+                        { id: 'aggressive', icon: Zap, label: 'Aggressive', c: 'text-red-500' },
+                        { id: 'scalping', icon: Activity, label: 'Scalping', c: 'text-primary' },
                       ].map(s => {
                         const Icon = s.icon;
+                        const isActive = botConfig.strategy === s.id;
                         return (
                           <button key={s.id} onClick={() => setBotConfig({ strategy: s.id })}
-                            className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer ${
-                              botConfig.strategy === s.id ? `border-primary/40 bg-primary/10 ${s.c}` : 'border-border hover:bg-accent/50'
-                            }`}>
+                            className={isActive ? 'flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer border-primary/40 bg-primary/10 ' + s.c : 'flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer border-border hover:bg-accent/50'}>
                             <Icon className="h-3 w-3" />{s.label}
                           </button>
                         );
@@ -409,7 +414,7 @@ export function AITradingDashboard() {
         )}
       </AnimatePresence>
 
-      {/* =============== OPEN POSITIONS =============== */}
+      {/* OPEN POSITIONS */}
       <Card className="border-border/50 overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -417,7 +422,7 @@ export function AITradingDashboard() {
             <h3 className="text-sm font-semibold">Open Positions</h3>
             <Badge variant="secondary" className="text-[10px] h-5">{openPositions.length}</Badge>
           </div>
-          <div className={`text-sm font-bold tabular-nums ${unrealizedPnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+          <div className={unrealizedPnl >= 0 ? 'text-sm font-bold tabular-nums text-emerald-500' : 'text-sm font-bold tabular-nums text-red-500'}>
             Unrealized: {unrealizedPnl >= 0 ? '+' : ''}${unrealizedPnl.toFixed(2)}
           </div>
         </div>
@@ -444,21 +449,22 @@ export function AITradingDashboard() {
               <tbody>
                 {openPositions.map(pos => {
                   const isProfit = pos.unrealizedPnl >= 0;
+                  const sideLabel = pos.side === 'buy' ? 'LONG' : 'SHORT';
+                  const sideColor = pos.side === 'buy' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500';
+                  const pnlColor = isProfit ? 'text-emerald-500' : 'text-red-500';
                   return (
                     <tr key={pos.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5 font-bold">{pos.symbol}</td>
                       <td className="px-3 py-2.5">
-                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          pos.side === 'buy' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                        }`}>
-                          {pos.side === 'buy' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                          {pos.side === 'buy' ? 'LONG' : 'SHORT'}
+                        <span className={"inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold " + sideColor}>
+                          {renderSideIcon(pos.side)}
+                          {sideLabel}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums">{pos.qty}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums">${pos.entryPrice.toLocaleString()}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums">${pos.currentPrice.toLocaleString()}</td>
-                      <td className={`px-3 py-2.5 text-right font-bold tabular-nums ${isProfit ? 'text-emerald-500' : 'text-red-500'}`}>
+                      <td className={"px-3 py-2.5 text-right font-bold tabular-nums " + pnlColor}>
                         {isProfit ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
                       </td>
                       <td className="px-3 py-2.5 text-right text-[10px] text-muted-foreground capitalize">{pos.signalType?.replace('_',' ')}</td>
@@ -472,7 +478,7 @@ export function AITradingDashboard() {
         )}
       </Card>
 
-      {/* =============== LIVE TRADE FEED =============== */}
+      {/* LIVE TRADE FEED */}
       <Card className="border-border/50 overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -498,42 +504,19 @@ export function AITradingDashboard() {
               const hasPnl = pnl != null && pnl !== 0;
               const pnlPos = hasPnl && pnl >= 0;
               const isOpen = !hasPnl || pnl === 0;
-
-              let statusIcon: React.ReactNode;
-              if (isOpen && isBuy) {
-                statusIcon = <ArrowUpRight className="h-4 w-4 text-emerald-500" />;
-              } else if (isOpen) {
-                statusIcon = <ArrowDownRight className="h-4 w-4 text-red-500" />;
-              } else if (pnlPos) {
-                statusIcon = <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-              } else {
-                statusIcon = <XCircle className="h-4 w-4 text-red-500" />;
-              }
-
-              let pnlBadge: React.ReactNode = null;
-              if (hasPnl && pnl !== 0) {
-                const pnlColor = pnlPos ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500';
-                const PnlIcon = pnlPos ? TrendingUp : TrendingDown;
-                pnlBadge = (
-                  <div className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-bold tabular-nums shrink-0 ${pnlColor}`}>
-                    <PnlIcon className="h-3 w-3" />
-                    {pnlPos ? '+' : ''}{pnl!.toFixed(2)}
-                  </div>
-                );
-              }
+              const iconBg = isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10';
+              const statusBadge = isOpen ? 'OPENED' : 'CLOSED';
 
               return (
                 <div key={act.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-border/30 hover:bg-muted/20 transition-colors">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                    isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10'
-                  }`>
-                  {statusIcon}
+                  <div className={"w-8 h-8 rounded-lg flex items-center justify-center shrink-0 " + iconBg}>
+                    {renderStatusIcon(isOpen, isBuy, pnlPos)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-bold">{act.symbol}</span>
                       <Badge variant="outline" className="text-[9px] uppercase h-4">
-                        {isOpen ? (isBuy ? 'OPENED' : 'OPENED') : 'CLOSED'}
+                        {statusBadge}
                       </Badge>
                       {act.signalType && (
                         <Badge variant="secondary" className="text-[8px] h-3.5 bg-primary/5 text-primary">
@@ -545,8 +528,7 @@ export function AITradingDashboard() {
                       {act.qty} @ ${act.filledPrice?.toLocaleString() || '—'} · {timeAgo(act.createdAt)}
                     </p>
                   </div>
-                  {hasPnl && pnl !== 0 && (
-                  {pnlBadge}
+                  {renderPnlBadge(hasPnl, pnlPos, pnl!)}
                   {!isOpen && !hasPnl && (
                     <span className="text-[10px] text-muted-foreground shrink-0">OPEN</span>
                   )}
@@ -557,7 +539,7 @@ export function AITradingDashboard() {
         )}
       </Card>
 
-      {/* =============== TRADE HISTORY =============== */}
+      {/* TRADE HISTORY */}
       <Card className="border-border/50 overflow-hidden">
         <button onClick={() => setShowHistory(!showHistory)} className="w-full px-4 py-3 border-b border-border flex items-center justify-between cursor-pointer">
           <div className="flex items-center gap-2">
@@ -591,24 +573,26 @@ export function AITradingDashboard() {
                       {closedTrades.map(trade => {
                         const isProfit = trade.realizedPnl >= 0;
                         const duration = Math.round((new Date(trade.closedAt).getTime() - new Date(trade.openedAt).getTime()) / 60000);
+                        const sideLabel = trade.side === 'buy' ? 'LONG' : 'SHORT';
+                        const sideColor = trade.side === 'buy' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500';
+                        const pnlColor = isProfit ? 'text-emerald-500' : 'text-red-500';
+                        const durLabel = duration < 1 ? '<1m' : `${duration}m`;
                         return (
                           <tr key={trade.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                             <td className="px-4 py-2.5 font-bold">{trade.symbol}</td>
                             <td className="px-3 py-2.5">
-                              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                                trade.side === 'buy' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                              }`}>
-                                {trade.side === 'buy' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                                {trade.side === 'buy' ? 'LONG' : 'SHORT'}
+                              <span className={"inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold " + sideColor}>
+                                {renderSideIcon(trade.side)}
+                                {sideLabel}
                               </span>
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums">{trade.qty}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums">${trade.entryPrice.toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums">${trade.exitPrice.toLocaleString()}</td>
-                            <td className={`px-3 py-2.5 text-right font-bold tabular-nums ${isProfit ? 'text-emerald-500' : 'text-red-500'}`}>
+                            <td className={"px-3 py-2.5 text-right font-bold tabular-nums " + pnlColor}>
                               {isProfit ? '+' : ''}${trade.realizedPnl.toFixed(2)}
                             </td>
-                            <td className="px-3 py-2.5 text-right text-[10px] text-muted-foreground">{duration < 1 ? '<1m' : `${duration}m`}</td>
+                            <td className="px-3 py-2.5 text-right text-[10px] text-muted-foreground">{durLabel}</td>
                           </tr>
                         );
                       })}
