@@ -48,6 +48,32 @@ export interface AutoTradeActivity {
   signalConfidence: number | null;
   signalType: string | null;
   createdAt: string;
+  pnl?: number;
+}
+
+export interface AIOpenPosition {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  signalType: string;
+  openedAt: string;
+}
+
+export interface AIClosedTrade {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+  signalType: string;
+  openedAt: string;
+  closedAt: string;
 }
 
 export interface PriceAlert {
@@ -147,6 +173,10 @@ interface TradingState {
   setBotConfig: (config: Partial<BotConfigState>) => void;
   autoTradeActivity: AutoTradeActivity[];
   setAutoTradeActivity: (activity: AutoTradeActivity[]) => void;
+  aiOpenPositions: AIOpenPosition[];
+  setAIOpenPositions: (positions: AIOpenPosition[]) => void;
+  aiClosedTrades: AIClosedTrade[];
+  setAIClosedTrades: (trades: AIClosedTrade[]) => void;
 
   // Price Alerts (persisted in localStorage)
   alerts: PriceAlert[];
@@ -245,6 +275,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   })),
   autoTradeActivity: [],
   setAutoTradeActivity: (activity) => set({ autoTradeActivity: activity }),
+  aiOpenPositions: loadFromLS<AIOpenPosition[]>('fovi_ai_positions', []),
+  setAIOpenPositions: (positions) => { set({ aiOpenPositions: positions }); saveToLS('fovi_ai_positions', positions); },
+  aiClosedTrades: loadFromLS<AIClosedTrade[]>('fovi_ai_closed_trades', []),
+  setAIClosedTrades: (trades) => { set({ aiClosedTrades: trades }); saveToLS('fovi_ai_closed_trades', trades); },
 
   // Price Alerts — persisted in localStorage
   alerts: [],

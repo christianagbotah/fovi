@@ -18,6 +18,7 @@ import { SignalsPanel } from '@/components/trading/signals-panel';
 import { OrderForm } from '@/components/trading/order-form';
 import { MarketOverview } from '@/components/trading/market-overview';
 import { AutoTradePanel } from '@/components/trading/auto-trade-panel';
+import { AITradingDashboard } from '@/components/trading/ai-trading-dashboard';
 import { BotsPanel } from '@/components/trading/bots-panel';
 import { BacktestPanel } from '@/components/trading/backtest-panel';
 import { AnalyticsPanel } from '@/components/trading/analytics-panel';
@@ -1271,22 +1272,11 @@ export default function TradingDashboard() {
               </motion.div>
             )}
 
-            {/* ====== AI AUTO-TRADE TAB ====== */}
+            {/* ====== AI AUTO-TRADE TAB ====== */
             {activeTab === 'autotrade' && (
               <motion.div key="autotrade" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
-                <div className="p-4 space-y-4" style={{ paddingBottom: '100px' }}>
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                      <Bot className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-bold">AI Auto-Trade</h2>
-                      <p className="text-xs text-muted-foreground">Configure your AI trading bot</p>
-                    </div>
-                  </div>
-                  <AutoTradePanel />
-                </div>
+                <div className="p-4"><AITradingDashboard /></div>
               </motion.div>
             )}
 
