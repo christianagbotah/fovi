@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   TrendingUp, TrendingDown, Zap, Sparkles,
   BarChart3, Target, ArrowRightLeft, Activity, Waves,
+  Loader2, RefreshCw,
 } from 'lucide-react';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { formatPrice } from '@/lib/market-sim';
@@ -32,113 +33,85 @@ const SIGNAL_LABELS: Record<string, string> = {
   ai_predicted: 'AI Predicted',
 };
 
-const SIGNAL_TYPES = ['momentum_shift', 'breakout', 'rsi_divergence', 'macd_crossover', 'bollinger_squeeze', 'ai_predicted'];
-const SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'NVDA', 'TSLA', 'META', 'BTC', 'ETH', 'SOL', 'AMZN'];
-const REASONS = [
-  'Strong bullish momentum with MACD crossover and RSI bouncing off support. Volume increasing on green candles.',
-  'Breakout above key resistance level with above-average volume. RSI at 62 with room to run higher.',
-  'Bollinger Bands squeezing indicating imminent volatility expansion. Price near upper band with momentum.',
-  'RSI divergence detected on 4H timeframe suggesting potential trend reversal. Waiting for confirmation candle.',
-  'MACD histogram turning positive with signal line crossover. Price holding above 20 EMA support.',
-  'AI model detects high-probability setup based on multi-timeframe analysis. Confluence of 3 technical factors.',
-  'Volume profile shows strong buying interest at current level. Order flow indicates institutional accumulation.',
-  'Trend continuation pattern confirmed with higher lows. Momentum oscillators supporting upward move.',
-];
-
-function generateDemoSignals(count: number = 6) {
-  const signals = [];
-  for (let i = 0; i < count; i++) {
-    const symbol = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-    const direction = Math.random() > 0.4 ? 'bullish' : 'bearish';
-    const confidence = Math.floor(Math.random() * 25) + 65;
-    const signalType = SIGNAL_TYPES[Math.floor(Math.random() * SIGNAL_TYPES.length)];
-    const bases: Record<string, number> = {
-      AAPL: 198, GOOGL: 175, MSFT: 425, NVDA: 138, TSLA: 248,
-      META: 505, BTC: 68500, ETH: 3550, SOL: 175, AMZN: 185,
-    };
-    const base = bases[symbol] || 200;
-    const entry = parseFloat((base * (0.97 + Math.random() * 0.06)).toFixed(2));
-    const slPct = 0.015 + Math.random() * 0.02;
-    const tpPct = 0.025 + Math.random() * 0.04;
-
-    signals.push({
-      id: 'sig_' + Date.now() + '_' + i,
-      symbol,
-      assetType: ['BTC', 'ETH', 'SOL'].includes(symbol) ? 'crypto' : 'stock',
-      direction,
-      confidence,
-      signalType,
-      timeframe: '1h',
-      entryPrice: entry,
-      stopLoss: direction === 'bullish'
-        ? parseFloat((entry * (1 - slPct)).toFixed(2))
-        : parseFloat((entry * (1 + slPct)).toFixed(2)),
-      takeProfit: direction === 'bullish'
-        ? parseFloat((entry * (1 + tpPct)).toFixed(2))
-        : parseFloat((entry * (1 - tpPct)).toFixed(2)),
-      reasoning: REASONS[Math.floor(Math.random() * REASONS.length)],
-      status: 'active',
-      createdAt: new Date(Date.now() - Math.random() * 3600000).toISOString(),
-    });
-  }
-  return signals;
-}
-
 export function SignalsPanel() {
   const { signals, setSignals, setSignalDetailId } = useTradingStore();
   const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // If no signals, try API first, then generate demo
-    if (signals.length === 0) {
-      fetch('/api/trading/signals')
-        .then(res => res.ok ? res.json() : [])
-        .then(data => {
-          if (Array.isArray(data) && data.length > 0) {
-            setSignals(data);
-          } else {
-            setSignals(generateDemoSignals(5));
-          }
-        })
-        .catch(() => {
-          setSignals(generateDemoSignals(5));
-        });
-    }
-  }, []);
-
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     if (generating) return;
     setGenerating(true);
+    setError(null);
 
-    // Try API first
     try {
       const res = await fetch('/api/trading/signals/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'AAPL', timeframe: '1h' }),
+        body: JSON.stringify({ timeframe: '1h', riskTolerance: 'medium' }),
       });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Generation failed');
+        return;
+      }
+
+      if (Array.isArray(data) && data.length > 0) {
+        // Normalize direction field and merge with existing
+        const normalized = data.map((s: any) => ({
+          ...s,
+          direction: s.direction === 'long' ? 'bullish' : s.direction === 'short' ? 'bearish' : s.direction,
+        }));
+        setSignals([...normalized, ...signals]);
+      } else {
+        setError('No signals found. Markets may be range-bound — try again later.');
+      }
+    } catch (err) {
+      setError('Failed to reach signal engine. Check your connection.');
+    } finally {
+      setGenerating(false);
+    }
+  }, [generating, signals, setSignals]);
+
+  // Auto-load existing signals from API on mount
+  useEffect(() => {
+    if (signals.length > 0) return;
+    fetch('/api/trading/signals')
+      .then(res => res.ok ? res.json() : [])
+      .then(data => {
         if (Array.isArray(data) && data.length > 0) {
-          // Normalize direction field
           const normalized = data.map((s: any) => ({
             ...s,
             direction: s.direction === 'long' ? 'bullish' : s.direction === 'short' ? 'bearish' : s.direction,
           }));
-          setSignals([...normalized, ...signals]);
-          setGenerating(false);
-          return;
+          setSignals(normalized);
         }
-      }
-    } catch { /* */ }
+      })
+      .catch(() => { /* non-critical */ });
+  }, []);
 
-    // Fallback: generate client-side demo signals
-    await new Promise(r => setTimeout(r, 800));
-    const newSignals = generateDemoSignals(3);
-    setSignals([...newSignals, ...signals]);
-    setGenerating(false);
-  };
+  // Loading state
+  if (generating) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center p-6">
+        <div className="relative">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <Sparkles className="h-4 w-4 text-primary/50 absolute -top-1 -right-1" />
+        </div>
+        <p className="text-sm font-medium mt-4">Scanning Markets...</p>
+        <p className="text-xs text-muted-foreground mt-1">Running technical analysis on 10 symbols</p>
+        <div className="flex flex-wrap justify-center gap-1.5 mt-3">
+          {['RSI', 'MACD', 'BB', 'EMA', 'ADX'].map(ind => (
+            <span key={ind} className="text-[9px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+              {ind}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
+  // Empty state with generate button
   if (signals.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
@@ -146,11 +119,19 @@ export function SignalsPanel() {
           <Sparkles className="h-6 w-6 text-muted-foreground" />
         </div>
         <p className="text-sm font-medium">No Active Signals</p>
-        <p className="text-xs text-muted-foreground mt-1">Generate AI signals for your watchlist</p>
-        <Button size="sm" className="mt-3 gap-1.5" onClick={handleGenerate} disabled={generating}>
+        <p className="text-xs text-muted-foreground mt-1 mb-1">
+          Run AI-powered technical analysis across all markets
+        </p>
+        {error && (
+          <p className="text-xs text-red-500 mb-3">{error}</p>
+        )}
+        <Button size="sm" className="mt-2 gap-1.5" onClick={handleGenerate}>
           <Zap className="h-3.5 w-3.5" />
-          {generating ? 'Analyzing...' : 'Generate Signals'}
+          Generate Signals
         </Button>
+        <p className="text-[10px] text-muted-foreground mt-3">
+          Analyzes RSI, MACD, Bollinger Bands, EMA crossovers & more
+        </p>
       </div>
     );
   }
@@ -161,15 +142,22 @@ export function SignalsPanel() {
         <span className="text-xs font-medium text-muted-foreground">
           {signals.length} active signals
         </span>
-        <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={handleGenerate} disabled={generating}>
-          <Zap className="h-3 w-3" />
-          {generating ? 'Scanning...' : 'Scan'}
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {error && <span className="text-[10px] text-red-500">{error}</span>}
+          <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={handleGenerate} disabled={generating}>
+            <RefreshCw className={generating ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />
+            Rescan
+          </Button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto divide-y divide-border">
         {signals.map(sig => {
           const IconComp = SIGNAL_ICONS[sig.signalType] || Zap;
           const isBullish = sig.direction === 'bullish' || sig.direction === 'long';
+          const confidence = typeof sig.confidence === 'number'
+            ? (sig.confidence > 1 ? Math.round(sig.confidence) : Math.round(sig.confidence * 100))
+            : parseInt(String(sig.confidence)) || 0;
+
           return (
             <button
               key={sig.id}
@@ -190,7 +178,7 @@ export function SignalsPanel() {
                   <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{sig.reasoning}</p>
                   <div className="flex items-center gap-3 mt-1.5">
                     <span className={"text-xs font-bold " + (isBullish ? 'text-emerald-500' : 'text-red-500')}>
-                      {typeof sig.confidence === 'number' ? Math.round(sig.confidence * 100) : sig.confidence}% confident
+                      {confidence}% confidence
                     </span>
                     {sig.stopLoss && <span className="text-[10px] text-muted-foreground">SL: {formatPrice(sig.stopLoss, sig.symbol)}</span>}
                     {sig.takeProfit && <span className="text-[10px] text-muted-foreground">TP: {formatPrice(sig.takeProfit, sig.symbol)}</span>}

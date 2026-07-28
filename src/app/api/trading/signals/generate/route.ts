@@ -2,133 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { generateSignals } from '@/lib/ai/signals';
-import { getDemoCandles, getAssetType } from '@/lib/broker/demo';
+import { getDemoCandles, getAssetType, getDemoPrice } from '@/lib/broker/demo';
 import { v4 as uuidv4 } from 'uuid';
 
-const DEMO_SIGNALS = [
-  {
-    id: 'sig_demo_1',
-    symbol: 'BTC',
-    assetType: 'crypto',
-    direction: 'long',
-    confidence: 0.78,
-    signalType: 'momentum',
-    timeframe: '1h',
-    entryPrice: 68200,
-    stopLoss: 66800,
-    takeProfit: 71500,
-    reasoning: 'Strong bullish momentum with MACD crossover and RSI bouncing off 40 support. Volume increasing on green candles.',
-    status: 'active',
-    expiresAt: new Date(Date.now() + 10800000).toISOString(),
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'sig_demo_2',
-    symbol: 'ETH',
-    assetType: 'crypto',
-    direction: 'long',
-    confidence: 0.72,
-    signalType: 'breakout',
-    timeframe: '1h',
-    entryPrice: 3920,
-    stopLoss: 3820,
-    takeProfit: 4200,
-    reasoning: 'Breakout above descending trendline with above-average volume. RSI at 55 with room to run.',
-    status: 'active',
-    expiresAt: new Date(Date.now() + 10800000).toISOString(),
-    createdAt: new Date().toISOString(),
-  },
-];
-
-export async function POST(req: NextRequest) {
-  // Try DB path
-  if (db && hasModel('tradingAccount') && hasModel('tradingSignal')) {
-    try {
-      const body = await req.json();
-      const userId = await ensureDemoUser();
-      if (!userId) {
-        return NextResponse.json(DEMO_SIGNALS);
-      }
-      const symbol = body.symbol || 'AAPL';
-      const timeframe = body.timeframe || '1h';
-      const riskTolerance = body.riskTolerance || 'medium';
-
-      const account = await db.tradingAccount.findFirst({
-        where: { userId, isDefault: true },
-      });
-      if (!account) {
-        return NextResponse.json(DEMO_SIGNALS);
-      }
-
-      const broker = createBrokerFromAccount(account);
-      const candles = await broker.getCandles(symbol, timeframe, 100);
-      if (candles.length < 30) {
-        return NextResponse.json(DEMO_SIGNALS);
-      }
-
-      const candidates = generateSignals(candles, timeframe as any, riskTolerance);
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + getTimeframeMs(timeframe) * 3);
-      const savedSignals = [];
-      for (const c of candidates) {
-        const signal = await db.tradingSignal.create({
-          data: {
-            id: uuidv4(),
-            accountId: account.id,
-            symbol,
-            assetType: getAssetType(symbol),
-            direction: c.direction,
-            confidence: c.confidence,
-            signalType: c.signalType,
-            timeframe,
-            entryPrice: c.entryPrice,
-            stopLoss: c.stopLoss,
-            takeProfit: c.takeProfit,
-            reasoning: c.reasoning,
-            expiresAt,
-          },
-        });
-        savedSignals.push(signal);
-      }
-      return NextResponse.json(savedSignals);
-    } catch (error) {
-      // ANY database error falls through to demo fallback below
-      console.warn('[signals/generate POST] DB error, falling through to demo:', error);
-    }
-  }
-
-  // Fallback: generate from demo candles
-  try {
-    const body = await req.json().catch(() => ({}));
-    const symbol = body.symbol || 'BTC';
-    const timeframe = body.timeframe || '1h';
-    const riskTolerance = body.riskTolerance || 'medium';
-    const candles = getDemoCandles(symbol, timeframe as any, 100);
-    if (candles.length >= 30) {
-      const candidates = generateSignals(candles, timeframe as any, riskTolerance);
-      return NextResponse.json(candidates.map(c => ({
-        id: `sig_demo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        symbol,
-        assetType: getAssetType(symbol),
-        direction: c.direction,
-        confidence: c.confidence,
-        signalType: c.signalType,
-        timeframe,
-        entryPrice: c.entryPrice,
-        stopLoss: c.stopLoss,
-        takeProfit: c.takeProfit,
-        reasoning: c.reasoning,
-        status: 'active',
-        expiresAt: new Date(Date.now() + getTimeframeMs(timeframe) * 3).toISOString(),
-        createdAt: new Date().toISOString(),
-      })));
-    }
-  } catch {
-    // fall through to static demo
-  }
-
-  return NextResponse.json(DEMO_SIGNALS);
-}
+// Symbols to scan when no specific symbol is requested
+const SCAN_SYMBOLS = ['BTC', 'ETH', 'SOL', 'AAPL', 'NVDA', 'TSLA', 'EURUSD', 'XAUUSD', 'XRP', 'META'];
 
 function getTimeframeMs(tf: string): number {
   const map: Record<string, number> = {
@@ -136,4 +14,133 @@ function getTimeframeMs(tf: string): number {
     '1h': 3600000, '4h': 14400000, '1d': 86400000, '1w': 604800000,
   };
   return map[tf] || 3600000;
+}
+
+interface SignalOutput {
+  id: string;
+  symbol: string;
+  assetType: string;
+  direction: string;
+  confidence: number; // 0-100
+  signalType: string;
+  timeframe: string;
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  reasoning: string;
+  status: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/**
+ * Generate real trading signals using technical analysis (RSI, MACD, Bollinger, etc.)
+ * on actual candle data. Returns signals with 0-100 confidence range.
+ */
+async function generateRealSignals(
+  symbols: string[],
+  timeframe: string,
+  riskTolerance: string,
+): Promise<SignalOutput[]> {
+  const allSignals: SignalOutput[] = [];
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + getTimeframeMs(timeframe) * 3);
+
+  for (const symbol of symbols) {
+    try {
+      // Get candles (real for crypto via CoinGecko, simulated for stocks)
+      const candles = getDemoCandles(symbol, timeframe, 100);
+      if (candles.length < 30) continue;
+
+      // Run real technical analysis
+      const candidates = generateSignals(symbol, candles, timeframe as any, riskTolerance as any);
+
+      for (const c of candidates) {
+        const price = getDemoPrice(symbol);
+        allSignals.push({
+          id: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          symbol,
+          assetType: getAssetType(symbol),
+          direction: c.direction === 'long' ? 'bullish' : c.direction === 'short' ? 'bearish' : c.direction,
+          confidence: Math.round(c.confidence),
+          signalType: c.signalType,
+          timeframe,
+          entryPrice: c.entryPrice || price,
+          stopLoss: c.stopLoss || 0,
+          takeProfit: c.takeProfit || 0,
+          reasoning: c.reasoning,
+          status: 'active',
+          createdAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+        });
+      }
+    } catch (err) {
+      console.warn(`[signals/generate] Error analyzing ${symbol}:`, err);
+    }
+  }
+
+  // Sort by confidence descending
+  return allSignals.sort((a, b) => b.confidence - a.confidence);
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const symbol = body.symbol || '';
+    const timeframe = body.timeframe || '1h';
+    const riskTolerance = body.riskTolerance || 'medium';
+    const symbols = symbol ? [symbol.toUpperCase()] : SCAN_SYMBOLS;
+
+    // Generate real TA-based signals
+    const signals = await generateRealSignals(symbols, timeframe, riskTolerance);
+
+    // If no signals found from TA, try DB path for persistence
+    if (signals.length === 0 && db && hasModel('tradingAccount') && hasModel('tradingSignal')) {
+      try {
+        const userId = await ensureDemoUser();
+        if (userId) {
+          const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
+          if (account) {
+            const broker = createBrokerFromAccount(account);
+            for (const sym of symbols) {
+              const candles = await broker.getCandles(sym, timeframe, 100);
+              if (candles.length < 30) continue;
+              const candidates = generateSignals(sym, candles, timeframe as any, riskTolerance as any);
+              const now = new Date();
+              for (const c of candidates) {
+                const signal = await db.tradingSignal.create({
+                  data: {
+                    id: uuidv4(), accountId: account.id, symbol: sym,
+                    assetType: getAssetType(sym), direction: c.direction,
+                    confidence: c.confidence, signalType: c.signalType,
+                    timeframe, entryPrice: c.entryPrice, stopLoss: c.stopLoss,
+                    takeProfit: c.takeProfit, reasoning: c.reasoning,
+                    status: 'active',
+                    expiresAt: new Date(now.getTime() + getTimeframeMs(timeframe) * 3),
+                  },
+                });
+                signals.push({
+                  id: signal.id, symbol: sym, assetType: getAssetType(sym),
+                  direction: signal.direction === 'long' ? 'bullish' : signal.direction === 'short' ? 'bearish' : signal.direction,
+                  confidence: Math.round(signal.confidence),
+                  signalType: signal.signalType, timeframe,
+                  entryPrice: signal.entryPrice || 0, stopLoss: signal.stopLoss || 0,
+                  takeProfit: signal.takeProfit || 0, reasoning: signal.reasoning || '',
+                  status: 'active', createdAt: now.toISOString(),
+                  expiresAt: new Date(now.getTime() + getTimeframeMs(timeframe) * 3).toISOString(),
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[signals/generate] DB path error:', err);
+      }
+    }
+
+    return NextResponse.json(signals);
+  } catch (error) {
+    console.error('[signals/generate] Error:', error);
+    return NextResponse.json({ error: 'Failed to generate signals' }, { status: 500 });
+  }
 }
