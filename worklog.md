@@ -95,3 +95,26 @@ Work Log:
 Stage Summary:
 - File changed: src/components/trading/ai-trading-dashboard.tsx
 - Allocation input is now the single source of truth in the prominent card section
+
+---
+Task ID: 7
+Agent: Main
+Task: Swipe-to-dismiss alerts, closable positions, TP/SL editing, signal→order auto-fill, fix dashboard truncation
+
+Work Log:
+- Fixed order-form.tsx: replaced broken `useState` (line 85) with proper `useEffect` to sync symbol from store when sheet opens
+- Added pre-fill logic: when order form opens from a signal, auto-sets side (buy/sell), stop loss, and take profit from signal data
+- Added form reset effect: clears all fields when order sheet closes
+- Created SwipeableItem component: touch-based swipe-left-to-dismiss with red background reveal
+- Wrapped each alert in AlertsSheet with SwipeableItem for mobile swipe-to-dismiss
+- Created PositionDetailSheet: Binance-style bottom sheet with position details, inline TP/SL editing (pencil icon → input → save), close position with confirmation dialog
+- Created API route /api/trading/positions/[id]: PATCH for updating TP/SL, DELETE for closing positions via broker
+- Fixed dashboard truncation: changed `h-full` to `min-h-full` on dashboard tab motion.div so content can scroll beyond viewport
+- Wired up PositionDetailSheet in page.tsx
+- Browser verified: all features working, zero console errors
+
+Stage Summary:
+- Files changed: src/app/page.tsx, src/components/trading/order-form.tsx
+- Files created: src/components/trading/position-detail-sheet.tsx, src/components/trading/swipeable-item.tsx, src/app/api/trading/positions/[id]/route.ts
+- Signal→Order: ETH bearish signal correctly pre-fills Sell side, SL: 1929.42, TP: 1876.93
+- Dashboard: all sections (PortfolioCards, Chart, AI Signals, Open Positions) visible and scrollable
