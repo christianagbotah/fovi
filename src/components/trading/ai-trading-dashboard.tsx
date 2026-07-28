@@ -601,7 +601,12 @@ export function AITradingDashboard() {
               </div>
             </div>
             {/* Controls — stacked below title on mobile, beside it on desktop */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center justify-end gap-2 shrink-0">
+              {!isRunning && (
+                <button onClick={handleReset} className="p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer" title="Reset trade data">
+                  <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                </button>
+              )}
               {!isLiquidated && (
                 <div className="flex items-center gap-2 bg-muted/80 rounded-full px-4 py-2">
                   <span className="text-xs text-muted-foreground font-medium">AI Bot</span>
@@ -617,11 +622,6 @@ export function AITradingDashboard() {
                   <Hand className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Close All & Stop</span>
                   <span className="sm:hidden">Stop</span>
-                </button>
-              )}
-              {!isRunning && (
-                <button onClick={handleReset} className="p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer" title="Reset trade data">
-                  <RotateCcw className="h-4 w-4 text-muted-foreground" />
                 </button>
               )}
             </div>
