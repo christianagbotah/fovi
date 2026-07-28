@@ -27,6 +27,8 @@ import { SessionsPanel } from '@/components/trading/sessions-panel';
 import { WebhookPanel } from '@/components/trading/webhook-panel';
 import { LeaderboardPanel } from '@/components/trading/leaderboard-panel';
 import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
+import { PositionDetailSheet } from '@/components/trading/position-detail-sheet';
+import { SwipeableItem } from '@/components/trading/swipeable-item';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -660,29 +662,31 @@ function AlertsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
           {alerts.map(alert => {
             const diff = alert.currentPrice > 0 ? ((alert.targetPrice - alert.currentPrice) / alert.currentPrice * 100) : 0;
             return (
-              <div key={alert.id} className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border/50 hover:border-border transition-colors">
-                <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-                  alert.triggered ? 'bg-amber-500/15' : alert.condition === 'above' ? 'bg-emerald-500/15' : 'bg-red-500/15'
-                }`}>
-                  {alert.triggered ? <AlertTriangle className={`h-4 w-4 text-amber-500`} /> : alert.condition === 'above'
-                    ? <TrendingUp className="h-4 w-4 text-emerald-500" /> : <TrendingDown className="h-4 w-4 text-red-500" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold">{alert.symbol}</span>
-                    <Badge variant={alert.triggered ? 'secondary' : 'outline'}
-                      className={`text-[9px] ${alert.triggered ? 'bg-amber-500/10 text-amber-500' : ''}`}>
-                      {alert.triggered ? 'Triggered' : alert.condition === 'above' ? 'Above $' + alert.targetPrice.toLocaleString() : 'Below $' + alert.targetPrice.toLocaleString()}
-                    </Badge>
+              <SwipeableItem key={alert.id} onSwipe={() => removeAlert(alert.id)} className="mb-3">
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border/50 hover:border-border transition-colors">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    alert.triggered ? 'bg-amber-500/15' : alert.condition === 'above' ? 'bg-emerald-500/15' : 'bg-red-500/15'
+                  }`}>
+                    {alert.triggered ? <AlertTriangle className={`h-4 w-4 text-amber-500`} /> : alert.condition === 'above'
+                      ? <TrendingUp className="h-4 w-4 text-emerald-500" /> : <TrendingDown className="h-4 w-4 text-red-500" />}
                   </div>
-                  <p className="text-[11px] text-muted-foreground tabular-nums">
-                    Current: ${alert.currentPrice.toLocaleString()} · {diff >= 0 ? '+' : ''}{diff.toFixed(2)}%
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold">{alert.symbol}</span>
+                      <Badge variant={alert.triggered ? 'secondary' : 'outline'}
+                        className={`text-[9px] ${alert.triggered ? 'bg-amber-500/10 text-amber-500' : ''}`}>
+                        {alert.triggered ? 'Triggered' : alert.condition === 'above' ? 'Above $' + alert.targetPrice.toLocaleString() : 'Below $' + alert.targetPrice.toLocaleString()}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground tabular-nums">
+                      Current: ${alert.currentPrice.toLocaleString()} · {diff >= 0 ? '+' : ''}{diff.toFixed(2)}%
+                    </p>
+                  </div>
+                  <button onClick={() => removeAlert(alert.id)} className="cursor-pointer p-1 hover:bg-muted rounded-lg transition-colors">
+                    <X className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
                 </div>
-                <button onClick={() => removeAlert(alert.id)} className="cursor-pointer p-1 hover:bg-muted rounded-lg transition-colors">
-                  <X className="h-3.5 w-3.5 text-muted-foreground" />
-                </button>
-              </div>
+              </SwipeableItem>
             );
           })}
         </div>
@@ -1256,7 +1260,7 @@ export default function TradingDashboard() {
             {/* ====== DASHBOARD / OVERVIEW TAB ====== */}
             {activeTab === 'dashboard' && (
               <motion.div key="dashboard" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="min-h-full">
                 <div className="p-4 pb-2">
                   <PortfolioCards />
                 </div>
@@ -1414,6 +1418,7 @@ export default function TradingDashboard() {
       <MobileTabBar />
       <OrderForm />
       <SignalDetailSheet />
+      <PositionDetailSheet />
       <AiChatSheet />
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
       <AlertsSheet open={alertsOpen} onOpenChange={setAlertsOpen} />

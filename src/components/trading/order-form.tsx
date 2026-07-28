@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,7 +54,39 @@ export function OrderForm() {
   const [takeProfit, setTakeProfit] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Merge all available symbols
+  // Sync symbol from store when sheet opens or orderSymbol changes
+  useEffect(() => {
+    if (effectiveSymbol && orderSheetOpen) {
+      setLocalSymbol(effectiveSymbol);
+    }
+  }, [effectiveSymbol, orderSheetOpen]);
+
+  // Pre-fill TP/SL from signal data
+  useEffect(() => {
+    if (orderSheetOpen && orderSymbol) {
+      const { signals } = useTradingStore.getState();
+      const sig = signals.find(s => s.symbol === orderSymbol);
+      if (sig) {
+        if (sig.stopLoss) setStopLoss(String(sig.stopLoss));
+        if (sig.takeProfit) setTakeProfit(String(sig.takeProfit));
+        if (sig.direction === 'bearish' || sig.direction === 'short') setSide('sell');
+        else setSide('buy');
+      }
+    }
+  }, [orderSheetOpen, orderSymbol]);
+
+  // Reset form when sheet closes
+  useEffect(() => {
+    if (!orderSheetOpen) {
+      setQty('1');
+      setLimitPrice('');
+      setStopLoss('');
+      setTakeProfit('');
+      setSide('buy');
+      setOrderType('market');
+      setSymbolDropdownOpen(false);
+    }
+  }, [orderSheetOpen]);
   const symbolList = useMemo(() => {
     const live = livePrices.map(p => ({ symbol: p.symbol, name: p.name || p.symbol }));
     const stored = allSymbols.map(s => ({ symbol: s.symbol, name: s.name || s.symbol }));
@@ -80,11 +112,6 @@ export function OrderForm() {
   }, [symbolList, symbolSearch]);
 
   const selectedSymbolData = symbolList.find(s => s.symbol === symbol);
-
-  // Sync when store symbol changes
-  useState(() => {
-    if (effectiveSymbol) setLocalSymbol(effectiveSymbol);
-  });
 
   const totalCost = orderType === 'limit' && limitPrice
     ? parseFloat(limitPrice) * parseFloat(qty || '0')
