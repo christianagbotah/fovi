@@ -33,6 +33,8 @@ export interface BotConfigState {
   lastTradeAt: string | null;
   lastError: string | null;
   accountBalance: number;
+  adminLevyPercent: number;
+  adminLevyCollected: number;
 }
 
 export interface AutoTradeActivity {
@@ -71,6 +73,8 @@ export interface AIClosedTrade {
   entryPrice: number;
   exitPrice: number;
   realizedPnl: number;
+  grossPnl: number;
+  adminLevy: number;
   signalType: string;
   openedAt: string;
   closedAt: string;
@@ -269,6 +273,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     maxPositions: 5, maxPositionSize: 0, stopLossPercent: 2.0, takeProfitPercent: 4.0,
     strategy: 'balanced', status: 'stopped', totalTrades: 0, winTrades: 0,
     totalPnl: 0, winRate: 0, lastTradeAt: null, lastError: null, accountBalance: 0,
+    adminLevyPercent: 10, adminLevyCollected: 0,
   }),
   setBotConfig: (config) => {
     const updated = { ...get().botConfig, ...config };

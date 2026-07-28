@@ -234,11 +234,46 @@ function PerformanceMetrics({ portfolio }: { portfolio: NonNullable<ReturnType<t
 // Portfolio Summary Cards - Enhanced
 // ============================================================
 function PortfolioCards() {
-  const { portfolio, wsConnected } = useTradingStore();
-  if (!portfolio) return null;
+  const { portfolio, wsConnected, botConfig, aiOpenPositions, aiClosedTrades } = useTradingStore();
 
-  const isPnlUp = portfolio.dayPnl >= 0;
-  const isTotalUp = portfolio.totalPnl >= 0;
+  // When AI bot has been active, derive portfolio from AI state
+  const allocation = botConfig.allocationAmount;
+  const hasAITrading = allocation > 0 && (botConfig.totalTrades > 0 || aiOpenPositions.length > 0);
+
+  // Build effective portfolio from AI trading state
+  const effectivePortfolio = hasAITrading
+    ? (() => {
+        const grossRealized = aiClosedTrades.reduce((s, t) => s + (t.grossPnl ?? t.realizedPnl), 0);
+        const totalLevy = aiClosedTrades.reduce((s, t) => s + (t.adminLevy || 0), 0);
+        const netRealized = grossRealized - totalLevy;
+        const unrealized = aiOpenPositions.reduce((s, p) => s + p.unrealizedPnl, 0);
+        const totalPnl = netRealized + unrealized;
+        const equity = Math.max(0, allocation + totalPnl);
+        const pnlPct = allocation > 0 ? (totalPnl / allocation) * 100 : 0;
+        const wins = aiClosedTrades.filter(t => t.realizedPnl > 0).length;
+        const winRate = aiClosedTrades.length > 0 ? Math.round((wins / aiClosedTrades.length) * 100) : 0;
+        return {
+          totalBalance: equity,
+          totalPnl,
+          totalPnlPercent: pnlPct,
+          dayPnl: unrealized,
+          dayPnlPercent: allocation > 0 ? (unrealized / allocation) * 100 : 0,
+          openPositions: aiOpenPositions.length,
+          activeSignals: 0,
+          winRate,
+          totalTrades: aiClosedTrades.length,
+        };
+      })()
+    : portfolio || {
+        totalBalance: allocation > 0 ? allocation : 100000,
+        totalPnl: 0, totalPnlPercent: 0,
+        dayPnl: 0, dayPnlPercent: 0,
+        openPositions: aiOpenPositions.length,
+        activeSignals: 0, winRate: 0, totalTrades: botConfig.totalTrades,
+      };
+
+  const isPnlUp = effectivePortfolio.dayPnl >= 0;
+  const isTotalUp = effectivePortfolio.totalPnl >= 0;
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3">
@@ -256,12 +291,12 @@ function PortfolioCards() {
             )}
           </div>
           <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isPnlUp ? 'text-emerald-500' : 'text-red-500'}`}>
-            ${'\$'}{portfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${'\$'}{effectivePortfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            {isPnlUp ? '+' : ''}{portfolio.dayPnlPercent.toFixed(2)}% today
+            {isPnlUp ? '+' : ''}{effectivePortfolio.dayPnlPercent.toFixed(2)}% today
           </p>
-          <EquitySparkline portfolio={portfolio} />
+          <EquitySparkline portfolio={effectivePortfolio} />
         </CardContent>
       </Card>
 
@@ -272,10 +307,10 @@ function PortfolioCards() {
             <span className="text-[11px] text-muted-foreground font-medium">Unrealized P&L</span>
           </div>
           <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isTotalUp ? 'text-emerald-500' : 'text-red-500'}`}>
-            {formatPnl(portfolio.totalPnl)}
+            {formatPnl(effectivePortfolio.totalPnl)}
           </p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            {isTotalUp ? '+' : ''}{portfolio.totalPnlPercent.toFixed(2)}%
+            {isTotalUp ? '+' : ''}{effectivePortfolio.totalPnlPercent.toFixed(2)}%
           </p>
         </CardContent>
       </Card>
@@ -286,14 +321,14 @@ function PortfolioCards() {
             <BarChart3 className="h-3.5 w-3.5 text-foreground" />
             <span className="text-[11px] text-muted-foreground font-medium">Positions</span>
           </div>
-          <p className="text-lg lg:text-xl font-bold tabular-nums">{portfolio.openPositions}</p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">{portfolio.totalTrades} total trades</p>
+          <p className="text-lg lg:text-xl font-bold tabular-nums">{effectivePortfolio.openPositions}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">{effectivePortfolio.totalTrades} total trades</p>
         </CardContent>
       </Card>
 
       <Card className="bg-amber-500/5 border-border/30 overflow-hidden">
         <CardContent className="p-3 lg:p-4">
-          <RiskGauge portfolio={portfolio} />
+          <RiskGauge portfolio={effectivePortfolio} />
         </CardContent>
       </Card>
     </div>

@@ -24,4 +24,29 @@ Stage Summary:
 - ai-trading-dashboard.tsx: ~430 lines, clean rewrite avoiding SWC-incompatible patterns
 - page.tsx: corrupted comment fixed
 - Dev server compiles and page renders successfully
-- **IMPORTANT**: On VPS, always use port 3002, never 3000
+- **IMPORTANT**: On VPS, always use port 3002, never 3000---
+Task ID: 3
+Agent: Main (Z.ai Code)
+Task: Fix AI trading dashboard — allocation model, negative equity, stats not updating, admin levy, portfolio sync
+
+Work Log:
+- Diagnosed root causes: setBotConfig called with function instead of object (why totalTrades/winRate=0), random price simulation generating impossible prices, equity formula wrong (accountBalance - investedAmount), no allocation-based position sizing
+- Updated trading-store.ts: Added adminLevyPercent (default 10%) and adminLevyCollected to BotConfigState; Added grossPnl and adminLevy fields to AIClosedTrade
+- Complete rewrite of ai-trading-dashboard.tsx (~930 lines):
+  - Realistic symbol-specific base prices (AAPL $198, BTC $68,500, EUR/USD 1.085, etc.)
+  - Price simulation uses ±0.8% drift from current (never random jumps)
+  - Position sizing = allocation / maxPositions / symbolPrice (each position uses equal fraction)
+  - Equity = max(0, allocation + netRealizedPnl + unrealizedPnl) — can NEVER go negative
+  - Auto-liquidation when equity hits 0 (all positions force-closed, status = 'liquidated')
+  - setBotConfig now called with computed object (NOT function)
+  - Admin levy: configurable % (default 10%) deducted from profitable trades
+  - Trade history shows Gross P&L, Levy, Net P&L columns
+  - Added reset button to clear all trade data
+  - Added equity progress bar and available/invested balance display
+  - Portfolio sync useEffect to update store's portfolio state
+- Updated page.tsx PortfolioCards to derive values from AI trading state (botConfig, aiOpenPositions, aiClosedTrades) so dashboard tab stays in sync
+
+Stage Summary:
+- Files modified: src/lib/store/trading-store.ts, src/components/trading/ai-trading-dashboard.tsx, src/app/page.tsx
+- Key fixes: negative equity eliminated, totalTrades/winRate now update correctly, realistic prices, admin levy system, portfolio dashboard sync
+- No TS errors, no lint errors, page compiles (200 OK)
