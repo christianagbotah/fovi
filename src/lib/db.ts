@@ -6,9 +6,15 @@ const globalForPrisma = globalThis as unknown as {
 
 let _dbFailed = false;
 
+/**
+ * Validate that DATABASE_URL matches the Prisma schema provider.
+ * Schema uses provider="postgresql", so only postgres URLs are valid.
+ * On the VPS the env will have postgresql://... — here in sandbox it has file:...
+ * so we detect the mismatch early and skip creating the client.
+ */
 function isDatabaseUrlValid(): boolean {
   const url = process.env.DATABASE_URL || '';
-  return url.startsWith('postgresql://') || url.startsWith('postgres://') || url.startsWith('file:') || url.startsWith('sqlite:');
+  return url.startsWith('postgresql://') || url.startsWith('postgres://');
 }
 
 let _db: PrismaClient | null = null;
@@ -22,9 +28,9 @@ if (!_dbFailed && isDatabaseUrlValid()) {
     _db = null;
     console.warn('[DB] PrismaClient init failed — demo mode:', e instanceof Error ? e.message : e);
   }
-} else {
+} else if (!isDatabaseUrlValid()) {
   _dbFailed = true;
-  console.warn('[DB] No valid DATABASE_URL — running in demo mode');
+  console.warn('[DB] DATABASE_URL does not match schema provider (postgresql) — running in demo mode');
 }
 
 export const db = _db;
