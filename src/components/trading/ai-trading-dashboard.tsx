@@ -6,8 +6,13 @@ import {
   Bot, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
   Wallet, Activity, Clock, Target, Zap, Shield, AlertTriangle,
   ChevronDown, ChevronUp, Loader2, RotateCcw, Percent,
-  CheckCircle2, XCircle, Settings2, Square, Hand,
+  CheckCircle2, XCircle, Settings2, Square, Hand, Flame, Snowflake, Trophy,
 } from 'lucide-react';
+import { getDemoCandles } from '@/lib/broker/demo';
+import type { CandleData } from '@/lib/types';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -54,6 +59,10 @@ export function AITradingDashboard() {
   const [historyFilter, setHistoryFilter] = useState<string>('all');
   const [showStopDialog, setShowStopDialog] = useState(false);
   const [historySymbol, setHistorySymbol] = useState<string>('all');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('__portfolio__');
+  const [miniCandles, setMiniCandles] = useState<CandleData[]>([]);
+  const [equityHistory, setEquityHistory] = useState<number[]>([]);
+  const symbolPricesRef = useRef<Record<string, { price: number; change: number }>>({});
 
   // Simulated market prices (persists across re-renders within session)
   const simPricesRef = useRef<Record<string, number>>({});
@@ -66,7 +75,41 @@ export function AITradingDashboard() {
       if (!simPricesRef.current[sym]) {
         simPricesRef.current[sym] = SYMBOL_DATA[sym].price;
       }
+      if (!symbolPricesRef.current[sym]) {
+        const base = SYMBOL_DATA[sym].price;
+        const changePct = (Math.random() - 0.45) * 4;
+        symbolPricesRef.current[sym] = {
+          price: parseFloat((base * (1 + changePct / 100)).toFixed(SYMBOL_DATA[sym].decimals)),
+          change: parseFloat(changePct.toFixed(2)),
+        };
+      }
     }
+  }, []);
+
+  // Mini candles for symbol dropdown detail
+  useEffect(() => {
+    if (selectedSymbol === '__portfolio__') {
+      setMiniCandles([]);
+      return;
+    }
+    const cleanSymbol = selectedSymbol.replace('/', '');
+    const candles = getDemoCandles(cleanSymbol, '1h', 50);
+    setMiniCandles(candles);
+  }, [selectedSymbol]);
+
+  // Update symbol prices periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      for (const sym of SYMBOLS) {
+        const base = SYMBOL_DATA[sym].price;
+        const changePct = (Math.random() - 0.45) * 4;
+        symbolPricesRef.current[sym] = {
+          price: parseFloat((base * (1 + changePct / 100)).toFixed(SYMBOL_DATA[sym].decimals)),
+          change: parseFloat(changePct.toFixed(2)),
+        };
+      }
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   // Track allocation deduction from main account.
@@ -138,6 +181,20 @@ export function AITradingDashboard() {
   const equityPercent = allocation > 0 ? parseFloat(((totalPnl / allocation) * 100).toFixed(2)) : 0;
   const mainAcc = accounts.find(a => a.id === activeAccountId);
   const mainBalanceDisplay = mainAcc ? mainAcc.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---';
+
+  const bestTrade = closedTrades.length > 0 ? closedTrades.reduce((best, t) => t.realizedPnl > best.realizedPnl ? t : best, closedTrades[0]) : null;
+  const worstTrade = closedTrades.length > 0 ? closedTrades.reduce((worst, t) => t.realizedPnl < worst.realizedPnl ? t : worst, closedTrades[0]) : null;
+  const currentStreak = (() => {
+    if (closedTrades.length === 0) return { type: 'none' as const, count: 0 };
+    const sorted = [...closedTrades].sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime());
+    const firstWin = sorted[0].realizedPnl > 0;
+    let count = 0;
+    for (const t of sorted) {
+      if ((t.realizedPnl > 0) === firstWin) count++;
+      else break;
+    }
+    return { type: firstWin ? ('win' as const) : ('loss' as const), count };
+  })();
 
   // Trade history filters
   const uniqueSymbols = Array.from(new Set(closedTrades.map(t => t.symbol)));
@@ -294,6 +351,17 @@ export function AITradingDashboard() {
       const currentAllocation = currentConfig.allocationAmount;
 
       if (currentAllocation <= 0) return;
+
+      setEquityHistory(prev => {
+        const trades = useTradingStore.getState().aiClosedTrades;
+        const positions = useTradingStore.getState().aiOpenPositions;
+        const gPnl = trades.reduce((s, t) => s + (t.grossPnl ?? t.realizedPnl), 0);
+        const levy = trades.reduce((s, t) => s + (t.adminLevy || 0), 0);
+        const uPnl = positions.reduce((s, p) => s + p.unrealizedPnl, 0);
+        const equity = currentAllocation + (gPnl - levy) + uPnl;
+        const next = [...prev, equity].slice(-100);
+        return next;
+      });
 
       // Decide: open new or close existing (60% close, 40% open)
       const shouldClose = currentPositions.length > 0 && Math.random() < 0.6;
@@ -1033,6 +1101,43 @@ export function AITradingDashboard() {
           </div>
         </div>
 
+        <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-border/50 border-t border-border/50">
+          <div className="px-3 sm:px-4 py-2.5 text-center">
+            <p className="text-sm font-bold tabular-nums">${investedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Invested</p>
+          </div>
+          <div className="px-3 sm:px-4 py-2.5 text-center">
+            <p className="text-sm font-bold tabular-nums">${availableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Available</p>
+          </div>
+          <div className="px-3 sm:px-4 py-2.5 text-center">
+            {bestTrade ? (
+              <p className="text-sm font-bold tabular-nums text-emerald-500">+${bestTrade.realizedPnl.toFixed(2)}</p>
+            ) : (
+              <p className="text-sm font-bold tabular-nums text-muted-foreground">---</p>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-0.5">Best Trade</p>
+          </div>
+          <div className="px-3 sm:px-4 py-2.5 text-center">
+            {worstTrade ? (
+              <p className="text-sm font-bold tabular-nums text-red-500">${worstTrade.realizedPnl.toFixed(2)}</p>
+            ) : (
+              <p className="text-sm font-bold tabular-nums text-muted-foreground">---</p>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-0.5">Worst Trade</p>
+          </div>
+          <div className="px-3 sm:px-4 py-2.5 text-center col-span-2 sm:col-span-1">
+            {currentStreak.count > 0 ? (
+              <p className={"text-sm font-bold tabular-nums " + (currentStreak.type === 'win' ? 'text-emerald-500' : 'text-red-500')}>
+                {currentStreak.count}x {currentStreak.type === 'win' ? 'W' : 'L'}
+              </p>
+            ) : (
+              <p className="text-sm font-bold tabular-nums text-muted-foreground">---</p>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-0.5">Current Streak</p>
+          </div>
+        </div>
+
         {/* Admin Levy + Available Balance bar */}
         {allocation > 0 && (
           <div className="px-4 sm:px-5 py-3 border-t border-border/50 bg-muted/10">
@@ -1066,6 +1171,155 @@ export function AITradingDashboard() {
           </div>
         )}
       </Card>
+
+
+      {/* ===== MARKET EXPLORER ===== */}
+      <Card className="border-border/50 overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            <h3 className="text-sm font-semibold">Market Explorer</h3>
+          </div>
+          <Select value={selectedSymbol} onValueChange={setSelectedSymbol}>
+            <SelectTrigger className="w-[180px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__portfolio__">Portfolio Overview</SelectItem>
+              {SYMBOLS.map(sym => (
+                <SelectItem key={sym} value={sym}>{sym}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="p-4">
+          {selectedSymbol === '__portfolio__' ? (
+            <div className="text-center py-6 text-muted-foreground text-sm">
+              <Wallet className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              <p className="text-xs">Select a symbol to view price details and chart</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-lg font-bold tabular-nums">
+                    ${symbolPricesRef.current[selectedSymbol]?.price?.toLocaleString(undefined, { minimumFractionDigits: SYMBOL_DATA[selectedSymbol]?.decimals || 2, maximumFractionDigits: SYMBOL_DATA[selectedSymbol]?.decimals || 2 }) || '---'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{selectedSymbol}</p>
+                </div>
+                <div className={"text-sm font-semibold tabular-nums " + ((symbolPricesRef.current[selectedSymbol]?.change || 0) >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+                  {(symbolPricesRef.current[selectedSymbol]?.change || 0) >= 0 ? '+' : ''}{symbolPricesRef.current[selectedSymbol]?.change || 0}%
+                </div>
+              </div>
+              {miniCandles.length > 1 && (
+                <svg viewBox={'0 0 ' + miniCandles.length + ' 60'} className="w-full h-24" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="miniGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={(symbolPricesRef.current[selectedSymbol]?.change || 0) >= 0 ? '#10b981' : '#ef4444'} stopOpacity="0.3" />
+                      <stop offset="100%" stopColor={(symbolPricesRef.current[selectedSymbol]?.change || 0) >= 0 ? '#10b981' : '#ef4444'} stopOpacity="0.02" />
+                    </linearGradient>
+                  </defs>
+                  {(() => {
+                    const closes = miniCandles.map(c => c.close);
+                    const minP = Math.min(...closes);
+                    const maxP = Math.max(...closes);
+                    const range = maxP - minP || 1;
+                    const pts = closes.map((c, i) => {
+                      const x = i;
+                      const y = 58 - ((c - minP) / range) * 54;
+                      return x + ',' + y;
+                    });
+                    const lineD = 'M' + pts.join(' L');
+                    const areaD = lineD + ' L' + (miniCandles.length - 1) + ',60 L0,60 Z';
+                    const lineColor = (symbolPricesRef.current[selectedSymbol]?.change || 0) >= 0 ? '#10b981' : '#ef4444';
+                    return (
+                      <g>
+                        <path d={areaD} fill="url(#miniGrad)" />
+                        <path d={lineD} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+                      </g>
+                    );
+                  })()}
+                </svg>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+
+      {/* ===== EQUITY CURVE ===== */}
+      {allocation > 0 && (
+      <Card className="border-border/50 overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4" />
+            <h3 className="text-sm font-semibold">Equity Curve</h3>
+          </div>
+          <span className={"text-xs font-semibold tabular-nums " + (accountEquity >= allocation ? 'text-emerald-500' : 'text-red-500')}>
+            ${accountEquity.toFixed(2)}
+          </span>
+        </div>
+        <div className="p-4">
+          {equityHistory.length < 2 ? (
+            <div className="text-center py-8 text-muted-foreground text-sm">
+              <Activity className="h-6 w-6 mx-auto mb-2 opacity-30 animate-pulse" />
+              <p className="text-xs">Equity data will appear as trades execute</p>
+            </div>
+          ) : (
+            <svg viewBox={'0 0 ' + (equityHistory.length + 40) + ' 80'} className="w-full h-32" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity="0.2" />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity="0.01" />
+                </linearGradient>
+                <linearGradient id="eqGradRed" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ef4444" stopOpacity="0.2" />
+                  <stop offset="100%" stopColor="#ef4444" stopOpacity="0.01" />
+                </linearGradient>
+              </defs>
+              {(() => {
+                const data = equityHistory;
+                const w = equityHistory.length;
+                const padR = 40;
+                const minV = Math.min(...data, allocation * 0.9);
+                const maxV = Math.max(...data, allocation * 1.1);
+                const range = maxV - minV || 1;
+                const toX = (i) => i;
+                const toY = (v) => 76 - ((v - minV) / range) * 72;
+                const baseY = toY(allocation);
+                const pts = data.map((v, i) => toX(i) + ',' + toY(v));
+                const lineD = 'M' + pts.join(' L');
+                const areaD = lineD + ' L' + (w - 1) + ',78 L0,78 Z';
+                const lastVal = data[data.length - 1];
+                const isAbove = lastVal >= allocation;
+                const lineColor = isAbove ? '#10b981' : '#ef4444';
+                const gradId = isAbove ? 'url(#eqGrad)' : 'url(#eqGradRed)';
+                const fmt$ = (v) => { if (v >= 10000) return '$' + (v/1000).toFixed(1) + 'k'; return '$' + v.toFixed(0); };
+                const yTicks = 4;
+                const tickVals = [];
+                for (let i = 0; i <= yTicks; i++) {
+                  tickVals.push(minV + (range * i / yTicks));
+                }
+                return (
+                  <g>
+                    <line x1="0" y1={baseY} x2={w - 1} y2={baseY} stroke="#71717a" strokeWidth="0.5" strokeDasharray="4 3" opacity="0.5" />
+                    {tickVals.map((tv, i) => (
+                      <g key={i}>
+                        <line x1="0" y1={toY(tv)} x2={w - 1} y2={toY(tv)} stroke="#27272a" strokeWidth="0.3" />
+                        <text x={w + 2} y={toY(tv) + 3} fill="#71717a" fontSize="6" fontFamily="monospace">{fmt$(tv)}</text>
+                      </g>
+                    ))}
+                    <path d={areaD} fill={gradId} />
+                    <path d={lineD} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+                    <circle cx={w - 1} cy={toY(lastVal)} r="2.5" fill={lineColor} />
+                  </g>
+                );
+              })()}
+            </svg>
+          )}
+        </div>
+      </Card>
+      )}
 
       {/* ===== CONFIG (collapsible) ===== */}
       <button onClick={() => setShowConfig(!showConfig)} className="w-full flex items-center justify-between py-1 cursor-pointer">

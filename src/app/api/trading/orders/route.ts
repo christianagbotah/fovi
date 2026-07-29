@@ -12,8 +12,6 @@ export async function GET(req: NextRequest) {
     const accountId = searchParams.get('accountId');
     const userId = 'usr_demo_1';
 
-    const where = accountId ? { accountId, userId: undefined as unknown } : { accountId: undefined as unknown };
-    // Simple approach: get default account orders
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
@@ -26,7 +24,6 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(orders);
   } catch (error) {
-    // ANY database error falls back to demo
     console.warn('[orders GET] DB error, using fallback:', error);
     return NextResponse.json([]);
   }
@@ -55,17 +52,22 @@ export async function POST(req: NextRequest) {
       type: body.type || 'market',
       qty: body.qty,
       limitPrice: body.limitPrice,
-      stopPrice: body.stopPrice,
+      stopPrice: body.stopLoss,
     });
 
-    // Save order to DB
+    if (result.status === 'rejected') {
+      return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+    }
+
+    const orderId = uuidv4();
+
     const order = await db.order.create({
       data: {
-        id: uuidv4(),
+        id: orderId,
         accountId: account.id,
         brokerOrderId: result.orderId,
         symbol: body.symbol,
-        assetType: 'stock',
+        assetType: body.assetType || 'stock',
         side: body.side,
         type: body.type || 'market',
         qty: body.qty,
@@ -74,10 +76,44 @@ export async function POST(req: NextRequest) {
         status: result.status,
         aiGenerated: body.aiGenerated || false,
         signalId: body.signalId,
+        reason: body.signalId ? 'Signal-based entry' : 'Manual trade',
       },
     });
 
-    // Update account balance
+    if (result.filledPrice && result.filledQty > 0 && body.side !== 'sell') {
+      if (hasModel('position')) {
+        const assetType = body.assetType || 'stock';
+        try {
+          await db.position.upsert({
+            where: { id: `${account.id}_${body.symbol}` },
+            create: {
+              id: `${account.id}_${body.symbol}`,
+              accountId: account.id,
+              symbol: body.symbol,
+              assetType,
+              side: 'long',
+              qty: result.filledQty,
+              avgEntryPrice: result.filledPrice,
+              currentPrice: result.filledPrice,
+              stopLoss: body.stopLoss ?? null,
+              takeProfit: body.takeProfit ?? null,
+              status: 'open',
+              openedAt: new Date(),
+            },
+            update: {
+              qty: { increment: result.filledQty },
+              avgEntryPrice: result.filledPrice,
+              currentPrice: result.filledPrice,
+              stopLoss: body.stopLoss ?? undefined,
+              takeProfit: body.takeProfit ?? undefined,
+            },
+          });
+        } catch (posErr) {
+          console.warn('[orders POST] position upsert error:', posErr);
+        }
+      }
+    }
+
     await db.tradingAccount.update({
       where: { id: account.id },
       data: { lastSyncedAt: new Date() },
@@ -85,8 +121,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(order);
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[orders POST] DB error, using fallback:', error);
-    return NextResponse.json({ id: 'demo_order', symbol: 'DEMO', status: 'filled', filledQty: 0, filledPrice: 0 }, { status: 200 });
+    console.warn('[orders POST] DB error:', error);
+    return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
   }
 }

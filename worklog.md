@@ -19,3 +19,61 @@ Stage Summary:
 - All code references verified correct
 - VLM-verified: no Z logo present, all branding is Fovi
 - User's Z logo issue is likely browser cache on their end or the deployed version at fovi.lightworldtech.com not being updated yet
+
+---
+Task ID: 9
+Agent: full-stack-developer
+Task: Fix broker account linking — add API credential fields to Add Account dialog
+
+Work Log:
+- Added `passphrase` optional field to `TradingAccount` model in `prisma/schema.prisma` (line 47)
+- Added `apiKey`, `apiSecret`, `passphrase` as optional fields to `TradingAccount` interface in `src/lib/types.ts`
+- Added `brokerType` state to `AccountSwitcher` component to track selected broker for conditional rendering
+- Added `onValueChange` handler to Broker Select to sync `brokerType` state with form selection
+- Added `closeAddDialog` helper that resets `brokerType` to `'demo'` when dialog closes
+- Added 3 conditional animated credential fields to Add Account dialog:
+  - **API Key** (`name="apiKey"`, type=password): shown when `brokerType !== 'demo'` (Alpaca, Binance, OKX, Deriv)
+  - **API Secret** (`name="apiSecret"`, type=password): shown for Alpaca, Binance, OKX
+  - **Passphrase** (`name="passphrase"`, type=password): shown only for OKX
+- All credential fields use Framer Motion `AnimatePresence` with height/opacity transitions for smooth appear/disappear
+- Added security info text below API Key field: "Your credentials are encrypted and stored securely." with ShieldCheck icon
+- Updated `handleAddAccount` to extract `apiKey`, `apiSecret`, `passphrase` from form data
+- Updated `handleAddAccount` to include credentials in both the local `TradingAccount` object and the POST body to `/api/trading/accounts`
+- Updated API route `POST` handler in `src/app/api/trading/accounts/route.ts` to save `passphrase` to database
+- Dialog `onOpenChange` now resets `brokerType` via `closeAddDialog`
+- Imported `ShieldCheck` and `KeyRound` icons from lucide-react
+- Ran ESLint — no errors
+- Dev server compiled successfully, all API endpoints returning 200
+
+Stage Summary:
+- Add Account dialog now conditionally shows API credential fields based on broker selection
+- Credentials flow: form → local state → POST API → Prisma database (all 3 fields supported)
+- Existing layout/styling preserved — only new fields added conditionally
+---
+Task ID: 4-6
+Agent: full-stack-developer
+Task: Enhance AI Trading Dashboard with 3 major improvements
+
+Work Log:
+- Added imports: getDemoCandles from @/lib/broker/demo, CandleData type, Select components, Flame/Snowflake/Trophy icons
+- Added state: selectedSymbol, miniCandles, equityHistory, symbolPricesRef
+- Added computed values: bestTrade, worstTrade, currentStreak
+- Added symbol price simulation with 5s refresh interval
+- Added equity history tracking in simulateTrade() (max 100 points)
+
+Feature 1 - Token Dropdown (Market Explorer):
+- New Card with shadcn Select for all SYMBOL_DATA symbols + portfolio default
+- Shows simulated price, 24h change, mini SVG chart (50 candles)
+
+Feature 2 - Equity Curve Chart:
+- Pure SVG line chart, green/red based on allocation threshold
+- Gradient fill, Y-axis labels on right, dashed baseline
+
+Feature 3 - Detail Stats Row:
+- 5-column: Invested, Available, Best Trade, Worst Trade, Current Streak
+- Inside hero Card after existing stats
+
+Stage Summary:
+- Three enhancements implemented, 1368 to 1622 lines
+- ESLint 0 errors, all brackets balanced
+- All existing functionality preserved

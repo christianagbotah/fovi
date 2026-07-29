@@ -5,11 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { formatPrice } from '@/lib/market-sim';
-import { TrendingUp, TrendingDown, Target, ShieldAlert, Zap, Copy } from 'lucide-react';
-import { toast } from 'sonner';
+import { TrendingUp, TrendingDown, Target, ShieldAlert, Zap } from 'lucide-react';
 
 export function SignalDetailSheet() {
-  const { signalDetailId, setSignalDetailId, signals, setOrderSheetOpen, setOrderSymbol } = useTradingStore();
+  const {
+    signalDetailId, setSignalDetailId, signals,
+    setOrderSheetOpen, setOrderSymbol,
+    setOrderStopLoss, setOrderTakeProfit, setOrderEntryPrice,
+  } = useTradingStore();
   const signal = signals.find(s => s.id === signalDetailId);
 
   if (!signal) return null;
@@ -18,6 +21,9 @@ export function SignalDetailSheet() {
 
   const handleExecute = () => {
     setOrderSymbol(signal.symbol);
+    setOrderEntryPrice(signal.entryPrice || null);
+    setOrderStopLoss(signal.stopLoss ?? null);
+    setOrderTakeProfit(signal.takeProfit ?? null);
     setOrderSheetOpen(true);
     setSignalDetailId(null);
   };
@@ -51,7 +57,6 @@ export function SignalDetailSheet() {
         </SheetHeader>
 
         <div className="px-6 pb-8 space-y-4">
-          {/* Confidence Bar */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs text-muted-foreground">AI Confidence</span>
@@ -67,7 +72,6 @@ export function SignalDetailSheet() {
             </div>
           </div>
 
-          {/* Price Levels */}
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-muted/50 rounded-xl p-3 text-center">
               <p className="text-[10px] text-muted-foreground uppercase">Entry</p>
@@ -91,7 +95,6 @@ export function SignalDetailSheet() {
             </div>
           </div>
 
-          {/* AI Reasoning */}
           <div className="bg-muted/30 rounded-xl p-4">
             <div className="flex items-center gap-1.5 mb-2">
               <Zap className="h-3.5 w-3.5 text-amber-500" />
@@ -100,7 +103,6 @@ export function SignalDetailSheet() {
             <p className="text-sm text-muted-foreground leading-relaxed">{signal.reasoning}</p>
           </div>
 
-          {/* Actions */}
           <Button
             onClick={handleExecute}
             className={`w-full h-12 font-semibold ${

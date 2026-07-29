@@ -31,6 +31,9 @@ export interface TradingAccount {
   broker: BrokerProvider;
   accountType: AccountType;
   accountId: string | null;
+  apiKey?: string;
+  apiSecret?: string;
+  passphrase?: string;
   isDefault: boolean;
   balance: number;
   currency: string;

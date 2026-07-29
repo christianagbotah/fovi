@@ -2,53 +2,70 @@ import { NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 
-const DEMO_PORTFOLIO = {
-  totalBalance: 100000, totalPnl: 2340.5, totalPnlPercent: 2.34,
-  dayPnl: 567.8, dayPnlPercent: 0.57, openPositions: 3,
-  activeSignals: 5, winRate: 68, totalTrades: 47,
-};
-
 export async function GET() {
   try {
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json(DEMO_PORTFOLIO);
+      return NextResponse.json({
+        totalBalance: 100000, totalPnl: 0, totalPnlPercent: 0,
+        dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
+        activeSignals: 0, winRate: 0, totalTrades: 0,
+      });
     }
     const userId = 'usr_demo_1';
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
     });
     if (!account) {
-      return NextResponse.json(DEMO_PORTFOLIO);
+      return NextResponse.json({
+        totalBalance: 0, totalPnl: 0, totalPnlPercent: 0,
+        dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
+        activeSignals: 0, winRate: 0, totalTrades: 0,
+      });
     }
 
     const broker = createBrokerFromAccount(account);
     const info = await broker.getAccountInfo();
     const positions = await broker.getPositions();
 
-    const closedOrders = await db.order.findMany({
-      where: { accountId: account.id, status: 'filled' },
-    });
-    const activeSignals = await db.tradingSignal.count({
-      where: { accountId: account.id, status: 'active' },
-    });
+    const unrealizedPnl = positions.reduce((sum, p) => sum + (p.unrealizedPnl || 0), 0);
+    const totalBalance = info.balance + unrealizedPnl;
+    const totalPnlPercent = account.balance > 0 ? ((totalBalance - account.balance) / account.balance) * 100 : 0;
 
-    const unrealizedPnl = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
-    const totalPnlPercent = info.balance > 0 ? (unrealizedPnl / (info.balance + Math.abs(unrealizedPnl))) * 100 : 0;
+    const closedPositions = hasModel('position')
+      ? await db.position.findMany({ where: { accountId: account.id, status: 'closed' } })
+      : [];
+    const winCount = closedPositions.filter(p => (p.realizedPnl || 0) > 0).length;
+    const winRate = closedPositions.length > 0 ? Math.round((winCount / closedPositions.length) * 100) : 0;
+
+    const totalTrades = closedPositions.length;
+
+    let activeSignals = 0;
+    if (hasModel('tradingSignal')) {
+      activeSignals = await db.tradingSignal.count({
+        where: { accountId: account.id, status: 'active' },
+      });
+    }
+
+    const dayPnl = info.dayPnl || 0;
+    const dayPnlPercent = info.balance > 0 ? (dayPnl / info.balance) * 100 : 0;
 
     return NextResponse.json({
-      totalBalance: info.balance + unrealizedPnl,
-      totalPnl: unrealizedPnl,
+      totalBalance,
+      totalPnl: totalBalance - account.balance,
       totalPnlPercent,
-      dayPnl: info.dayPnl,
-      dayPnlPercent: info.balance > 0 ? (info.dayPnl / info.balance) * 100 : 0,
+      dayPnl,
+      dayPnlPercent,
       openPositions: positions.length,
       activeSignals,
-      winRate: closedOrders.length > 0 ? 62 : 0,
-      totalTrades: closedOrders.length,
+      winRate,
+      totalTrades,
     });
   } catch (error) {
-    // ANY error falls back to demo portfolio data
-    console.warn('[portfolio GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_PORTFOLIO);
+    console.warn('[portfolio GET] error:', error);
+    return NextResponse.json({
+      totalBalance: 100000, totalPnl: 0, totalPnlPercent: 0,
+      dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
+      activeSignals: 0, winRate: 0, totalTrades: 0,
+    });
   }
 }

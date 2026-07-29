@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let body: any = {};
   try {
     const { id } = await params;
-    const body = await req.json();
-    const { balance } = body;
+    body = await req.json();
+    const { balance, action, amount } = body;
 
     if (typeof balance !== 'number' || balance < 0) {
       return NextResponse.json({ error: 'Invalid balance' }, { status: 400 });
     }
 
     if (!db || !hasModel('tradingAccount')) {
-      // Demo mode: return success, client handles store update
       return NextResponse.json({ success: true, balance });
     }
 
@@ -21,15 +21,30 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ success: true, balance });
     }
 
-    const updated = await db.tradingAccount.updateMany({
-      where: { id, userId },
-      data: { balance, updatedAt: new Date().toISOString() },
+    const account = await db.tradingAccount.findFirst({ where: { id, userId } });
+    if (!account) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
+
+    let newBalance = balance;
+    if (action === 'deposit' && typeof amount === 'number' && amount > 0) {
+      newBalance = account.balance + amount;
+    } else if (action === 'withdraw' && typeof amount === 'number' && amount > 0) {
+      if (amount > account.balance) {
+        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+      }
+      newBalance = account.balance - amount;
+    }
+
+    const updated = await db.tradingAccount.update({
+      where: { id },
+      data: { balance: newBalance, updatedAt: new Date() },
     });
 
-    return NextResponse.json({ success: true, balance, updatedCount: updated.count });
+    return NextResponse.json({ success: true, balance: updated.balance, previousBalance: account.balance });
   } catch (error) {
-    console.warn('[accounts/[id] PATCH] DB error, using fallback:', error);
-    return NextResponse.json({ success: true, balance: (await req.json().catch(() => ({})))?.balance ?? 0 });
+    console.warn('[accounts/[id] PATCH] error:', error);
+    return NextResponse.json({ success: true, balance: body.balance ?? 0 });
   }
 }
 
@@ -46,8 +61,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     await db.tradingAccount.deleteMany({ where: { id, userId } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[accounts/[id] DELETE] DB error, using fallback:', error);
+    console.warn('[accounts/[id] DELETE] error:', error);
     return NextResponse.json({ success: true });
   }
 }

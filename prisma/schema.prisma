@@ -44,6 +44,7 @@ model TradingAccount {
   accountId       String?
   apiKey          String?
   apiSecret       String?
+  passphrase      String?
   isDefault       Boolean  @default(false)
   balance         Float    @default(100000.0)
   currency        String   @default("USD")

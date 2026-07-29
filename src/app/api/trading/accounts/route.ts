@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
         id, userId,
         broker: body.broker || 'demo', accountType: body.accountType || 'demo',
         accountId: body.accountId, apiKey: body.apiKey, apiSecret: body.apiSecret,
+        passphrase: body.passphrase,
         isDefault: body.isDefault || false, balance: body.balance || 100000,
         currency: body.currency || 'USD',
       },

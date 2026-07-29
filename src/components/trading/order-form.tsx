@@ -34,17 +34,18 @@ const POPULAR_SYMBOLS = [
 export function OrderForm() {
   const {
     orderSheetOpen, setOrderSheetOpen, orderSymbol, setOrderSymbol,
+    orderStopLoss, orderTakeProfit, orderEntryPrice,
     selectedSymbol, setSelectedSymbol, positions, setPositions,
     allSymbols, livePrices,
   } = useTradingStore();
 
-  const effectiveSymbol = orderSymbol || selectedSymbol || 'AAPL';
-  const [localSymbol, setLocalSymbol] = useState(effectiveSymbol);
+  const effectiveSymbol = orderSymbol || selectedSymbol || '';
+  const [localSymbol, setLocalSymbol] = useState('');
   const [symbolSearch, setSymbolSearch] = useState('');
   const [symbolDropdownOpen, setSymbolDropdownOpen] = useState(false);
 
-  const symbol = localSymbol;
-  const currentPrice = getDemoPrice(symbol);
+  const symbol = localSymbol || effectiveSymbol || '';
+  const currentPrice = symbol ? getDemoPrice(symbol) : 0;
 
   const [side, setSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
@@ -54,26 +55,24 @@ export function OrderForm() {
   const [takeProfit, setTakeProfit] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Sync symbol from store when sheet opens or orderSymbol changes
+  // Sync symbol and SL/TP from store when sheet opens
   useEffect(() => {
-    if (effectiveSymbol && orderSheetOpen) {
+    if (!orderSheetOpen) return;
+    if (effectiveSymbol) {
       setLocalSymbol(effectiveSymbol);
     }
-  }, [effectiveSymbol, orderSheetOpen]);
-
-  // Pre-fill TP/SL from signal data
-  useEffect(() => {
-    if (orderSheetOpen && orderSymbol) {
+    if (orderStopLoss != null) setStopLoss(String(orderStopLoss));
+    if (orderTakeProfit != null) setTakeProfit(String(orderTakeProfit));
+    if (orderEntryPrice && !limitPrice) setLimitPrice(String(orderEntryPrice));
+    if (orderSymbol) {
       const { signals } = useTradingStore.getState();
       const sig = signals.find(s => s.symbol === orderSymbol);
       if (sig) {
-        if (sig.stopLoss) setStopLoss(String(sig.stopLoss));
-        if (sig.takeProfit) setTakeProfit(String(sig.takeProfit));
         if (sig.direction === 'bearish' || sig.direction === 'short') setSide('sell');
         else setSide('buy');
       }
     }
-  }, [orderSheetOpen, orderSymbol]);
+  }, [orderSheetOpen]);
 
   // Reset form when sheet closes
   useEffect(() => {

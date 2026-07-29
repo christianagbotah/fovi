@@ -4,8 +4,9 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftRight, Plus, Trash2, ChevronDown, Check, Wallet,
-  Briefcase, Zap, Landmark,
+  Briefcase, Zap, Landmark, ShieldCheck, KeyRound, ArrowDownCircle, ArrowUpCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -65,6 +66,10 @@ export function AccountSwitcher() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [brokerType, setBrokerType] = useState<string>('demo');
+  const [fundsDialog, setFundsDialog] = useState<{ id: string; action: 'deposit' | 'withdraw' } | null>(null);
+  const [fundsAmount, setFundsAmount] = useState('');
+  const [funding, setFunding] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const activeAccount = accounts.find(a => a.id === activeAccountId);
@@ -99,6 +104,9 @@ export function AccountSwitcher() {
     const broker = data.get('broker') as string || 'demo';
     const accountType = data.get('accountType') as string || 'demo';
     const balance = parseFloat(data.get('balance') as string) || 100000;
+    const apiKey = (data.get('apiKey') as string) || null;
+    const apiSecret = (data.get('apiSecret') as string) || null;
+    const passphrase = (data.get('passphrase') as string) || null;
 
     const newAccount: TradingAccount = {
       id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -109,6 +117,9 @@ export function AccountSwitcher() {
       isDefault: accounts.length === 0,
       balance,
       currency: 'USD',
+      apiKey: apiKey || undefined,
+      apiSecret: apiSecret || undefined,
+      passphrase: passphrase || undefined,
       isActive: true,
       lastSyncedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -119,7 +130,7 @@ export function AccountSwitcher() {
     fetch('/api/trading/accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ broker, accountType, balance }),
+      body: JSON.stringify({ broker, accountType, balance, apiKey: apiKey || undefined, apiSecret: apiSecret || undefined, passphrase: passphrase || undefined }),
     }).catch(() => {});
 
     // Update local state immediately
@@ -128,6 +139,7 @@ export function AccountSwitcher() {
     saveAccountsLS(updated);
     setActiveAccount(newAccount.id);
     setShowAddDialog(false);
+    setBrokerType('demo');
   };
 
   const handleDelete = async (id: string) => {
@@ -146,7 +158,43 @@ export function AccountSwitcher() {
   const openAddDialog = () => {
     setDropdownOpen(false);
     setMobileSheetOpen(false);
+    setBrokerType('demo');
     setTimeout(() => setShowAddDialog(true), 100);
+  };
+
+  const closeAddDialog = () => {
+    setShowAddDialog(false);
+    setBrokerType('demo');
+  };
+
+  const handleFunds = async () => {
+    if (!fundsDialog || !fundsAmount || parseFloat(fundsAmount) <= 0) return;
+    setFunding(true);
+    const amount = parseFloat(fundsAmount);
+    try {
+      const res = await fetch(`/api/trading/accounts/${fundsDialog.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ balance: 0, action: fundsDialog.action, amount }),
+      });
+      const data = await res.json();
+      if (data.balance !== undefined) {
+        const updated = accounts.map(a =>
+          a.id === fundsDialog.id ? { ...a, balance: data.balance } : a
+        );
+        setAccounts(updated);
+        saveAccountsLS(updated);
+        toast.success(`${fundsDialog.action === 'deposit' ? 'Deposited' : 'Withdrew'} $${amount.toLocaleString()}`);
+        setFundsDialog(null);
+        setFundsAmount('');
+      } else {
+        toast.error(data.error || 'Action failed');
+      }
+    } catch {
+      toast.error('Failed to process');
+    } finally {
+      setFunding(false);
+    }
   };
 
   const accountRow = (acc: TradingAccount) => (
@@ -180,12 +228,22 @@ export function AccountSwitcher() {
           ${acc.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </p>
       </div>
-      {accounts.length > 1 && (
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 cursor-pointer"
-          onClick={e => { e.stopPropagation(); handleDelete(acc.id); }}>
-          <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+      <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
+          onClick={() => { setFundsDialog({ id: acc.id, action: 'deposit' }); setFundsAmount(''); }}>
+          <ArrowDownCircle className="h-3.5 w-3.5 text-emerald-500" />
         </Button>
-      )}
+        <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
+          onClick={() => { setFundsDialog({ id: acc.id, action: 'withdraw' }); setFundsAmount(''); }}>
+          <ArrowUpCircle className="h-3.5 w-3.5 text-orange-500" />
+        </Button>
+        {accounts.length > 1 && (
+          <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
+            onClick={() => handleDelete(acc.id)}>
+            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
+        )}
+      </div>
     </div>
   );
 
@@ -271,7 +329,7 @@ export function AccountSwitcher() {
       </Sheet>
 
       {/* Add Account Dialog — rendered at TOP LEVEL, not nested inside dropdown/sheet */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog} modal={false}>
+      <Dialog open={showAddDialog} onOpenChange={(open) => { if (!open) closeAddDialog(); }} modal={false}>
         <DialogContent
           className="max-w-sm"
           onInteractOutside={(e) => e.preventDefault()}
@@ -285,7 +343,7 @@ export function AccountSwitcher() {
           <form onSubmit={handleAddAccount} className="space-y-4 mt-4">
             <div className="space-y-2">
               <Label>Broker</Label>
-              <Select name="broker" defaultValue="demo">
+              <Select name="broker" defaultValue="demo" onValueChange={(val) => setBrokerType(val)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="demo">
@@ -326,8 +384,124 @@ export function AccountSwitcher() {
               <Label>Starting Balance ($)</Label>
               <Input name="balance" type="number" defaultValue="100000" />
             </div>
+
+            {/* API Key — shown for all non-demo brokers */}
+            <AnimatePresence mode="wait">
+              {brokerType !== 'demo' && brokerType !== '' && (
+                <motion.div
+                  key="apiKey"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-2 overflow-hidden"
+                >
+                  <Label htmlFor="apiKey" className="flex items-center gap-1.5">
+                    <KeyRound className="h-3.5 w-3.5" /> API Key
+                  </Label>
+                  <Input
+                    id="apiKey"
+                    name="apiKey"
+                    type="password"
+                    placeholder="Enter your API key"
+                    autoComplete="off"
+                  />
+                  <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <ShieldCheck className="h-3 w-3 shrink-0" />
+                    Your credentials are encrypted and stored securely.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* API Secret — shown for alpaca, binance, okx */}
+            <AnimatePresence mode="wait">
+              {(brokerType === 'alpaca' || brokerType === 'binance' || brokerType === 'okx') && (
+                <motion.div
+                  key="apiSecret"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-2 overflow-hidden"
+                >
+                  <Label htmlFor="apiSecret" className="flex items-center gap-1.5">
+                    <KeyRound className="h-3.5 w-3.5" /> API Secret
+                  </Label>
+                  <Input
+                    id="apiSecret"
+                    name="apiSecret"
+                    type="password"
+                    placeholder="Enter your API secret"
+                    autoComplete="off"
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Passphrase — shown only for OKX */}
+            <AnimatePresence mode="wait">
+              {brokerType === 'okx' && (
+                <motion.div
+                  key="passphrase"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-2 overflow-hidden"
+                >
+                  <Label htmlFor="passphrase" className="flex items-center gap-1.5">
+                    <KeyRound className="h-3.5 w-3.5" /> Passphrase
+                  </Label>
+                  <Input
+                    id="passphrase"
+                    name="passphrase"
+                    type="password"
+                    placeholder="Enter your passphrase"
+                    autoComplete="off"
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <Button type="submit" className="w-full cursor-pointer">Create Account</Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!fundsDialog} onOpenChange={open => { if (!open) setFundsDialog(null); }}>
+        <DialogContent className="max-w-xs" onInteractOutside={e => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {fundsDialog?.action === 'deposit'
+                ? <ArrowDownCircle className="h-5 w-5 text-emerald-500" />
+                : <ArrowUpCircle className="h-5 w-5 text-orange-500" />}
+              {fundsDialog?.action === 'deposit' ? 'Deposit Funds' : 'Withdraw Funds'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="text-center p-3 rounded-xl bg-muted/50">
+              <p className="text-xs text-muted-foreground">Current Balance</p>
+              <p className="text-lg font-bold tabular-nums">
+                ${(accounts.find(a => a.id === fundsDialog?.id)?.balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Amount ($)</Label>
+              <Input type="number" min="1" step="0.01" placeholder="0.00" value={fundsAmount} onChange={e => setFundsAmount(e.target.value)} />
+              <div className="flex gap-2">
+                {[100, 1000, 5000, 10000].map(n => (
+                  <button key={n} onClick={() => setFundsAmount(String(n))} className="flex-1 py-1.5 text-xs font-medium rounded-md bg-muted hover:bg-accent transition-colors">
+                    {n >= 1000 ? `${n / 1000}k` : n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Button onClick={handleFunds} disabled={funding || !fundsAmount || parseFloat(fundsAmount) <= 0}
+              className={`w-full cursor-pointer ${fundsDialog?.action === 'deposit' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-orange-600 hover:bg-orange-700'} text-white`}>
+              {funding ? 'Processing...' : fundsDialog?.action === 'deposit' ? 'Deposit' : 'Withdraw'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </>

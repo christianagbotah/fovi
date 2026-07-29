@@ -159,6 +159,12 @@ interface TradingState {
   setOrderSheetOpen: (open: boolean) => void;
   orderSymbol: string | null;
   setOrderSymbol: (symbol: string | null) => void;
+  orderStopLoss: number | null;
+  orderTakeProfit: number | null;
+  orderEntryPrice: number | null;
+  setOrderStopLoss: (val: number | null) => void;
+  setOrderTakeProfit: (val: number | null) => void;
+  setOrderEntryPrice: (val: number | null) => void;
   signalDetailId: string | null;
   setSignalDetailId: (id: string | null) => void;
   positionDetailId: string | null;
@@ -251,9 +257,15 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   // UI
   orderSheetOpen: false,
-  setOrderSheetOpen: (open) => set({ orderSheetOpen: open }),
+  setOrderSheetOpen: (open) => set({ orderSheetOpen: open, orderStopLoss: null, orderTakeProfit: null, orderEntryPrice: null }),
   orderSymbol: null,
   setOrderSymbol: (symbol) => set({ orderSymbol: symbol }),
+  orderStopLoss: null,
+  orderTakeProfit: null,
+  orderEntryPrice: null,
+  setOrderStopLoss: (val) => set({ orderStopLoss: val }),
+  setOrderTakeProfit: (val) => set({ orderTakeProfit: val }),
+  setOrderEntryPrice: (val) => set({ orderEntryPrice: val }),
   signalDetailId: null,
   setSignalDetailId: (id) => set({ signalDetailId: id }),
   positionDetailId: null,
