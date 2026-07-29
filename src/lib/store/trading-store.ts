@@ -291,6 +291,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   }),
   setBotConfig: (config) => {
     const updated = { ...get().botConfig, ...config };
+    // Admin levy is NON-REMOVABLE — minimum 1%
+    if (updated.adminLevyPercent !== undefined) {
+      updated.adminLevyPercent = Math.max(1, updated.adminLevyPercent);
+    }
     set({ botConfig: updated });
     // Cache to localStorage for instant UI on next mount.
     // The init useEffect will reconcile with the DB anyway.

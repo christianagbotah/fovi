@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftRight, Plus, Trash2, ChevronDown, Check, Wallet,
-  Briefcase, Zap, Landmark, ShieldCheck, KeyRound, ArrowDownCircle, ArrowUpCircle,
+  Briefcase, Zap, Landmark, ShieldCheck, KeyRound, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -23,9 +23,6 @@ import {
 import { useTradingStore } from '@/lib/store/trading-store';
 import type { TradingAccount } from '@/lib/types';
 
-// ============================================================
-// localStorage helpers for accounts (demo mode persistence)
-// ============================================================
 const ACC_STORAGE_KEY = 'fovi_accounts';
 
 function loadAccountsLS(): TradingAccount[] | null {
@@ -43,18 +40,14 @@ function saveAccountsLS(accounts: TradingAccount[]): void {
 
 function sortAccounts(accounts: TradingAccount[], activeId: string | null): TradingAccount[] {
   return [...accounts].sort((a, b) => {
-    // 1. Live accounts always before demo (active trading first)
     const aLive = a.accountType === 'live' ? 0 : 1;
     const bLive = b.accountType === 'live' ? 0 : 1;
     if (aLive !== bLive) return aLive - bLive;
-    // 2. Among same type, active account first
     if (a.id === activeId) return -1;
     if (b.id === activeId) return 1;
-    // 3. Default before non-default
     const aDef = a.isDefault ? 0 : 1;
     const bDef = b.isDefault ? 0 : 1;
     if (aDef !== bDef) return aDef - bDef;
-    // 4. Most recently updated first
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
   });
 }
@@ -67,14 +60,10 @@ export function AccountSwitcher() {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [brokerType, setBrokerType] = useState<string>('demo');
-  const [fundsDialog, setFundsDialog] = useState<{ id: string; action: 'deposit' | 'withdraw' } | null>(null);
-  const [fundsAmount, setFundsAmount] = useState('');
-  const [funding, setFunding] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const activeAccount = accounts.find(a => a.id === activeAccountId);
 
-  // Desktop: close dropdown on outside click
   useEffect(() => {
     if (!dropdownOpen) return;
     const handler = (e: MouseEvent) => {
@@ -103,11 +92,11 @@ export function AccountSwitcher() {
     const data = new FormData(form);
     const broker = data.get('broker') as string || 'demo';
     const accountType = data.get('accountType') as string || 'demo';
-    const balance = parseFloat(data.get('balance') as string) || 100000;
     const apiKey = (data.get('apiKey') as string) || null;
     const apiSecret = (data.get('apiSecret') as string) || null;
     const passphrase = (data.get('passphrase') as string) || null;
 
+    const isDemo = broker === 'demo';
     const newAccount: TradingAccount = {
       id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       userId: 'usr_demo_1',
@@ -115,7 +104,7 @@ export function AccountSwitcher() {
       accountType,
       accountId: null,
       isDefault: accounts.length === 0,
-      balance,
+      balance: isDemo ? 100000 : 0,
       currency: 'USD',
       apiKey: apiKey || undefined,
       apiSecret: apiSecret || undefined,
@@ -126,33 +115,30 @@ export function AccountSwitcher() {
       updatedAt: new Date().toISOString(),
     };
 
-    // Try API in background (best-effort, don't block)
     fetch('/api/trading/accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ broker, accountType, balance, apiKey: apiKey || undefined, apiSecret: apiSecret || undefined, passphrase: passphrase || undefined }),
+      body: JSON.stringify({ broker, accountType, apiKey: apiKey || undefined, apiSecret: apiSecret || undefined, passphrase: passphrase || undefined }),
     }).catch(() => {});
 
-    // Update local state immediately
     const updated = [...accounts, newAccount];
     setAccounts(updated);
     saveAccountsLS(updated);
     setActiveAccount(newAccount.id);
     setShowAddDialog(false);
     setBrokerType('demo');
+    toast.success(isDemo ? 'Demo account created' : 'Broker account linked successfully');
   };
 
   const handleDelete = async (id: string) => {
-    // Try API in background
     fetch(`/api/trading/accounts/${id}`, { method: 'DELETE' }).catch(() => {});
-
-    // Update local state immediately
     const updated = accounts.filter(a => a.id !== id);
     setAccounts(updated);
     saveAccountsLS(updated);
     if (activeAccountId === id) {
       setActiveAccount(updated[0]?.id || null);
     }
+    toast.success('Account removed');
   };
 
   const openAddDialog = () => {
@@ -167,35 +153,7 @@ export function AccountSwitcher() {
     setBrokerType('demo');
   };
 
-  const handleFunds = async () => {
-    if (!fundsDialog || !fundsAmount || parseFloat(fundsAmount) <= 0) return;
-    setFunding(true);
-    const amount = parseFloat(fundsAmount);
-    try {
-      const res = await fetch(`/api/trading/accounts/${fundsDialog.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ balance: 0, action: fundsDialog.action, amount }),
-      });
-      const data = await res.json();
-      if (data.balance !== undefined) {
-        const updated = accounts.map(a =>
-          a.id === fundsDialog.id ? { ...a, balance: data.balance } : a
-        );
-        setAccounts(updated);
-        saveAccountsLS(updated);
-        toast.success(`${fundsDialog.action === 'deposit' ? 'Deposited' : 'Withdrew'} $${amount.toLocaleString()}`);
-        setFundsDialog(null);
-        setFundsAmount('');
-      } else {
-        toast.error(data.error || 'Action failed');
-      }
-    } catch {
-      toast.error('Failed to process');
-    } finally {
-      setFunding(false);
-    }
-  };
+  const isLinked = (acc: TradingAccount) => acc.broker !== 'demo' && (acc.apiKey || acc.accountId);
 
   const accountRow = (acc: TradingAccount) => (
     <div
@@ -206,56 +164,54 @@ export function AccountSwitcher() {
       onClick={() => handleSwitch(acc.id)}
     >
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-        acc.accountType === 'live' ? 'bg-emerald-500/15' : 'bg-amber-500/15'
+        isLinked(acc) ? 'bg-primary/15' : acc.accountType === 'live' ? 'bg-emerald-500/15' : 'bg-amber-500/15'
       }`}>
-        {acc.accountType === 'live'
-          ? <Briefcase className="h-4 w-4 text-emerald-500" />
-          : <Zap className="h-4 w-4 text-amber-500" />}
+        {isLinked(acc)
+          ? <Link2 className="h-4 w-4 text-primary" />
+          : acc.accountType === 'live'
+            ? <Briefcase className="h-4 w-4 text-emerald-500" />
+            : <Zap className="h-4 w-4 text-amber-500" />}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {acc.id === activeAccountId && <Check className="h-3.5 w-3.5 text-primary" />}
           <span className="text-sm font-semibold">{acc.broker.toUpperCase()}</span>
-          <Badge variant={acc.accountType === 'live' ? 'default' : 'secondary'}
-            className={acc.accountType === 'live'
-              ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px]'
-              : 'bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]'}>
-            {acc.accountType}
+          <Badge variant={isLinked(acc) ? 'default' : acc.accountType === 'live' ? 'default' : 'secondary'}
+            className={isLinked(acc)
+              ? 'bg-primary/10 text-primary border-primary/20 text-[10px]'
+              : acc.accountType === 'live'
+                ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px]'
+                : 'bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]'}>
+            {isLinked(acc) ? 'LINKED' : acc.accountType}
           </Badge>
           {acc.isDefault && <Badge variant="outline" className="text-[9px] h-4">DEFAULT</Badge>}
         </div>
-        <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
+        <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
           ${acc.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <span className="text-[10px] ml-1.5">
+            {isLinked(acc) ? 'Funds stay in broker' : 'Simulated trading'}
+          </span>
         </p>
       </div>
-      <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
-        <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
-          onClick={() => { setFundsDialog({ id: acc.id, action: 'deposit' }); setFundsAmount(''); }}>
-          <ArrowDownCircle className="h-3.5 w-3.5 text-emerald-500" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
-          onClick={() => { setFundsDialog({ id: acc.id, action: 'withdraw' }); setFundsAmount(''); }}>
-          <ArrowUpCircle className="h-3.5 w-3.5 text-orange-500" />
-        </Button>
-        {accounts.length > 1 && (
+      {accounts.length > 1 && (
+        <div className="shrink-0" onClick={e => e.stopPropagation()}>
           <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
             onClick={() => handleDelete(acc.id)}>
             <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 
   const addButton = (
     <Button variant="ghost" size="sm" className="h-7 gap-1 cursor-pointer" onClick={openAddDialog}>
-      <Plus className="h-3.5 w-3.5" /> Add
+      <Plus className="h-3.5 w-3.5" /> Link Account
     </Button>
   );
 
   return (
     <>
-      {/* Trigger Button */}
       <button
         onClick={() => {
           if (window.innerWidth < 1024) {
@@ -266,16 +222,13 @@ export function AccountSwitcher() {
         }}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border hover:bg-accent/50 transition-colors cursor-pointer"
       >
-        {activeAccount?.accountType === 'live' ? (
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-          </span>
-        ) : activeAccount ? (
-          <span className="flex h-2 w-2 rounded-full bg-amber-500" />
+        {activeAccount ? (
+          <span className={`flex h-2 w-2 rounded-full ${isLinked(activeAccount) ? 'bg-primary' : activeAccount.accountType === 'live' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
         ) : null}
         <span className="text-sm font-medium">
-          {activeAccount ? `${activeAccount.accountType.toUpperCase()} · $${activeAccount.balance.toLocaleString()}` : 'Select Account'}
+          {activeAccount
+            ? `${activeAccount.broker.toUpperCase()} · ${activeAccount.accountType.toUpperCase()}`
+            : 'Select Account'}
         </span>
         <ChevronDown className="h-4 w-4 transition-transform lg:block hidden" />
       </button>
@@ -293,7 +246,7 @@ export function AccountSwitcher() {
             >
               <div className="p-3 border-b border-border">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Trading Accounts</h3>
+                  <h3 className="text-sm font-semibold">Broker Accounts</h3>
                   {addButton}
                 </div>
               </div>
@@ -312,7 +265,7 @@ export function AccountSwitcher() {
             <SheetTitle className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Briefcase className="h-5 w-5" />
-                Trading Accounts
+                Broker Accounts
               </div>
               {addButton}
             </SheetTitle>
@@ -321,14 +274,14 @@ export function AccountSwitcher() {
             {sortAccounts(accounts, activeAccountId).map(acc => accountRow(acc))}
             {accounts.length === 0 && (
               <div className="py-8 text-center text-muted-foreground text-sm">
-                No accounts. Tap Add to create one.
+                No accounts. Tap Link Account to get started.
               </div>
             )}
           </div>
         </SheetContent>
       </Sheet>
 
-      {/* Add Account Dialog — rendered at TOP LEVEL, not nested inside dropdown/sheet */}
+      {/* Add / Link Account Dialog */}
       <Dialog open={showAddDialog} onOpenChange={(open) => { if (!open) closeAddDialog(); }} modal={false}>
         <DialogContent
           className="max-w-sm"
@@ -338,7 +291,7 @@ export function AccountSwitcher() {
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Add Trading Account</DialogTitle>
+            <DialogTitle>Link Broker Account</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddAccount} className="space-y-4 mt-4">
             <div className="space-y-2">
@@ -380,12 +333,22 @@ export function AccountSwitcher() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Starting Balance ($)</Label>
-              <Input name="balance" type="number" defaultValue="100000" />
-            </div>
 
-            {/* API Key — shown for all non-demo brokers */}
+            {brokerType === 'demo' && (
+              <div className="p-3 rounded-xl bg-muted/50 text-center">
+                <p className="text-xs text-muted-foreground">Demo accounts start with <span className="font-semibold text-foreground">$100,000</span> simulated balance</p>
+              </div>
+            )}
+
+            {brokerType !== 'demo' && brokerType !== '' && (
+              <div className="p-3 rounded-xl bg-primary/5 border border-primary/10 text-center">
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">Broker-linked:</span> Funds stay in your broker account. No deposits to Fovi.
+                </p>
+              </div>
+            )}
+
+            {/* API Key */}
             <AnimatePresence mode="wait">
               {brokerType !== 'demo' && brokerType !== '' && (
                 <motion.div
@@ -414,7 +377,7 @@ export function AccountSwitcher() {
               )}
             </AnimatePresence>
 
-            {/* API Secret — shown for alpaca, binance, okx */}
+            {/* API Secret */}
             <AnimatePresence mode="wait">
               {(brokerType === 'alpaca' || brokerType === 'binance' || brokerType === 'okx') && (
                 <motion.div
@@ -439,7 +402,7 @@ export function AccountSwitcher() {
               )}
             </AnimatePresence>
 
-            {/* Passphrase — shown only for OKX */}
+            {/* Passphrase — OKX only */}
             <AnimatePresence mode="wait">
               {brokerType === 'okx' && (
                 <motion.div
@@ -464,44 +427,10 @@ export function AccountSwitcher() {
               )}
             </AnimatePresence>
 
-            <Button type="submit" className="w-full cursor-pointer">Create Account</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!fundsDialog} onOpenChange={open => { if (!open) setFundsDialog(null); }}>
-        <DialogContent className="max-w-xs" onInteractOutside={e => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {fundsDialog?.action === 'deposit'
-                ? <ArrowDownCircle className="h-5 w-5 text-emerald-500" />
-                : <ArrowUpCircle className="h-5 w-5 text-orange-500" />}
-              {fundsDialog?.action === 'deposit' ? 'Deposit Funds' : 'Withdraw Funds'}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 mt-4">
-            <div className="text-center p-3 rounded-xl bg-muted/50">
-              <p className="text-xs text-muted-foreground">Current Balance</p>
-              <p className="text-lg font-bold tabular-nums">
-                ${(accounts.find(a => a.id === fundsDialog?.id)?.balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>Amount ($)</Label>
-              <Input type="number" min="1" step="0.01" placeholder="0.00" value={fundsAmount} onChange={e => setFundsAmount(e.target.value)} />
-              <div className="flex gap-2">
-                {[100, 1000, 5000, 10000].map(n => (
-                  <button key={n} onClick={() => setFundsAmount(String(n))} className="flex-1 py-1.5 text-xs font-medium rounded-md bg-muted hover:bg-accent transition-colors">
-                    {n >= 1000 ? `${n / 1000}k` : n}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <Button onClick={handleFunds} disabled={funding || !fundsAmount || parseFloat(fundsAmount) <= 0}
-              className={`w-full cursor-pointer ${fundsDialog?.action === 'deposit' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-orange-600 hover:bg-orange-700'} text-white`}>
-              {funding ? 'Processing...' : fundsDialog?.action === 'deposit' ? 'Deposit' : 'Withdraw'}
+            <Button type="submit" className="w-full cursor-pointer">
+              {brokerType === 'demo' ? 'Create Demo Account' : 'Link Broker Account'}
             </Button>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
     </>

@@ -47,6 +47,10 @@ model TradingAccount {
   passphrase      String?
   isDefault       Boolean  @default(false)
   balance         Float    @default(100000.0)
+  linkedBalance   Float    @default(100000.0)
+  totalAllocated  Float    @default(0)
+  totalRealizedProfit  Float    @default(0)
+  totalAdminLevyCollected  Float    @default(0)
   currency        String   @default("USD")
   isActive        Boolean  @default(true)
   lastSyncedAt    DateTime?
@@ -153,6 +157,9 @@ model BotConfig {
   takeProfitPercent Float    @default(4.0)
   strategy          String   @default("balanced")
   status            String   @default("stopped")
+  adminLevyPercent   Float    @default(10)
+  adminLevyCollected Float    @default(0)
+  grossPnl          Float    @default(0)
   totalTrades       Int      @default(0)
   winTrades         Int      @default(0)
   totalPnl          Float    @default(0)

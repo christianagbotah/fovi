@@ -1337,10 +1337,17 @@ export function AITradingDashboard() {
                   <div>
                     <label className="text-xs text-muted-foreground font-medium mb-1 flex items-center gap-1">
                       <Percent className="h-3 w-3" /> Admin Levy (%)
+                      <span className="text-[9px] text-red-400 font-bold ml-1">REQUIRED</span>
                     </label>
-                    <Input type="number" min={0} max={50} step={0.5} value={botConfig.adminLevyPercent}
-                      onChange={e => setBotConfig({ adminLevyPercent: parseFloat(e.target.value) || 10 })} className="h-10" />
-                    <p className="text-[9px] text-muted-foreground mt-1">% of profit deducted per closed trade</p>
+                    <div className="relative">
+                      <Input type="number" min={1} max={50} step={0.5} value={botConfig.adminLevyPercent}
+                        onChange={e => {
+                          const val = Math.max(1, parseFloat(e.target.value) || 10);
+                          setBotConfig({ adminLevyPercent: val });
+                        }} className="h-10 pr-16" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-red-500 font-bold pointer-events-none">NON-REMOVABLE</span>
+                    </div>
+                    <p className="text-[9px] text-red-400/80 mt-1 font-medium">% of profit deducted per trade and sent to admin. This fee cannot be disabled.</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground font-medium mb-1 block">Strategy</label>

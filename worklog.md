@@ -77,3 +77,25 @@ Stage Summary:
 - Three enhancements implemented, 1368 to 1622 lines
 - ESLint 0 errors, all brackets balanced
 - All existing functionality preserved
+---
+Task ID: 1
+Agent: Main Agent
+Task: Reset local to remote origin/main and re-apply session changes
+
+Work Log:
+- Analyzed 26 remote commits missing locally vs 5 local-only commits
+- Identified that remote already has most session work (admin levy logic, PerformanceMetrics, signal fixes, logo, JSX fixes, PostgreSQL switch)
+- Only 3 changes needed re-applying after reset:
+  1. Prisma schema: added linkedBalance, totalAllocated, totalRealizedProfit, totalAdminLevyCollected to TradingAccount; adminLevyPercent, adminLevyCollected, grossPnl to BotConfig
+  2. Account switcher: removed deposit/withdraw dialogs, changed to broker-linked model with "Link Account" button, LINKED badges, "Funds stay in broker" messaging
+  3. AI Trading Dashboard: added REQUIRED badge on Admin Levy label, NON-REMOVABLE overlay on input, min=1 enforcement, warning text
+- Also enforced Math.max(1, adminLevyPercent) in store's setBotConfig
+- Browser-verified: all 3 changes rendering correctly, no deposit/withdraw text, no console errors
+- Dev server running on port 3000
+
+Stage Summary:
+- Local now at origin/main (5fe79ae) + 3 targeted edits
+- Prisma schema extended with broker-linked fields and admin levy tracking
+- Account switcher is fully broker-linked (no deposits)
+- Admin levy has REQUIRED/NON-REMOVABLE UI + store-level enforcement (min 1%)
+- All verified via agent-browser with zero errors
