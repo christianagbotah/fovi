@@ -1252,6 +1252,9 @@ export default function TradingDashboard() {
               <Briefcase className="h-3.5 w-3.5" />
               <span>Account</span>
             </a>
+            <Button variant="ghost" size="icon" className="h-9 w-9 cursor-pointer text-amber-600 hover:text-amber-600 hover:bg-amber-500/10" onClick={() => { const a = document.createElement('a'); a.href = '/api/handoff-report'; a.download = 'FOVI_HANDOFF_REPORT.md'; a.click(); }}>
+              <Download className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon" className="h-9 w-9 cursor-pointer" onClick={() => setSettingsOpen(true)}>
               <Settings className="h-4 w-4" />
             </Button>
