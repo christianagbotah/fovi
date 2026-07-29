@@ -6,8 +6,13 @@ const globalForPrisma = globalThis as unknown as {
 
 let _dbFailed = false;
 
+function isDatabaseUrlValid(): boolean {
+  const url = process.env.DATABASE_URL || '';
+  return url.startsWith('postgresql://') || url.startsWith('postgres://') || url.startsWith('file:') || url.startsWith('sqlite:');
+}
+
 let _db: PrismaClient | null = null;
-if (!_dbFailed) {
+if (!_dbFailed && isDatabaseUrlValid()) {
   try {
     _db = new PrismaClient({
       log: process.env.NODE_ENV === 'development' ? ['error'] : [],
@@ -17,6 +22,9 @@ if (!_dbFailed) {
     _db = null;
     console.warn('[DB] PrismaClient init failed — demo mode:', e instanceof Error ? e.message : e);
   }
+} else {
+  _dbFailed = true;
+  console.warn('[DB] No valid DATABASE_URL — running in demo mode');
 }
 
 export const db = _db;
