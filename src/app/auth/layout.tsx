@@ -1,5 +1,3 @@
-import { Zap } from 'lucide-react';
-
 export default function AuthLayout({
   children,
 }: {
@@ -10,10 +8,7 @@ export default function AuthLayout({
       <div className="w-full max-w-md">
         {/* Logo & Branding */}
         <div className="flex items-center justify-center gap-2.5 mb-8">
-          <div className="relative flex items-center justify-center w-10 h-10">
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-primary to-primary/60 opacity-20" />
-            <Zap className="w-6 h-6 text-primary relative z-10" />
-          </div>
+          <img src="/logo.svg" alt="Fovi" className="w-10 h-10 rounded-xl" />
           <span className="text-xl font-bold tracking-tight">
             Fovi <span className="text-muted-foreground font-normal">AI</span>
           </span>

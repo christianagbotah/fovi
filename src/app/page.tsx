@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, TrendingUp, TrendingDown, BarChart3, Search,
-  Menu, Wallet, Zap, Sparkles, Plus, RefreshCw, Bell, Settings, MessageSquare, ArrowUpRight,
+  Menu, Wallet, Sparkles, Plus, RefreshCw, Bell, Settings, MessageSquare, ArrowUpRight,
   ArrowDownRight, Activity, Radio, Briefcase, Clock, Shield, Target, Trophy,
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
@@ -934,9 +934,7 @@ function DesktopSidebar() {
     <aside className="hidden lg:flex flex-col w-56 border-r border-border bg-card/30 shrink-0 min-h-0">
       <div className="p-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20">
-            <Zap className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <img src="/logo.svg" alt="Fovi AI" className="w-9 h-9 rounded-xl" />
           <div>
             <h1 className="font-bold text-base tracking-tight">Fovi AI</h1>
             <p className="text-[10px] text-muted-foreground font-medium">Auto-Trading Platform</p>
@@ -1003,9 +1001,7 @@ function MobileNavSheet({ open, onOpenChange, onOpenSettings }: { open: boolean;
       <SheetContent side="left" className="w-72 p-0 flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
           <SheetTitle className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/20">
-              <Zap className="h-5 w-5 text-primary-foreground" />
-            </div>
+            <img src="/logo.svg" alt="Fovi AI" className="w-9 h-9 rounded-xl" />
             <div>
               <span className="font-bold text-base">Fovi AI</span>
               <p className="text-[10px] text-muted-foreground font-medium">Auto-Trading Platform</p>
@@ -1213,9 +1209,7 @@ export default function TradingDashboard() {
               <Menu className="h-5 w-5" />
             </button>
             <div className="flex items-center gap-2 lg:hidden">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
-                <Zap className="h-4 w-4 text-primary-foreground" />
-              </div>
+              <img src="/logo.svg" alt="Fovi" className="w-8 h-8 rounded-lg" />
               <span className="font-bold text-lg">Fovi</span>
             </div>
             <AccountSwitcher />

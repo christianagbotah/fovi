@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Zap } from 'lucide-react';
 
 const LOADING_TEXTS = [
   'Loading markets...',
@@ -48,9 +47,9 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.5, ease: 'easeInOut' }}
         >
-          {/* Zap Icon with gradient background and glow */}
+          {/* Fovi Logo */}
           <motion.div
-            className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/30"
+            className="w-16 h-16 rounded-2xl"
             animate={{
               scale: [1, 1.08, 1],
             }}
@@ -60,10 +59,10 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
               ease: 'easeInOut',
             }}
           >
-            <Zap className="w-8 h-8 text-primary-foreground" />
+            <img src="/logo.svg" alt="Fovi AI" className="w-full h-full rounded-2xl" />
           </motion.div>
 
-          {/* Brand name */}
+          {/* Brand name */
           <h1 className="mt-4 text-xl font-bold tracking-tight">Fovi AI</h1>
 
           {/* Rotating loading text */}
