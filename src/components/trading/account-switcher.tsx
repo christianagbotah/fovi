@@ -200,7 +200,7 @@ export function AccountSwitcher() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             {acc.id === activeAccountId && <Check className="h-3.5 w-3.5 text-primary" />}
-            <span className="text-xs font-semibold">{acc.broker.toUpperCase()}</span>
+            <span className="text-[11px] font-semibold">{acc.broker.toUpperCase()}</span>
             {linked
               ? <Badge variant="default" className="bg-primary/10 text-primary border-primary/20 text-[9px] h-4">LINKED</Badge>
               : <Badge variant={demo ? 'secondary' : 'default'} className={
@@ -225,9 +225,13 @@ export function AccountSwitcher() {
               </>
             ) : (
               <>
-                <span className="font-medium text-foreground">{fmtBal(norm.balance)}</span>
+                <span className="font-medium text-foreground">{fmtBal(available)}</span>
                 <span className="text-[10px] ml-1.5 text-muted-foreground">
                   {demo ? 'Paper trading' : 'Real funds'}
+                  {hasAllocation && <>
+                    <span className="text-border"> · </span>
+                    {fmtBal(norm.totalAllocated)} allocated to AI
+                  </>}
                 </span>
               </>
             )}
@@ -268,17 +272,29 @@ export function AccountSwitcher() {
             isLinked(normActive) ? 'bg-primary' : !isDemo(normActive) ? 'bg-emerald-500' : 'bg-amber-500'
           }`} />
         ) : null}
-        <span className="text-xs font-medium max-w-[120px] truncate">
+        <span className="text-[11px] font-medium max-w-[120px] truncate">
           {normActive
-            ? `${normActive.broker.toUpperCase()} · ${normActive.accountType.toUpperCase()}`
+            ? normActive.broker.toUpperCase()
             : 'Select Account'}
         </span>
-        {normActive && normActive.totalAllocated > 0 && (
-          <span className="text-[10px] text-muted-foreground tabular-nums hidden sm:inline">
+        {normActive && (
+          <Badge variant={isLinked(normActive) ? 'default' : isDemo(normActive) ? 'secondary' : 'default'}
+            className={
+              isLinked(normActive)
+                ? 'bg-primary/10 text-primary border-primary/20 text-[9px] h-4'
+                : isDemo(normActive)
+                  ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 text-[9px] h-4'
+                  : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[9px] h-4'
+            }>
+            {isLinked(normActive) ? 'LINKED' : isDemo(normActive) ? 'DEMO' : 'REAL'}
+          </Badge>
+        )}
+        {normActive && (
+          <span className="text-[11px] font-semibold tabular-nums text-foreground hidden sm:inline">
             {fmtBal(availableBalance)}
           </span>
         )}
-        <ChevronDown className="h-3.5 w-3.5 transition-transform lg:block hidden" />
+        <ChevronDown className="h-3 w-3 transition-transform lg:block hidden text-muted-foreground" />
       </button>
 
       {/* Desktop Dropdown */}

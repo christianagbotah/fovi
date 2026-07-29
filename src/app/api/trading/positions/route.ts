@@ -3,6 +3,7 @@ import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { DemoBroker } from '@/lib/broker/demo';
 import { getDemoPrice, getAssetType } from '@/lib/broker/demo';
+import { loadDemoPositionSLTP } from '@/lib/demo-sltp-store';
 
 export async function GET(req: NextRequest) {
   // ── No DB available: use in-memory demo broker ──
@@ -10,24 +11,29 @@ export async function GET(req: NextRequest) {
     try {
       const broker = new DemoBroker({ provider: 'demo', isDemo: true });
       const brokerPositions = await broker.getPositions();
-      const positions = brokerPositions.map((bp, idx) => ({
-        id: `demo_pos_${idx}_${bp.symbol}`,
-        accountId: 'demo_acc_1',
-        symbol: bp.symbol,
-        name: null,
-        assetType: getAssetType(bp.symbol),
-        side: bp.side,
-        qty: bp.qty,
-        avgEntryPrice: bp.avgEntryPrice,
-        currentPrice: bp.currentPrice,
-        unrealizedPnl: bp.unrealizedPnl,
-        realizedPnl: 0,
-        stopLoss: null,
-        takeProfit: null,
-        status: 'open',
-        openedAt: new Date().toISOString(),
-        closedAt: null,
-      }));
+      // Merge with any SL/TP stored from manual orders
+      const slTpMap = loadDemoPositionSLTP();
+      const positions = brokerPositions.map((bp, idx) => {
+        const sltp = slTpMap.get(bp.symbol) || {};
+        return {
+          id: `demo_pos_${idx}_${bp.symbol}`,
+          accountId: 'demo_acc_1',
+          symbol: bp.symbol,
+          name: null,
+          assetType: getAssetType(bp.symbol),
+          side: bp.side,
+          qty: bp.qty,
+          avgEntryPrice: bp.avgEntryPrice,
+          currentPrice: bp.currentPrice,
+          unrealizedPnl: bp.unrealizedPnl,
+          realizedPnl: 0,
+          stopLoss: sltp.stopLoss ?? null,
+          takeProfit: sltp.takeProfit ?? null,
+          status: 'open',
+          openedAt: sltp.openedAt || new Date().toISOString(),
+          closedAt: null,
+        };
+      });
       return NextResponse.json(positions);
     } catch {
       return NextResponse.json([]);
@@ -84,24 +90,28 @@ export async function GET(req: NextRequest) {
     try {
       const broker = new DemoBroker({ provider: 'demo', isDemo: true });
       const brokerPositions = await broker.getPositions();
-      const positions = brokerPositions.map((bp, idx) => ({
-        id: `demo_pos_${idx}_${bp.symbol}`,
-        accountId: 'demo_acc_1',
-        symbol: bp.symbol,
-        name: null,
-        assetType: getAssetType(bp.symbol),
-        side: bp.side,
-        qty: bp.qty,
-        avgEntryPrice: bp.avgEntryPrice,
-        currentPrice: bp.currentPrice,
-        unrealizedPnl: bp.unrealizedPnl,
-        realizedPnl: 0,
-        stopLoss: null,
-        takeProfit: null,
-        status: 'open',
-        openedAt: new Date().toISOString(),
-        closedAt: null,
-      }));
+      const slTpMap = loadDemoPositionSLTP();
+      const positions = brokerPositions.map((bp, idx) => {
+        const sltp = slTpMap.get(bp.symbol) || {};
+        return {
+          id: `demo_pos_${idx}_${bp.symbol}`,
+          accountId: 'demo_acc_1',
+          symbol: bp.symbol,
+          name: null,
+          assetType: getAssetType(bp.symbol),
+          side: bp.side,
+          qty: bp.qty,
+          avgEntryPrice: bp.avgEntryPrice,
+          currentPrice: bp.currentPrice,
+          unrealizedPnl: bp.unrealizedPnl,
+          realizedPnl: 0,
+          stopLoss: sltp.stopLoss ?? null,
+          takeProfit: sltp.takeProfit ?? null,
+          status: 'open',
+          openedAt: sltp.openedAt || new Date().toISOString(),
+          closedAt: null,
+        };
+      });
       return NextResponse.json(positions);
     } catch {
       return NextResponse.json([]);

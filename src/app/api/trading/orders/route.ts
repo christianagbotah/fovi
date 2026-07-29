@@ -3,6 +3,7 @@ import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { DemoBroker } from '@/lib/broker/demo';
 import { getAssetType } from '@/lib/broker/demo';
+import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
@@ -50,6 +51,11 @@ export async function POST(req: NextRequest) {
 
       if (result.status === 'rejected') {
         return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+      }
+
+      // Persist SL/TP for demo positions
+      if (result.status === 'filled' && result.filledQty > 0) {
+        saveDemoPositionSLTP(symbol, stopLoss, takeProfit);
       }
 
       const order = {

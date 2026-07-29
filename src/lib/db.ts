@@ -4,8 +4,6 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-let _dbFailed = false;
-
 /**
  * Validate that DATABASE_URL matches the Prisma schema provider.
  * Schema uses provider="postgresql", so only postgres URLs are valid.
@@ -17,7 +15,9 @@ function isDatabaseUrlValid(): boolean {
   return url.startsWith('postgresql://') || url.startsWith('postgres://');
 }
 
+let _dbFailed = false;
 let _db: PrismaClient | null = null;
+
 if (!_dbFailed && isDatabaseUrlValid()) {
   try {
     _db = new PrismaClient({
@@ -46,6 +46,24 @@ export function hasModel(modelName: string): boolean {
 
 export function isDbAvailable(): boolean {
   return !_dbFailed && db !== null;
+}
+
+/**
+ * Run a DB query with automatic fallback to demo mode.
+ * If the query throws (e.g. PostgreSQL unreachable in sandbox),
+ * the error is logged and `undefined` is returned so the caller
+ * can fall back to in-memory demo logic.
+ *
+ * Usage: await safeDbQuery(() => db.user.findFirst(...))
+ */
+export async function safeDbQuery<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  if (!db) return undefined;
+  try {
+    return await fn();
+  } catch (e) {
+    console.warn('[DB] Query failed — falling back to demo mode:', e instanceof Error ? e.message : e);
+    return undefined;
+  }
 }
 
 // ============================================================

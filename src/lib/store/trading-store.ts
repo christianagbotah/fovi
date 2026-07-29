@@ -257,7 +257,12 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   // UI
   orderSheetOpen: false,
-  setOrderSheetOpen: (open) => set({ orderSheetOpen: open, orderStopLoss: null, orderTakeProfit: null, orderEntryPrice: null }),
+  setOrderSheetOpen: (open) => set({
+    orderSheetOpen: open,
+    // Only clear SL/TP/entry when CLOSING the sheet, not when opening
+    // (signals panel sets these BEFORE opening the sheet)
+    ...(open ? {} : { orderStopLoss: null, orderTakeProfit: null, orderEntryPrice: null }),
+  }),
   orderSymbol: null,
   setOrderSymbol: (symbol) => set({ orderSymbol: symbol }),
   orderStopLoss: null,

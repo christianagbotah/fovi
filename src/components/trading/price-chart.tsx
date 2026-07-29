@@ -157,6 +157,22 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
   const livePrices = store.livePrices;
 
   const [chartType, setChartType] = useState<ChartType>('area');
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [chartHeight, setChartHeight] = useState(300);
+
+  // Measure chart container height so ResponsiveContainer can use it
+  useEffect(() => {
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const h = entry.contentRect.height;
+        if (h > 0) setChartHeight(h);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Auto-ticker: cycle through symbols when none is explicitly selected
   const isAutoTick = autoTickProp || !selectedSymbol;
@@ -296,7 +312,7 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
     switch (chartType) {
       case 'area':
         return (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <AreaChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <defs>
                 <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
@@ -329,7 +345,7 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
 
       case 'candle':
         return (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <ComposedChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
               <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
@@ -350,7 +366,7 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
 
       case 'line':
         return (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
               <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
@@ -466,8 +482,8 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
       </div>
 
       {/* Chart */}
-      <div className="flex-1 min-h-[200px] px-2 pb-2">
-        {renderChart()}
+      <div ref={chartContainerRef} className="flex-1 min-h-[200px] px-2 pb-2">
+        {chartHeight > 0 && renderChart()}
       </div>
 
       {/* Volume Bar Chart */}
