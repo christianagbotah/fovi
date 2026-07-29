@@ -19,7 +19,6 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
   const [textIndex, setTextIndex] = useState(0);
   const [show, setShow] = useState(true);
 
-  // Rotate loading text every 500ms
   useEffect(() => {
     const interval = setInterval(() => {
       setTextIndex((prev) => (prev + 1) % LOADING_TEXTS.length);
@@ -27,7 +26,6 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
     return () => clearInterval(interval);
   }, []);
 
-  // When isLoaded becomes true, start fade-out then call onComplete
   useEffect(() => {
     if (!isLoaded) return;
     const timer = setTimeout(() => {
@@ -47,7 +45,6 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.5, ease: 'easeInOut' }}
         >
-          {/* Fovi Logo */}
           <motion.div
             className="w-16 h-16 rounded-2xl"
             animate={{
@@ -61,11 +58,7 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
           >
             <img src="/logo.svg" alt="Fovi AI" className="w-full h-full rounded-2xl" />
           </motion.div>
-
-          {/* Brand name */
           <h1 className="mt-4 text-xl font-bold tracking-tight">Fovi AI</h1>
-
-          {/* Rotating loading text */}
           <div className="mt-2 h-5 flex items-center">
             <AnimatePresence mode="wait">
               <motion.p
@@ -80,8 +73,6 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
               </motion.p>
             </AnimatePresence>
           </div>
-
-          {/* Progress bar at bottom */}
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-muted overflow-hidden">
             <motion.div
               className="h-full bg-primary"
