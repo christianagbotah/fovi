@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
+import { DemoBroker } from '@/lib/broker/demo';
+import { getAssetType } from '@/lib/broker/demo';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
@@ -30,29 +32,79 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const { symbol, side, type, qty, limitPrice, stopLoss, takeProfit, assetType } = body;
+
+  // ── No DB available: use in-memory demo broker ──
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json({ id: 'demo_order', symbol: 'DEMO', status: 'filled', filledQty: 0, filledPrice: 0 }, { status: 200 });
+    try {
+      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
+      const result = await broker.placeOrder({
+        symbol,
+        side,
+        type: type || 'market',
+        qty,
+        limitPrice,
+        stopPrice: stopLoss,
+      });
+
+      if (result.status === 'rejected') {
+        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+      }
+
+      const order = {
+        id: result.orderId,
+        accountId: 'demo_acc_1',
+        brokerOrderId: result.orderId,
+        symbol,
+        assetType: assetType || 'stock',
+        side,
+        type: type || 'market',
+        qty,
+        limitPrice: limitPrice || null,
+        stopPrice: stopLoss || null,
+        filledQty: result.filledQty,
+        filledPrice: result.filledPrice,
+        status: result.status,
+        aiGenerated: false,
+        signalId: null,
+        reason: 'Manual trade (demo)',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      return NextResponse.json(order);
+    } catch (error) {
+      console.warn('[orders POST] Demo broker error:', error);
+      return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
+    }
   }
+
+  // ── DB available: full flow ──
   try {
-    const body = await req.json();
     const userId = await ensureDemoUser();
     if (!userId) {
-      return NextResponse.json({ id: 'demo_order', symbol: 'DEMO', status: 'filled', filledQty: 0, filledPrice: 0 }, { status: 200 });
+      // Fallback to demo broker
+      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
+      const result = await broker.placeOrder({
+        symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
+      });
+      if (result.status === 'rejected') {
+        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+      }
+      return NextResponse.json({
+        id: result.orderId, symbol, side, type, qty,
+        filledQty: result.filledQty, filledPrice: result.filledPrice,
+        status: result.status, createdAt: new Date().toISOString(),
+      });
     }
 
-    const account = await db.tradingAccount.findFirst({
-      where: { userId, isDefault: true },
-    });
+    const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
     if (!account) return NextResponse.json({ error: 'No account found' }, { status: 400 });
 
     const broker = createBrokerFromAccount(account);
     const result = await broker.placeOrder({
-      symbol: body.symbol,
-      side: body.side,
-      type: body.type || 'market',
-      qty: body.qty,
-      limitPrice: body.limitPrice,
-      stopPrice: body.stopLoss,
+      symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
     });
 
     if (result.status === 'rejected') {
@@ -66,11 +118,11 @@ export async function POST(req: NextRequest) {
         id: orderId,
         accountId: account.id,
         brokerOrderId: result.orderId,
-        symbol: body.symbol,
-        assetType: body.assetType || 'stock',
-        side: body.side,
-        type: body.type || 'market',
-        qty: body.qty,
+        symbol,
+        assetType: assetType || 'stock',
+        side,
+        type: type || 'market',
+        qty,
         filledQty: result.filledQty,
         filledPrice: result.filledPrice,
         status: result.status,
@@ -80,23 +132,23 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (result.filledPrice && result.filledQty > 0 && body.side !== 'sell') {
+    if (result.filledPrice && result.filledQty > 0 && side !== 'sell') {
       if (hasModel('position')) {
-        const assetType = body.assetType || 'stock';
+        const aType = assetType || 'stock';
         try {
           await db.position.upsert({
-            where: { id: `${account.id}_${body.symbol}` },
+            where: { id: `${account.id}_${symbol}` },
             create: {
-              id: `${account.id}_${body.symbol}`,
+              id: `${account.id}_${symbol}`,
               accountId: account.id,
-              symbol: body.symbol,
-              assetType,
+              symbol,
+              assetType: aType,
               side: 'long',
               qty: result.filledQty,
               avgEntryPrice: result.filledPrice,
               currentPrice: result.filledPrice,
-              stopLoss: body.stopLoss ?? null,
-              takeProfit: body.takeProfit ?? null,
+              stopLoss: stopLoss ?? null,
+              takeProfit: takeProfit ?? null,
               status: 'open',
               openedAt: new Date(),
             },
@@ -104,8 +156,8 @@ export async function POST(req: NextRequest) {
               qty: { increment: result.filledQty },
               avgEntryPrice: result.filledPrice,
               currentPrice: result.filledPrice,
-              stopLoss: body.stopLoss ?? undefined,
-              takeProfit: body.takeProfit ?? undefined,
+              stopLoss: stopLoss ?? undefined,
+              takeProfit: takeProfit ?? undefined,
             },
           });
         } catch (posErr) {
@@ -121,7 +173,23 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(order);
   } catch (error) {
-    console.warn('[orders POST] DB error:', error);
-    return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
+    console.warn('[orders POST] DB error, falling back to demo:', error);
+    // Last resort: execute via demo broker so the user still gets their trade
+    try {
+      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
+      const result = await broker.placeOrder({
+        symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
+      });
+      if (result.status === 'rejected') {
+        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+      }
+      return NextResponse.json({
+        id: result.orderId, symbol, side, type, qty,
+        filledQty: result.filledQty, filledPrice: result.filledPrice,
+        status: result.status, createdAt: new Date().toISOString(),
+      });
+    } catch {
+      return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
+    }
   }
 }

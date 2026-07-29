@@ -38,8 +38,19 @@ function saveAccountsLS(accounts: TradingAccount[]): void {
   try { localStorage.setItem(ACC_STORAGE_KEY, JSON.stringify(accounts)); } catch { /* quota */ }
 }
 
+/** Backfill missing fields for older localStorage accounts */
+function normalizeAccount(acc: TradingAccount): TradingAccount {
+  return {
+    ...acc,
+    linkedBalance: acc.linkedBalance ?? acc.balance ?? 100000,
+    totalAllocated: acc.totalAllocated ?? 0,
+    totalRealizedProfit: acc.totalRealizedProfit ?? 0,
+    updatedAt: acc.updatedAt || acc.createdAt || new Date().toISOString(),
+  };
+}
+
 function sortAccounts(accounts: TradingAccount[], activeId: string | null): TradingAccount[] {
-  return [...accounts].sort((a, b) => {
+  return [...accounts].map(normalizeAccount).sort((a, b) => {
     const aLive = a.accountType === 'live' ? 0 : 1;
     const bLive = b.accountType === 'live' ? 0 : 1;
     if (aLive !== bLive) return aLive - bLive;
@@ -63,6 +74,10 @@ export function AccountSwitcher() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const activeAccount = accounts.find(a => a.id === activeAccountId);
+  const normActive = activeAccount ? normalizeAccount(activeAccount) : null;
+  const availableBalance = normActive
+    ? Math.max(0, normActive.linkedBalance - normActive.totalAllocated)
+    : 0;
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -97,14 +112,14 @@ export function AccountSwitcher() {
     const passphrase = (data.get('passphrase') as string) || null;
 
     const isDemo = broker === 'demo';
+    const balance = isDemo ? 100000 : 0;
     const newAccount: TradingAccount = {
       id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       userId: 'usr_demo_1',
-      broker,
-      accountType,
-      accountId: null,
+      broker, accountType, accountId: null,
       isDefault: accounts.length === 0,
-      balance: isDemo ? 100000 : 0,
+      balance, linkedBalance: balance,
+      totalAllocated: 0, totalRealizedProfit: 0,
       currency: 'USD',
       apiKey: apiKey || undefined,
       apiSecret: apiSecret || undefined,
@@ -154,55 +169,81 @@ export function AccountSwitcher() {
   };
 
   const isLinked = (acc: TradingAccount) => acc.broker !== 'demo' && (acc.apiKey || acc.accountId);
+  const isDemo = (acc: TradingAccount) => acc.accountType === 'demo';
 
-  const accountRow = (acc: TradingAccount) => (
-    <div
-      key={acc.id}
-      className={`flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-accent/50 transition-colors ${
-        acc.id === activeAccountId ? 'bg-accent' : ''
-      }`}
-      onClick={() => handleSwitch(acc.id)}
-    >
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-        isLinked(acc) ? 'bg-primary/15' : acc.accountType === 'live' ? 'bg-emerald-500/15' : 'bg-amber-500/15'
-      }`}>
-        {isLinked(acc)
-          ? <Link2 className="h-4 w-4 text-primary" />
-          : acc.accountType === 'live'
-            ? <Briefcase className="h-4 w-4 text-emerald-500" />
-            : <Zap className="h-4 w-4 text-amber-500" />}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {acc.id === activeAccountId && <Check className="h-3.5 w-3.5 text-primary" />}
-          <span className="text-sm font-semibold">{acc.broker.toUpperCase()}</span>
-          <Badge variant={isLinked(acc) ? 'default' : acc.accountType === 'live' ? 'default' : 'secondary'}
-            className={isLinked(acc)
-              ? 'bg-primary/10 text-primary border-primary/20 text-[10px]'
-              : acc.accountType === 'live'
-                ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px]'
-                : 'bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]'}>
-            {isLinked(acc) ? 'LINKED' : acc.accountType}
-          </Badge>
-          {acc.isDefault && <Badge variant="outline" className="text-[9px] h-4">DEFAULT</Badge>}
+  const fmtBal = (n: number) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const accountRow = (acc: TradingAccount) => {
+    const norm = normalizeAccount(acc);
+    const available = Math.max(0, norm.linkedBalance - norm.totalAllocated);
+    const hasAllocation = norm.totalAllocated > 0;
+    const linked = isLinked(acc);
+    const demo = isDemo(acc);
+
+    return (
+      <div
+        key={acc.id}
+        className={`flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-accent/50 transition-colors ${
+          acc.id === activeAccountId ? 'bg-accent' : ''
+        }`}
+        onClick={() => handleSwitch(acc.id)}
+      >
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+          linked ? 'bg-primary/15' : !demo ? 'bg-emerald-500/15' : 'bg-amber-500/15'
+        }`}>
+          {linked
+            ? <Link2 className="h-4 w-4 text-primary" />
+            : !demo
+              ? <Briefcase className="h-4 w-4 text-emerald-500" />
+              : <Zap className="h-4 w-4 text-amber-500" />}
         </div>
-        <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
-          ${acc.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          <span className="text-[10px] ml-1.5">
-            {isLinked(acc) ? 'Funds stay in broker' : 'Simulated trading'}
-          </span>
-        </p>
-      </div>
-      {accounts.length > 1 && (
-        <div className="shrink-0" onClick={e => e.stopPropagation()}>
-          <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
-            onClick={() => handleDelete(acc.id)}>
-            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-          </Button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {acc.id === activeAccountId && <Check className="h-3.5 w-3.5 text-primary" />}
+            <span className="text-xs font-semibold">{acc.broker.toUpperCase()}</span>
+            {linked
+              ? <Badge variant="default" className="bg-primary/10 text-primary border-primary/20 text-[9px] h-4">LINKED</Badge>
+              : <Badge variant={demo ? 'secondary' : 'default'} className={
+                  demo
+                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 text-[9px] h-4'
+                    : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[9px] h-4'
+                }>{demo ? 'DEMO' : 'REAL'}</Badge>
+            }
+            {acc.isDefault && <Badge variant="outline" className="text-[9px] h-4">DEFAULT</Badge>}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
+            {linked ? (
+              <>
+                <span className="font-medium text-foreground">{fmtBal(available)}</span>
+                <span className="text-muted-foreground"> available</span>
+                {hasAllocation && (
+                  <span className="text-[10px] ml-1">
+                    <span className="text-border">·</span> {fmtBal(norm.linkedBalance)} linked
+                    <span className="text-border">·</span> {fmtBal(norm.totalAllocated)} allocated
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">{fmtBal(norm.balance)}</span>
+                <span className="text-[10px] ml-1.5 text-muted-foreground">
+                  {demo ? 'Paper trading' : 'Real funds'}
+                </span>
+              </>
+            )}
+          </p>
         </div>
-      )}
-    </div>
-  );
+        {accounts.length > 1 && (
+          <div className="shrink-0" onClick={e => e.stopPropagation()}>
+            <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer"
+              onClick={() => handleDelete(acc.id)}>
+              <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const addButton = (
     <Button variant="ghost" size="sm" className="h-7 gap-1 cursor-pointer" onClick={openAddDialog}>
@@ -220,17 +261,24 @@ export function AccountSwitcher() {
             setDropdownOpen(!dropdownOpen);
           }
         }}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border hover:bg-accent/50 transition-colors cursor-pointer"
+        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-card border border-border hover:bg-accent/50 transition-colors cursor-pointer"
       >
-        {activeAccount ? (
-          <span className={`flex h-2 w-2 rounded-full ${isLinked(activeAccount) ? 'bg-primary' : activeAccount.accountType === 'live' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+        {normActive ? (
+          <span className={`flex h-2 w-2 rounded-full ${
+            isLinked(normActive) ? 'bg-primary' : !isDemo(normActive) ? 'bg-emerald-500' : 'bg-amber-500'
+          }`} />
         ) : null}
-        <span className="text-sm font-medium">
-          {activeAccount
-            ? `${activeAccount.broker.toUpperCase()} · ${activeAccount.accountType.toUpperCase()}`
+        <span className="text-xs font-medium max-w-[120px] truncate">
+          {normActive
+            ? `${normActive.broker.toUpperCase()} · ${normActive.accountType.toUpperCase()}`
             : 'Select Account'}
         </span>
-        <ChevronDown className="h-4 w-4 transition-transform lg:block hidden" />
+        {normActive && normActive.totalAllocated > 0 && (
+          <span className="text-[10px] text-muted-foreground tabular-nums hidden sm:inline">
+            {fmtBal(availableBalance)}
+          </span>
+        )}
+        <ChevronDown className="h-3.5 w-3.5 transition-transform lg:block hidden" />
       </button>
 
       {/* Desktop Dropdown */}
@@ -242,7 +290,7 @@ export function AccountSwitcher() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.96 }}
               transition={{ duration: 0.15 }}
-              className="absolute top-full mt-2 left-0 w-80 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden"
+              className="absolute top-full mt-2 left-0 w-96 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden"
             >
               <div className="p-3 border-b border-border">
                 <div className="flex items-center justify-between">
@@ -250,7 +298,7 @@ export function AccountSwitcher() {
                   {addButton}
                 </div>
               </div>
-              <div className="max-h-64 overflow-y-auto">
+              <div className="max-h-72 overflow-y-auto">
                 {sortAccounts(accounts, activeAccountId).map(acc => accountRow(acc))}
               </div>
             </motion.div>
@@ -348,7 +396,6 @@ export function AccountSwitcher() {
               </div>
             )}
 
-            {/* API Key */}
             <AnimatePresence mode="wait">
               {brokerType !== 'demo' && brokerType !== '' && (
                 <motion.div
@@ -363,11 +410,8 @@ export function AccountSwitcher() {
                     <KeyRound className="h-3.5 w-3.5" /> API Key
                   </Label>
                   <Input
-                    id="apiKey"
-                    name="apiKey"
-                    type="password"
-                    placeholder="Enter your API key"
-                    autoComplete="off"
+                    id="apiKey" name="apiKey" type="password"
+                    placeholder="Enter your API key" autoComplete="off"
                   />
                   <p className="text-[11px] text-muted-foreground flex items-center gap-1">
                     <ShieldCheck className="h-3 w-3 shrink-0" />
@@ -377,7 +421,6 @@ export function AccountSwitcher() {
               )}
             </AnimatePresence>
 
-            {/* API Secret */}
             <AnimatePresence mode="wait">
               {(brokerType === 'alpaca' || brokerType === 'binance' || brokerType === 'okx') && (
                 <motion.div
@@ -392,17 +435,13 @@ export function AccountSwitcher() {
                     <KeyRound className="h-3.5 w-3.5" /> API Secret
                   </Label>
                   <Input
-                    id="apiSecret"
-                    name="apiSecret"
-                    type="password"
-                    placeholder="Enter your API secret"
-                    autoComplete="off"
+                    id="apiSecret" name="apiSecret" type="password"
+                    placeholder="Enter your API secret" autoComplete="off"
                   />
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Passphrase — OKX only */}
             <AnimatePresence mode="wait">
               {brokerType === 'okx' && (
                 <motion.div
@@ -417,11 +456,8 @@ export function AccountSwitcher() {
                     <KeyRound className="h-3.5 w-3.5" /> Passphrase
                   </Label>
                   <Input
-                    id="passphrase"
-                    name="passphrase"
-                    type="password"
-                    placeholder="Enter your passphrase"
-                    autoComplete="off"
+                    id="passphrase" name="passphrase" type="password"
+                    placeholder="Enter your passphrase" autoComplete="off"
                   />
                 </motion.div>
               )}

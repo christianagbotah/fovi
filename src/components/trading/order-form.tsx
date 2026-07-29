@@ -11,7 +11,7 @@ import { getDemoPrice, getDemoSymbolName } from '@/lib/broker/demo';
 import { formatPrice } from '@/lib/market-sim';
 import { toast } from 'sonner';
 import type { OrderSide, OrderType } from '@/lib/types';
-import { Loader2, Search, ChevronDown } from 'lucide-react';
+import { Loader2, Search, ChevronDown, Target, ShieldAlert } from 'lucide-react';
 
 const POPULAR_SYMBOLS = [
   { symbol: 'AAPL', name: 'Apple Inc.' },
@@ -36,7 +36,7 @@ export function OrderForm() {
     orderSheetOpen, setOrderSheetOpen, orderSymbol, setOrderSymbol,
     orderStopLoss, orderTakeProfit, orderEntryPrice,
     selectedSymbol, setSelectedSymbol, positions, setPositions,
-    allSymbols, livePrices,
+    allSymbols, livePrices, signals,
   } = useTradingStore();
 
   const effectiveSymbol = orderSymbol || selectedSymbol || '';
@@ -54,24 +54,41 @@ export function OrderForm() {
   const [stopLoss, setStopLoss] = useState('');
   const [takeProfit, setTakeProfit] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [prefilledFromSignal, setPrefilledFromSignal] = useState(false);
 
   // Sync symbol and SL/TP from store when sheet opens
   useEffect(() => {
     if (!orderSheetOpen) return;
-    if (effectiveSymbol) {
-      setLocalSymbol(effectiveSymbol);
-    }
-    if (orderStopLoss != null) setStopLoss(String(orderStopLoss));
-    if (orderTakeProfit != null) setTakeProfit(String(orderTakeProfit));
-    if (orderEntryPrice && !limitPrice) setLimitPrice(String(orderEntryPrice));
+
+    // Set symbol
+    if (effectiveSymbol) setLocalSymbol(effectiveSymbol);
+
+    // Set side from signal direction
     if (orderSymbol) {
-      const { signals } = useTradingStore.getState();
       const sig = signals.find(s => s.symbol === orderSymbol);
       if (sig) {
         if (sig.direction === 'bearish' || sig.direction === 'short') setSide('sell');
         else setSide('buy');
       }
     }
+
+    // Auto-fill SL/TP from signal
+    let hasSignalData = false;
+    if (orderStopLoss != null && orderStopLoss > 0) {
+      setStopLoss(String(orderStopLoss));
+      hasSignalData = true;
+    }
+    if (orderTakeProfit != null && orderTakeProfit > 0) {
+      setTakeProfit(String(orderTakeProfit));
+      hasSignalData = true;
+    }
+    if (orderEntryPrice && orderEntryPrice > 0) {
+      if (orderType === 'limit' || orderType === 'stop_limit') {
+        setLimitPrice(String(orderEntryPrice));
+      }
+      hasSignalData = true;
+    }
+    setPrefilledFromSignal(hasSignalData);
   }, [orderSheetOpen]);
 
   // Reset form when sheet closes
@@ -84,6 +101,7 @@ export function OrderForm() {
       setSide('buy');
       setOrderType('market');
       setSymbolDropdownOpen(false);
+      setPrefilledFromSignal(false);
     }
   }, [orderSheetOpen]);
   const symbolList = useMemo(() => {
@@ -138,8 +156,14 @@ export function OrderForm() {
         toast.success(`${side === 'buy' ? 'Buy' : 'Sell'} order filled: ${symbol} x${qty}`);
         setOrderSheetOpen(false);
         setQty('1'); setLimitPrice(''); setStopLoss(''); setTakeProfit('');
-        const posRes = await fetch('/api/trading/positions');
-        if (posRes.ok) setPositions(await posRes.json());
+        // Refresh positions after a short delay to let the order settle
+        setTimeout(async () => {
+          const posRes = await fetch('/api/trading/positions');
+          if (posRes.ok) {
+            const posData = await posRes.json();
+            if (Array.isArray(posData)) setPositions(posData);
+          }
+        }, 500);
       } else {
         toast.error(order.error || 'Order failed');
       }
@@ -226,6 +250,14 @@ export function OrderForm() {
             )}
           </div>
 
+          {/* Signal pre-fill indicator */}
+          {prefilledFromSignal && (
+            <div className="flex items-center gap-1.5 mb-2 px-1">
+              <Target className="h-3.5 w-3.5 text-amber-500" />
+              <span className="text-[11px] text-amber-500 font-medium">TP/SL auto-filled from AI signal</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <SheetTitle className="text-lg">New Order</SheetTitle>
           </div>
@@ -293,23 +325,57 @@ export function OrderForm() {
           {/* Stop Loss / Take Profit */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Stop Loss ($)</Label>
+              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                <ShieldAlert className="h-3 w-3 text-red-400" /> Stop Loss ($)
+              </Label>
               <Input type="number" step="0.01" value={stopLoss}
                 onChange={e => setStopLoss(e.target.value)}
                 placeholder="Optional" className="h-10" />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Take Profit ($)</Label>
+              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                <Target className="h-3 w-3 text-emerald-400" /> Take Profit ($)
+              </Label>
               <Input type="number" step="0.01" value={takeProfit}
                 onChange={e => setTakeProfit(e.target.value)}
                 placeholder="Optional" className="h-10" />
             </div>
           </div>
 
+          {/* Risk/Reward display */}
+          {stopLoss && takeProfit && currentPrice > 0 && (
+            <div className="flex items-center gap-4 p-3 rounded-xl bg-muted/50 text-xs">
+              <div className="flex-1 text-center">
+                <p className="text-muted-foreground">Risk</p>
+                <p className="font-bold text-red-500 tabular-nums">
+                  {formatPrice(Math.abs(currentPrice - parseFloat(stopLoss)), symbol)}
+                </p>
+              </div>
+              <div className="text-muted-foreground text-lg font-bold">:</div>
+              <div className="flex-1 text-center">
+                <p className="text-muted-foreground">Reward</p>
+                <p className="font-bold text-emerald-500 tabular-nums">
+                  {formatPrice(Math.abs(parseFloat(takeProfit) - currentPrice), symbol)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-muted-foreground">R:R</p>
+                <p className="font-bold tabular-nums">
+                  {Math.abs(parseFloat(takeProfit) - currentPrice) > 0
+                    ? (Math.abs(parseFloat(takeProfit) - currentPrice) / Math.abs(currentPrice - parseFloat(stopLoss))).toFixed(1)
+                    : '—'
+                  }
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Est. Cost */}
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Est. Cost</span>
-            <span className="font-semibold">${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="font-semibold tabular-nums">
+              ${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
 

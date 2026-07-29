@@ -8,9 +8,10 @@ import {
   ArrowDownRight, Activity, Radio, Briefcase, Clock, Shield, Target, Trophy,
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
-  ArrowLeft, User, Lock, Mail, Phone, ChevronDown,
+  ArrowLeft, User, Lock, Mail, Phone, ChevronDown, Link2, Zap,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
+import { SettingsAccountRow } from '@/components/trading/settings-account-row';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
 import { PriceChart } from '@/components/trading/price-chart';
 import { PositionsPanel } from '@/components/trading/positions-panel';
@@ -236,13 +237,20 @@ function PerformanceMetrics({ portfolio }: { portfolio: NonNullable<ReturnType<t
 // Portfolio Summary Cards - Enhanced
 // ============================================================
 function PortfolioCards() {
-  const { portfolio, wsConnected, botConfig, aiOpenPositions, aiClosedTrades } = useTradingStore();
+  const { portfolio, wsConnected, botConfig, aiOpenPositions, aiClosedTrades, accounts, activeAccountId } = useTradingStore();
+
+  // Get active account info
+  const activeAccount = accounts.find(a => a.id === activeAccountId);
+  const linkedBalance = activeAccount?.linkedBalance ?? activeAccount?.balance ?? 100000;
+  const totalAllocated = activeAccount?.totalAllocated ?? 0;
+  const availableBalance = Math.max(0, linkedBalance - totalAllocated);
+  const isLiveAccount = activeAccount?.accountType === 'live';
+  const isLinkedBroker = activeAccount?.broker !== 'demo' && (activeAccount?.apiKey || activeAccount?.accountId);
 
   // When AI bot has been active, derive portfolio from AI state
   const allocation = botConfig.allocationAmount;
   const hasAITrading = allocation > 0 && (botConfig.totalTrades > 0 || aiOpenPositions.length > 0);
 
-  // Build effective portfolio from AI trading state
   const effectivePortfolio = hasAITrading
     ? (() => {
         const grossRealized = aiClosedTrades.reduce((s, t) => s + (t.grossPnl ?? t.realizedPnl), 0);
@@ -255,19 +263,13 @@ function PortfolioCards() {
         const wins = aiClosedTrades.filter(t => t.realizedPnl > 0).length;
         const winRate = aiClosedTrades.length > 0 ? Math.round((wins / aiClosedTrades.length) * 100) : 0;
         return {
-          totalBalance: equity,
-          totalPnl,
-          totalPnlPercent: pnlPct,
-          dayPnl: unrealized,
-          dayPnlPercent: allocation > 0 ? (unrealized / allocation) * 100 : 0,
-          openPositions: aiOpenPositions.length,
-          activeSignals: 0,
-          winRate,
-          totalTrades: aiClosedTrades.length,
+          totalBalance: equity, totalPnl, totalPnlPercent: pnlPct,
+          dayPnl: unrealized, dayPnlPercent: allocation > 0 ? (unrealized / allocation) * 100 : 0,
+          openPositions: aiOpenPositions.length, activeSignals: 0, winRate, totalTrades: aiClosedTrades.length,
         };
       })()
     : portfolio || {
-        totalBalance: allocation > 0 ? allocation : 100000,
+        totalBalance: allocation > 0 ? allocation : linkedBalance,
         totalPnl: 0, totalPnlPercent: 0,
         dayPnl: 0, dayPnlPercent: 0,
         openPositions: aiOpenPositions.length,
@@ -278,61 +280,89 @@ function PortfolioCards() {
   const isTotalUp = effectivePortfolio.totalPnl >= 0;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3">
-      <Card className={`${isPnlUp ? 'bg-emerald-500/5' : 'bg-red-500/5'} border-border/30 overflow-hidden col-span-2 lg:col-span-1`}>
-        <CardContent className="p-3 lg:p-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <Wallet className={`h-3.5 w-3.5 ${isPnlUp ? 'text-emerald-500' : 'text-red-500'}`} />
-              <span className="text-[11px] text-muted-foreground font-medium">Portfolio Value</span>
+    <div className="space-y-2 lg:space-y-3">
+      {/* Account mode indicator */}
+      <div className="flex items-center gap-2">
+        <span className={`flex h-2 w-2 rounded-full ${isLinkedBroker ? 'bg-primary' : isLiveAccount ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+        <span className="text-xs font-semibold">
+          {activeAccount ? activeAccount.broker.toUpperCase() : 'DEMO'}
+        </span>
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+          isLinkedBroker ? 'bg-primary/10 text-primary' : isLiveAccount ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'
+        }`}>
+          {isLinkedBroker ? 'LINKED' : isLiveAccount ? 'REAL' : 'DEMO'}
+        </span>
+        {totalAllocated > 0 && (
+          <span className="text-[10px] text-muted-foreground ml-auto">
+            ${totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2 })} allocated to AI bot
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3">
+        {/* Portfolio Value */}
+        <Card className={`${isPnlUp ? 'bg-emerald-500/5' : 'bg-red-500/5'} border-border/30 overflow-hidden col-span-2 lg:col-span-1`}>
+          <CardContent className="p-3 lg:p-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5">
+                <Wallet className={`h-3.5 w-3.5 ${isPnlUp ? 'text-emerald-500' : 'text-red-500'}`} />
+                <span className="text-[11px] text-muted-foreground font-medium">Portfolio Value</span>
+              </div>
+              {wsConnected && (
+                <span className="flex items-center gap-0.5 text-[9px] text-emerald-500 font-medium">
+                  <Radio className="h-2.5 w-2.5" /> STREAMING
+                </span>
+              )}
             </div>
-            {wsConnected && (
-              <span className="flex items-center gap-0.5 text-[9px] text-emerald-500 font-medium">
-                <Radio className="h-2.5 w-2.5" /> STREAMING
-              </span>
-            )}
-          </div>
-          <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isPnlUp ? 'text-emerald-500' : 'text-red-500'}`}>
-            {'$'}{effectivePortfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            {isPnlUp ? '+' : ''}{effectivePortfolio.dayPnlPercent.toFixed(2)}% today
-          </p>
-          <EquitySparkline portfolio={effectivePortfolio} />
-        </CardContent>
-      </Card>
+            <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isPnlUp ? 'text-emerald-500' : 'text-red-500'}`}>
+              {'$'}{effectivePortfolio.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {isPnlUp ? '+' : ''}{effectivePortfolio.dayPnlPercent.toFixed(2)}% today
+            </p>
+            <EquitySparkline portfolio={effectivePortfolio} />
+          </CardContent>
+        </Card>
 
-      <Card className={`${isTotalUp ? 'bg-emerald-500/5' : 'bg-red-500/5'} border-border/30 overflow-hidden`}>
-        <CardContent className="p-3 lg:p-4">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            {isTotalUp ? <TrendingUp className="h-3.5 w-3.5 text-emerald-500" /> : <TrendingDown className="h-3.5 w-3.5 text-red-500" />}
-            <span className="text-[11px] text-muted-foreground font-medium">Unrealized P&L</span>
-          </div>
-          <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isTotalUp ? 'text-emerald-500' : 'text-red-500'}`}>
-            {formatPnl(effectivePortfolio.totalPnl)}
-          </p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            {isTotalUp ? '+' : ''}{effectivePortfolio.totalPnlPercent.toFixed(2)}%
-          </p>
-        </CardContent>
-      </Card>
+        {/* Available Balance */}
+        <Card className="bg-muted/30 border-border/30 overflow-hidden">
+          <CardContent className="p-3 lg:p-4">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Wallet className="h-3.5 w-3.5 text-foreground" />
+              <span className="text-[11px] text-muted-foreground font-medium">Available</span>
+            </div>
+            <p className="text-lg lg:text-xl font-bold tabular-nums">
+              {'$'}{availableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              of ${linkedBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} linked
+            </p>
+          </CardContent>
+        </Card>
 
-      <Card className="bg-muted/30 border-border/30 overflow-hidden">
-        <CardContent className="p-3 lg:p-4">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <BarChart3 className="h-3.5 w-3.5 text-foreground" />
-            <span className="text-[11px] text-muted-foreground font-medium">Positions</span>
-          </div>
-          <p className="text-lg lg:text-xl font-bold tabular-nums">{effectivePortfolio.openPositions}</p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">{effectivePortfolio.totalTrades} total trades</p>
-        </CardContent>
-      </Card>
+        {/* Unrealized P&L */}
+        <Card className={`${isTotalUp ? 'bg-emerald-500/5' : 'bg-red-500/5'} border-border/30 overflow-hidden`}>
+          <CardContent className="p-3 lg:p-4">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              {isTotalUp ? <TrendingUp className="h-3.5 w-3.5 text-emerald-500" /> : <TrendingDown className="h-3.5 w-3.5 text-red-500" />}
+              <span className="text-[11px] text-muted-foreground font-medium">Unrealized P&L</span>
+            </div>
+            <p className={`text-lg lg:text-xl font-bold tabular-nums tracking-tight ${isTotalUp ? 'text-emerald-500' : 'text-red-500'}`}>
+              {formatPnl(effectivePortfolio.totalPnl)}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {isTotalUp ? '+' : ''}{effectivePortfolio.totalPnlPercent.toFixed(2)}%
+            </p>
+          </CardContent>
+        </Card>
 
-      <Card className="bg-amber-500/5 border-border/30 overflow-hidden">
-        <CardContent className="p-3 lg:p-4">
-          <RiskGauge portfolio={effectivePortfolio} />
-        </CardContent>
-      </Card>
+        {/* Risk Score */}
+        <Card className="bg-amber-500/5 border-border/30 overflow-hidden">
+          <CardContent className="p-3 lg:p-4">
+            <RiskGauge portfolio={effectivePortfolio} />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -789,26 +819,7 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             <div>
               <h3 className="text-sm font-semibold mb-3">Connected Accounts</h3>
               <div className="space-y-2">
-                {accounts.map(acc => (
-                  <div key={acc.id} className="flex items-center gap-3 p-3.5 rounded-xl bg-muted/50 border border-border/50">
-                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                      acc.accountType === 'live' ? 'bg-emerald-500/15' : 'bg-amber-500/15'
-                    }`}>
-                      <Briefcase className={`h-4 w-4 ${acc.accountType === 'live' ? 'text-emerald-500' : 'text-amber-500'}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold">{acc.broker.toUpperCase()}</span>
-                        <Badge variant={acc.accountType === 'live' ? 'default' : 'secondary'}
-                          className={`text-[10px] h-5 ${acc.accountType === 'live' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                          {acc.accountType}
-                        </Badge>
-                        {acc.isDefault && <Badge variant="outline" className="text-[10px] h-5">DEFAULT</Badge>}
-                      </div>
-                      <p className="text-xs text-muted-foreground">${acc.balance.toLocaleString()}</p>
-                    </div>
-                  </div>
-                ))}
+                {accounts.map(function(acc) { return <SettingsAccountRow key={acc.id} acc={acc} />; })}
                 {accounts.length === 0 && (
                   <p className="text-sm text-muted-foreground text-center py-4">No accounts connected</p>
                 )}

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   TrendingUp, TrendingDown, Zap, Sparkles,
   BarChart3, Target, ArrowRightLeft, Activity, Waves,
-  Loader2, RefreshCw,
+  Loader2, RefreshCw, Crosshair,
 } from 'lucide-react';
 import { useTradingStore } from '@/lib/store/trading-store';
 import { formatPrice } from '@/lib/market-sim';
@@ -34,7 +34,11 @@ const SIGNAL_LABELS: Record<string, string> = {
 };
 
 export function SignalsPanel() {
-  const { signals, setSignals, setSignalDetailId } = useTradingStore();
+  const {
+    signals, setSignals, setSignalDetailId,
+    setOrderSheetOpen, setOrderSymbol,
+    setOrderStopLoss, setOrderTakeProfit, setOrderEntryPrice,
+  } = useTradingStore();
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,7 +61,6 @@ export function SignalsPanel() {
       }
 
       if (Array.isArray(data) && data.length > 0) {
-        // Normalize direction field and merge with existing
         const normalized = data.map((s: any) => ({
           ...s,
           direction: s.direction === 'long' ? 'bullish' : s.direction === 'short' ? 'bearish' : s.direction,
@@ -89,6 +92,17 @@ export function SignalsPanel() {
       })
       .catch(() => { /* non-critical */ });
   }, []);
+
+  // Quick-trade from signal: auto-fills symbol, side, SL, TP into order form
+  const handleQuickTrade = (sig: any, e: React.MouseEvent) => {
+    e.stopPropagation(); // Don't trigger signal detail
+    const isBullish = sig.direction === 'bullish' || sig.direction === 'long';
+    setOrderSymbol(sig.symbol);
+    setOrderEntryPrice(sig.entryPrice || null);
+    setOrderStopLoss(sig.stopLoss ?? null);
+    setOrderTakeProfit(sig.takeProfit ?? null);
+    setOrderSheetOpen(true);
+  };
 
   // Loading state
   if (generating) {
@@ -159,9 +173,9 @@ export function SignalsPanel() {
             : parseInt(String(sig.confidence)) || 0;
 
           return (
-            <button
+            <div
               key={sig.id}
-              className={"w-full p-3 text-left border-l-2 transition-colors " + (isBullish ? 'border-l-emerald-500 bg-emerald-500/5' : 'border-l-red-500 bg-red-500/5')}
+              className={"p-3 border-l-2 transition-colors cursor-pointer " + (isBullish ? 'border-l-emerald-500 bg-emerald-500/5' : 'border-l-red-500 bg-red-500/5')}
               onClick={() => setSignalDetailId(sig.id)}
             >
               <div className="flex items-start gap-2.5">
@@ -184,8 +198,20 @@ export function SignalsPanel() {
                     {sig.takeProfit && <span className="text-[10px] text-muted-foreground">TP: {formatPrice(sig.takeProfit, sig.symbol)}</span>}
                   </div>
                 </div>
+                <Button
+                  size="sm"
+                  className={"shrink-0 h-8 px-3 text-xs font-semibold gap-1.5 cursor-pointer " + (
+                    isBullish
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      : 'bg-red-600 hover:bg-red-700 text-white'
+                  )}
+                  onClick={(e) => handleQuickTrade(sig, e)}
+                >
+                  <Crosshair className="h-3 w-3" />
+                  Trade
+                </Button>
               </div>
-            </button>
+            </div>
           );
         })}
       </div>

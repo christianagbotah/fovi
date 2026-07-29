@@ -36,10 +36,14 @@ export interface TradingAccount {
   passphrase?: string;
   isDefault: boolean;
   balance: number;
+  linkedBalance: number;
+  totalAllocated: number;
+  totalRealizedProfit: number;
   currency: string;
   isActive: boolean;
   lastSyncedAt: string | null;
   createdAt: string;
+  updatedAt: string;
   _count?: {
     positions: number;
     orders: number;
