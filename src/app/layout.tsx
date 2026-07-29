@@ -19,9 +19,10 @@ export const metadata: Metadata = {
   description: "World-class AI-powered trading platform with real-time signals, technical analysis, and automated execution across stocks, crypto, and forex.",
   icons: {
     icon: [
-      { url: '/favicon.png', type: 'image/png' },
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: '48x48' },
     ],
-    shortcut: '/favicon.png',
+    shortcut: '/favicon.ico',
     apple: '/apple-touch-icon.png',
   },
 };
