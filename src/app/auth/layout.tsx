@@ -8,7 +8,7 @@ export default function AuthLayout({
       <div className="w-full max-w-md">
         {/* Logo & Branding */}
         <div className="flex items-center justify-center gap-2.5 mb-8">
-          <img src="/logo.svg" alt="Fovi" className="w-10 h-10 rounded-xl" />
+          <img src="/logo.png" alt="Fovi" className="w-10 h-10 rounded-xl" />
           <span className="text-xl font-bold tracking-tight">
             Fovi <span className="text-muted-foreground font-normal">AI</span>
           </span>

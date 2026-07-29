@@ -56,7 +56,7 @@ export function PagePreloader({ isLoaded, onComplete }: PagePreloaderProps) {
               ease: 'easeInOut',
             }}
           >
-            <img src="/logo.svg" alt="Fovi AI" className="w-full h-full rounded-2xl" />
+            <img src="/logo.png" alt="Fovi AI" className="w-full h-full rounded-2xl" />
           </motion.div>
           <h1 className="mt-4 text-xl font-bold tracking-tight">Fovi AI</h1>
           <div className="mt-2 h-5 flex items-center">

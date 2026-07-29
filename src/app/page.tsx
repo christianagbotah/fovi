@@ -934,7 +934,7 @@ function DesktopSidebar() {
     <aside className="hidden lg:flex flex-col w-56 border-r border-border bg-card/30 shrink-0 min-h-0">
       <div className="p-4">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="Fovi AI" className="w-9 h-9 rounded-xl" />
+          <img src="/logo.png" alt="Fovi AI" className="w-9 h-9 rounded-xl" />
           <div>
             <h1 className="font-bold text-base tracking-tight">Fovi AI</h1>
             <p className="text-[10px] text-muted-foreground font-medium">Auto-Trading Platform</p>
@@ -1001,7 +1001,7 @@ function MobileNavSheet({ open, onOpenChange, onOpenSettings }: { open: boolean;
       <SheetContent side="left" className="w-72 p-0 flex flex-col overflow-hidden">
         <SheetHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
           <SheetTitle className="flex items-center gap-2.5">
-            <img src="/logo.svg" alt="Fovi AI" className="w-9 h-9 rounded-xl" />
+            <img src="/logo.png" alt="Fovi AI" className="w-9 h-9 rounded-xl" />
             <div>
               <span className="font-bold text-base">Fovi AI</span>
               <p className="text-[10px] text-muted-foreground font-medium">Auto-Trading Platform</p>
@@ -1209,7 +1209,7 @@ export default function TradingDashboard() {
               <Menu className="h-5 w-5" />
             </button>
             <div className="flex items-center gap-2 lg:hidden">
-              <img src="/logo.svg" alt="Fovi" className="w-8 h-8 rounded-lg" />
+              <img src="/logo.png" alt="Fovi" className="w-8 h-8 rounded-lg" />
               <span className="font-bold text-lg">Fovi</span>
             </div>
             <AccountSwitcher />
