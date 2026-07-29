@@ -8,7 +8,7 @@ import {
   ArrowDownRight, Activity, Radio, Briefcase, Clock, Shield, Target, Trophy,
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
-  ArrowLeft, User, Lock, Mail, Phone, ChevronDown, Link2, Zap,
+  ArrowLeft, User, Lock, Mail, Phone, ChevronDown, Link2, Zap, Download,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
@@ -970,6 +970,9 @@ function DesktopSidebar() {
       </nav>
 
       <div className="p-3 space-y-2 border-t border-border">
+        <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer text-amber-600 border-amber-500/30 hover:bg-amber-500/10 hover:text-amber-600" onClick={() => { const a = document.createElement('a'); a.href = '/api/handoff-report'; a.download = 'FOVI_HANDOFF_REPORT.md'; a.click(); }}>
+          <Download className="h-4 w-4" /> Download Report
+        </Button>
         <Button variant="outline" className="w-full gap-2 justify-start cursor-pointer" onClick={() => setAlertsOpen(true)}>
           <Bell className="h-4 w-4" /> Alerts {alerts.length > 0 && <Badge variant="secondary" className="ml-auto text-[10px] h-4">{alerts.length}</Badge>}
         </Button>
