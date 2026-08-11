@@ -9,7 +9,8 @@ import {
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
   ArrowLeft, User, Lock, Mail, Phone, ChevronDown, Link2, Zap,
-  LogOut, ShieldCheck, Smartphone, KeyRound,
+  LogOut, ShieldCheck, Smartphone, KeyRound, CreditCard, Building2,
+  CheckCircle2, Circle, MessageCircle, Receipt, Crown, Server, Save,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
@@ -777,114 +778,275 @@ function OrderHistoryPanel() {
 }
 
 // ============================================================
-// Security Settings (2FA, Password, SMS/Email config)
+// Tab Button helper for settings
+// ============================================================
+function SettingsTab({ id, label, icon: Icon, active, onClick }: { id: string; label: string; icon: React.ComponentType<{ className?: string }>; active: boolean; onClick: (id: string) => void }) {
+  return (
+    <button onClick={() => onClick(id)}
+      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}`}>
+      <Icon className="h-3.5 w-3.5" />{label}
+    </button>
+  );
+}
+
+// ============================================================
+// Security Settings (2FA, SMS/Email OTP, Password, Subscription)
 // ============================================================
 function SecuritySettings() {
   const { authUser, clearAuth } = useTradingStore();
+  const [activeSection, setActiveSection] = useState('security');
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 2FA state
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const [twoFactorLoading, setTwoFactorLoading] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [qrCode, setQrCode] = useState('');
   const [setupSecret, setSetupSecret] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
   const [disableCode, setDisableCode] = useState('');
+
+  // Password state
   const [passwords, setPasswords] = useState({ current: '', newPw: '', confirm: '' });
+
+  // SMS OTP state
   const [smsPhone, setSmsPhone] = useState('');
-  const [emailAddr, setEmailAddr] = useState('');
-  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [smsOtpCode, setSmsOtpCode] = useState('');
+  const [smsOtpSent, setSmsOtpSent] = useState(false);
+  const [smsCountdown, setSmsCountdown] = useState(0);
+  const [smsOtpEnabled, setSmsOtpEnabled] = useState(false);
 
-  const showMsg = (type: 'success' | 'error', text: string) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 4000); };
+  // Email OTP state
+  const [emailOtpCode, setEmailOtpCode] = useState('');
+  const [emailOtpSent, setEmailOtpSent] = useState(false);
+  const [emailCountdown, setEmailCountdown] = useState(0);
+  const [emailOtpEnabled, setEmailOtpEnabled] = useState(false);
 
+  // Subscription state
+  const [currentPlan, setCurrentPlan] = useState<any>(null);
+  const [plans, setPlans] = useState<any[]>([]);
+  const [subscribingPlan, setSubscribingPlan] = useState<string | null>(null);
+
+  // Admin config state
+  const [hubtelSmsConfig, setHubtelSmsConfig] = useState({ clientId: '', clientSecret: '', senderName: 'FoviAI' });
+  const [hubtelPayConfig, setHubtelPayConfig] = useState({ clientId: '', clientSecret: '', accountNumber: '', callbackUrl: '' });
+  const [smtpConfig, setSmtpConfig] = useState({ host: '', port: '587', user: '', password: '', from: 'noreply@fovi.ai' });
+  const [testPhone, setTestPhone] = useState('');
+  const [testEmail, setTestEmail] = useState('');
+
+  const isAdmin = authUser?.role === 'admin' || authUser?.email === 'admin@fovi.ai';
+  const token = typeof window !== 'undefined' ? localStorage.getItem('fovi_token') || '' : '';
+
+  const showMsg = (type: 'success' | 'error', text: string) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 5000); };
+
+  // Load user settings on mount
+  useEffect(() => {
+    if (!authUser?.id) return;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/two-factor/setup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: authUser.id, _check: true }),
+        });
+        // We just check settings status silently
+      } catch { /* ignore */ }
+      // Load subscription
+      try {
+        const subRes = await fetch('/api/subscriptions/current', { headers: { Authorization: `Bearer ${token}` } });
+        if (subRes.ok) { const subData = await subRes.json(); if (subData.subscription) setCurrentPlan(subData.subscription); }
+      } catch { /* ignore */ }
+      // Load plans
+      try {
+        const plansRes = await fetch('/api/subscriptions/plans');
+        if (plansRes.ok) { const plansData = await plansRes.json(); if (Array.isArray(plansData)) setPlans(plansData); }
+      } catch { /* ignore */ }
+      // Load admin configs
+      if (isAdmin) {
+        try {
+          const [smsRes, payRes, smtpRes] = await Promise.all([
+            fetch('/api/admin/config/hubtel-sms', { headers: { Authorization: `Bearer ${token}` } }),
+            fetch('/api/admin/config/hubtel-payment', { headers: { Authorization: `Bearer ${token}` } }),
+            fetch('/api/admin/config/smtp', { headers: { Authorization: `Bearer ${token}` } }),
+          ]);
+          if (smsRes.ok) { const d = await smsRes.json(); if (d.config) setHubtelSmsConfig(p => ({ ...p, ...d.config })); }
+          if (payRes.ok) { const d = await payRes.json(); if (d.config) setHubtelPayConfig(p => ({ ...p, ...d.config })); }
+          if (smtpRes.ok) { const d = await smtpRes.json(); if (d.config) setSmtpConfig(p => ({ ...p, ...d.config })); }
+        } catch { /* ignore */ }
+      }
+    })();
+  }, [authUser?.id]);
+
+  // SMS countdown timer
+  useEffect(() => { if (smsCountdown <= 0) return; const t = setTimeout(() => setSmsCountdown(smsCountdown - 1), 1000); return () => clearTimeout(t); }, [smsCountdown]);
+  // Email countdown timer
+  useEffect(() => { if (emailCountdown <= 0) return; const t = setTimeout(() => setEmailCountdown(emailCountdown - 1), 1000); return () => clearTimeout(t); }, [emailCountdown]);
+
+  // 2FA handlers
   const handleSetup2FA = async () => {
     if (!authUser?.id) return;
-    setTwoFactorLoading(true);
+    setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/setup', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: authUser.id }),
-      });
+      const res = await fetch('/api/auth/two-factor/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: authUser.id }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to setup 2FA'); return; }
-      setQrCode(data.qr_code_base64);
-      setSetupSecret(data.secret);
-      setShowSetup(true);
-    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+      setQrCode(data.qr_code_base64); setSetupSecret(data.secret); setShowSetup(true);
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
   };
-
   const handleVerify2FA = async () => {
-    if (!authUser?.id) return;
-    setTwoFactorLoading(true);
+    if (!authUser?.id) return; setLoading(true);
     try {
-      const token = localStorage.getItem('fovi_token') || '';
-      const res = await fetch('/api/auth/two-factor/verify', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: authUser.id, token, code: verifyCode }),
-      });
+      const res = await fetch('/api/auth/two-factor/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: authUser.id, token, code: verifyCode }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
-      setTwoFactorEnabled(true);
-      setShowSetup(false);
-      setVerifyCode('');
-      showMsg('success', 'Two-factor authentication enabled!');
-    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+      setTwoFactorEnabled(true); setShowSetup(false); setVerifyCode(''); showMsg('success', 'Two-factor authentication enabled!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
   };
-
   const handleDisable2FA = async () => {
-    if (!authUser?.id) return;
-    setTwoFactorLoading(true);
+    if (!authUser?.id) return; setLoading(true);
     try {
-      const token = localStorage.getItem('fovi_token') || '';
-      const res = await fetch('/api/auth/two-factor/disable', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: authUser.id, token, code: disableCode }),
-      });
+      const res = await fetch('/api/auth/two-factor/disable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: authUser.id, token, code: disableCode }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
-      setTwoFactorEnabled(false);
-      setDisableCode('');
-      showMsg('success', 'Two-factor authentication disabled');
-    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+      setTwoFactorEnabled(false); setDisableCode(''); showMsg('success', '2FA disabled');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
   };
 
+  // Password handler
   const handleChangePassword = async () => {
     if (!passwords.current || !passwords.newPw || !passwords.confirm) return;
     if (passwords.newPw !== passwords.confirm) { showMsg('error', 'Passwords do not match'); return; }
     if (passwords.newPw.length < 8) { showMsg('error', 'Password must be at least 8 characters'); return; }
-    setTwoFactorLoading(true);
+    setLoading(true);
     try {
-      const token = localStorage.getItem('fovi_token') || '';
-      const res = await fetch('/api/auth/change-password', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, currentPassword: passwords.current, newPassword: passwords.newPw }),
-      });
+      const res = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, currentPassword: passwords.current, newPassword: passwords.newPw }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to change password'); return; }
-      setPasswords({ current: '', newPw: '', confirm: '' });
-      showMsg('success', 'Password changed successfully');
-    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+      setPasswords({ current: '', newPw: '', confirm: '' }); showMsg('success', 'Password changed successfully');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
   };
+
+  // SMS OTP handlers
+  const handleSendSmsOtp = async () => {
+    if (!smsPhone || !/^\+\d{10,15}$/.test(smsPhone)) { showMsg('error', 'Enter a valid phone number (e.g. +233XXXXXXXXX)'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/sms-otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ phoneNumber: smsPhone, purpose: 'verification' }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to send SMS OTP'); return; }
+      setSmsOtpSent(true); setSmsCountdown(60); showMsg('success', 'SMS OTP sent!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+  const handleVerifySmsOtp = async () => {
+    if (smsOtpCode.length !== 6) return; setLoading(true);
+    try {
+      const res = await fetch('/api/auth/sms-otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: smsOtpCode, phoneNumber: smsPhone, purpose: 'verification' }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Invalid OTP'); return; }
+      setSmsOtpEnabled(true); setSmsOtpCode(''); setSmsOtpSent(false); showMsg('success', 'SMS OTP verified and enabled!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // Email OTP handlers
+  const handleSendEmailOtp = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/email-otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ email: authUser?.email, purpose: 'verification' }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to send Email OTP'); return; }
+      setEmailOtpSent(true); setEmailCountdown(60); showMsg('success', 'Email OTP sent!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+  const handleVerifyEmailOtp = async () => {
+    if (emailOtpCode.length !== 6) return; setLoading(true);
+    try {
+      const res = await fetch('/api/auth/email-otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: emailOtpCode, email: authUser?.email, purpose: 'verification' }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Invalid OTP'); return; }
+      setEmailOtpEnabled(true); setEmailOtpCode(''); setEmailOtpSent(false); showMsg('success', 'Email OTP verified and enabled!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // Subscription handler
+  const handleSubscribe = async (planId: string) => {
+    setSubscribingPlan(planId); setLoading(true);
+    try {
+      const res = await fetch('/api/subscriptions/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ planId, phoneNumber: smsPhone, email: authUser?.email }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Subscription failed'); return; }
+      if (data.invoiceUrl) { window.open(data.invoiceUrl, '_blank'); showMsg('success', 'Payment page opened! Complete payment to activate.'); }
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); setSubscribingPlan(null); }
+  };
+
+  // Admin config save handlers
+  const saveHubtelSms = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/hubtel-sms', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(hubtelSmsConfig) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
+      showMsg('success', 'Hubtel SMS config saved!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+  const saveHubtelPay = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/hubtel-payment', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(hubtelPayConfig) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
+      showMsg('success', 'Hubtel Payment config saved!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+  const saveSmtp = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/smtp', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(smtpConfig) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
+      showMsg('success', 'SMTP config saved!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+  const handleTestSms = async () => {
+    if (!testPhone) { showMsg('error', 'Enter a phone number'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/hubtel-sms', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ _action: 'test', phoneNumber: testPhone }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Test failed'); return; }
+      showMsg('success', 'Test SMS sent!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+  const handleTestEmail = async () => {
+    if (!testEmail) { showMsg('error', 'Enter an email address'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/email-test', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ to: testEmail }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Test failed'); return; }
+      showMsg('success', 'Test email sent!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // Config input helper
+  const CInput = ({ value, onChange, placeholder, type = 'text' }: { value: string; onChange: (v: string) => void; placeholder: string; type?: string }) => (
+    <input type={type} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)}
+      className="w-full h-9 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+  );
 
   return (
     <div className="space-y-4">
       {msg && (
-        <div className={`rounded-lg border px-3 py-2.5 text-xs font-medium ${msg.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
-          {msg.text}
-        </div>
+        <div className={`rounded-lg border px-3 py-2.5 text-xs font-medium ${msg.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>{msg.text}</div>
       )}
 
-      {/* User Info */}
+      {/* User Info Card */}
       <div className="p-4 rounded-xl border border-border/50 bg-card">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-            <User className="h-5 w-5 text-primary" />
-          </div>
+          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center"><User className="h-5 w-5 text-primary" /></div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate">{authUser?.name || 'User'}</p>
             <p className="text-[11px] text-muted-foreground truncate">{authUser?.email}</p>
           </div>
-          <Badge variant={twoFactorEnabled ? 'default' : 'outline'} className={twoFactorEnabled ? 'bg-emerald-500/10 text-emerald-500 border-0 text-[10px]' : 'text-[10px]'}>
-            {twoFactorEnabled ? '2FA ON' : '2FA OFF'}
-          </Badge>
+          {isAdmin && <Badge className="bg-amber-500/10 text-amber-500 border-0 text-[10px]"><Crown className="h-3 w-3 mr-1" />Admin</Badge>}
         </div>
         <button onClick={() => { clearAuth(); window.location.href = '/'; }}
           className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-red-500/20 text-red-500 text-xs font-medium hover:bg-red-500/10 transition-colors cursor-pointer">
@@ -892,101 +1054,257 @@ function SecuritySettings() {
         </button>
       </div>
 
-      {/* Two-Factor Authentication (TOTP) */}
-      <div className="p-4 rounded-xl border border-border/50 bg-card">
-        <h4 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-          <KeyRound className="h-3.5 w-3.5" /> Two-Factor Authentication (TOTP)
-        </h4>
+      {/* Section Tabs */}
+      <div className="flex gap-1 overflow-x-auto pb-1 -mx-1 px-1">
+        <SettingsTab id="security" label="Security" icon={Shield} active={activeSection === 'security'} onClick={setActiveSection} />
+        <SettingsTab id="sms-email" label="SMS / Email" icon={Smartphone} active={activeSection === 'sms-email'} onClick={setActiveSection} />
+        <SettingsTab id="subscription" label="Plan" icon={CreditCard} active={activeSection === 'subscription'} onClick={setActiveSection} />
+        {isAdmin && <SettingsTab id="admin-sms" label="Hubtel SMS" icon={MessageCircle} active={activeSection === 'admin-sms'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-pay" label="Payments" icon={Building2} active={activeSection === 'admin-pay'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-smtp" label="SMTP" icon={Server} active={activeSection === 'admin-smtp'} onClick={setActiveSection} />}
+      </div>
 
-        {showSetup ? (
-          <div className="space-y-3">
-            <p className="text-[11px] text-muted-foreground">Scan this QR code with Google Authenticator, Authy, or any TOTP app:</p>
-            {qrCode && <img src={qrCode} alt="2FA QR Code" className="mx-auto w-40 h-40 rounded-lg border border-border" />}
-            <p className="text-[10px] text-muted-foreground text-center font-mono bg-muted/50 rounded px-2 py-1 break-all">{setupSecret}</p>
-            <p className="text-[11px] text-muted-foreground">Enter the 6-digit code to verify:</p>
-            <input type="text" inputMode="numeric" maxLength={6} placeholder="000000"
-              value={verifyCode} onChange={e => setVerifyCode(e.target.value.replace(/\D/g, ''))}
-              className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1 text-xs cursor-pointer" onClick={() => { setShowSetup(false); setQrCode(''); setVerifyCode(''); }} disabled={twoFactorLoading}>Cancel</Button>
-              <Button className="flex-1 text-xs cursor-pointer" onClick={handleVerify2FA} disabled={twoFactorLoading || verifyCode.length !== 6}>
-                {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Verify & Enable'}
+      {/* ====== SECURITY TAB ====== */}
+      {activeSection === 'security' && (
+        <div className="space-y-4">
+          {/* 2FA TOTP */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card">
+            <h4 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+              <KeyRound className="h-3.5 w-3.5" /> Two-Factor Authentication (TOTP)
+              {twoFactorEnabled && <Badge className="ml-auto bg-emerald-500/10 text-emerald-500 border-0 text-[10px]">ON</Badge>}
+            </h4>
+            {showSetup ? (
+              <div className="space-y-3">
+                <p className="text-[11px] text-muted-foreground">Scan with Google Authenticator, Authy, or any TOTP app:</p>
+                {qrCode && <img src={qrCode} alt="2FA QR" className="mx-auto w-40 h-40 rounded-lg border border-border" />}
+                <p className="text-[10px] text-muted-foreground text-center font-mono bg-muted/50 rounded px-2 py-1 break-all">{setupSecret}</p>
+                <input type="text" inputMode="numeric" maxLength={6} placeholder="000000" value={verifyCode} onChange={e => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1 text-xs cursor-pointer" onClick={() => { setShowSetup(false); setQrCode(''); setVerifyCode(''); }} disabled={loading}>Cancel</Button>
+                  <Button className="flex-1 text-xs cursor-pointer" onClick={handleVerify2FA} disabled={loading || verifyCode.length !== 6}>
+                    {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Verify & Enable'}</Button>
+                </div>
+              </div>
+            ) : twoFactorEnabled ? (
+              <div className="space-y-3">
+                <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> 2FA is active</p>
+                <input type="text" inputMode="numeric" maxLength={6} placeholder="Enter code to disable" value={disableCode} onChange={e => setDisableCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
+                <Button variant="outline" className="w-full text-xs text-red-500 border-red-500/20 hover:bg-red-500/10 cursor-pointer"
+                  onClick={handleDisable2FA} disabled={loading || disableCode.length !== 6}>
+                  {loading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null} Disable 2FA
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-[11px] text-muted-foreground">Add an extra layer of security using an authenticator app.</p>
+                <Button variant="outline" className="w-full gap-2 text-xs cursor-pointer" onClick={handleSetup2FA} disabled={loading}>
+                  {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Enable 2FA
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Change Password */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card">
+            <h4 className="text-xs font-semibold mb-3 flex items-center gap-1.5"><Lock className="h-3.5 w-3.5" /> Change Password</h4>
+            <div className="space-y-2">
+              <CInput value={passwords.current} onChange={v => setPasswords(p => ({ ...p, current: v }))} placeholder="Current password" type="password" />
+              <CInput value={passwords.newPw} onChange={v => setPasswords(p => ({ ...p, newPw: v }))} placeholder="New password (min 8 chars)" type="password" />
+              <CInput value={passwords.confirm} onChange={v => setPasswords(p => ({ ...p, confirm: v }))} placeholder="Confirm new password" type="password" />
+              <Button className="w-full text-xs cursor-pointer" onClick={handleChangePassword} disabled={loading || !passwords.current || !passwords.newPw || !passwords.confirm}>
+                {loading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : 'Update Password'}
               </Button>
             </div>
           </div>
-        ) : twoFactorEnabled ? (
-          <div className="space-y-3">
-            <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> 2FA is active on your account</p>
-            <p className="text-[11px] text-muted-foreground">Enter a current code to disable two-factor authentication:</p>
-            <input type="text" inputMode="numeric" maxLength={6} placeholder="000000"
-              value={disableCode} onChange={e => setDisableCode(e.target.value.replace(/\D/g, ''))}
-              className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
-            <Button variant="outline" className="w-full text-xs text-red-500 border-red-500/20 hover:bg-red-500/10 cursor-pointer"
-              onClick={handleDisable2FA} disabled={twoFactorLoading || disableCode.length !== 6}>
-              {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null} Disable 2FA
+        </div>
+      )}
+
+      {/* ====== SMS / EMAIL OTP TAB ====== */}
+      {activeSection === 'sms-email' && (
+        <div className="space-y-4">
+          {/* SMS OTP */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card">
+            <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+              <Smartphone className="h-3.5 w-3.5" /> SMS OTP (Hubtel)
+              {smsOtpEnabled && <Badge className="ml-auto bg-emerald-500/10 text-emerald-500 border-0 text-[10px]">Active</Badge>}
+            </h4>
+            <p className="text-[11px] text-muted-foreground mb-3">Receive one-time codes via SMS for login verification. Requires Hubtel SMS to be configured by admin.</p>
+            {!smsOtpSent ? (
+              <div className="space-y-2">
+                <CInput value={smsPhone} onChange={setSmsPhone} placeholder="+233XXXXXXXXX" />
+                <Button variant="outline" className="w-full gap-2 text-xs cursor-pointer" onClick={handleSendSmsOtp} disabled={loading || smsCountdown > 0}>
+                  {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                  {smsCountdown > 0 ? `Resend in ${smsCountdown}s` : 'Send SMS OTP'}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] text-emerald-500 font-medium">Code sent to {smsPhone}</p>
+                <input type="text" inputMode="numeric" maxLength={6} placeholder="000000" value={smsOtpCode} onChange={e => setSmsOtpCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1 text-xs cursor-pointer" onClick={() => { setSmsOtpSent(false); setSmsOtpCode(''); }} disabled={loading}>Cancel</Button>
+                  <Button className="flex-1 text-xs cursor-pointer" onClick={handleVerifySmsOtp} disabled={loading || smsOtpCode.length !== 6}>
+                    {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Verify'}</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Email OTP */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card">
+            <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+              <Mail className="h-3.5 w-3.5" /> Email OTP
+              {emailOtpEnabled && <Badge className="ml-auto bg-emerald-500/10 text-emerald-500 border-0 text-[10px]">Active</Badge>}
+            </h4>
+            <p className="text-[11px] text-muted-foreground mb-3">Receive one-time codes via email for login verification. Uses configured SMTP.</p>
+            <p className="text-[11px] text-muted-foreground mb-2">Email: <span className="font-medium text-foreground">{authUser?.email}</span></p>
+            {!emailOtpSent ? (
+              <Button variant="outline" className="w-full gap-2 text-xs cursor-pointer" onClick={handleSendEmailOtp} disabled={loading || emailCountdown > 0}>
+                {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />}
+                {emailCountdown > 0 ? `Resend in ${emailCountdown}s` : 'Send Email OTP'}
+              </Button>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] text-emerald-500 font-medium">Code sent to {authUser?.email}</p>
+                <input type="text" inputMode="numeric" maxLength={6} placeholder="000000" value={emailOtpCode} onChange={e => setEmailOtpCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1 text-xs cursor-pointer" onClick={() => { setEmailOtpSent(false); setEmailOtpCode(''); }} disabled={loading}>Cancel</Button>
+                  <Button className="flex-1 text-xs cursor-pointer" onClick={handleVerifyEmailOtp} disabled={loading || emailOtpCode.length !== 6}>
+                    {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Verify'}</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ====== SUBSCRIPTION TAB ====== */}
+      {activeSection === 'subscription' && (
+        <div className="space-y-4">
+          {currentPlan ? (
+            <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+              <h4 className="text-xs font-semibold mb-1 flex items-center gap-1.5"><Crown className="h-3.5 w-3.5 text-amber-500" /> Current Plan</h4>
+              <p className="text-lg font-bold capitalize">{currentPlan.plan}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <Badge className="bg-emerald-500/10 text-emerald-500 border-0 text-[10px]">Active</Badge>
+                <span className="text-[11px] text-muted-foreground">Expires: {new Date(currentPlan.expiresAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 rounded-xl border border-border/50 bg-card">
+              <h4 className="text-xs font-semibold mb-1 flex items-center gap-1.5"><Crown className="h-3.5 w-3.5" /> Current Plan</h4>
+              <p className="text-sm text-muted-foreground">Free Plan</p>
+              <p className="text-[11px] text-muted-foreground mt-1">Upgrade to unlock more bots, accounts, and premium features.</p>
+            </div>
+          )}
+
+          {plans.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-xs font-semibold">Available Plans</h4>
+              {plans.filter((p: any) => p.name !== 'free').map((plan: any) => (
+                <div key={plan.id} className="p-4 rounded-xl border border-border/50 bg-card">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <h5 className="text-sm font-bold capitalize">{plan.displayName || plan.name}</h5>
+                      {plan.name === 'enterprise' && <Crown className="h-3.5 w-3.5 text-amber-500" />}
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-bold">{plan.currency === 'GHS' ? 'GH₵' : '$'}{plan.price}</span>
+                      <span className="text-[10px] text-muted-foreground">/mo</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {(plan.features ? JSON.parse(plan.features) : []).map((f: string, i: number) => (
+                      <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{f}</span>
+                    ))}
+                  </div>
+                  <Button className="w-full text-xs cursor-pointer gap-2" onClick={() => handleSubscribe(plan.id)} disabled={loading || subscribingPlan === plan.id}>
+                    {loading && subscribingPlan === plan.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Receipt className="h-3 w-3" />}
+                    {currentPlan?.plan === plan.name ? 'Current Plan' : 'Subscribe via Mobile Money'}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ====== ADMIN: HUBTEL SMS TAB ====== */}
+      {activeSection === 'admin-sms' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Configure Hubtel SMS service for the platform.</p>
+          </div>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><MessageCircle className="h-3.5 w-3.5" /> Hubtel SMS Configuration</h4>
+            <CInput value={hubtelSmsConfig.clientId} onChange={v => setHubtelSmsConfig(p => ({ ...p, clientId: v }))} placeholder="Hubtel Client ID" />
+            <CInput value={hubtelSmsConfig.clientSecret} onChange={v => setHubtelSmsConfig(p => ({ ...p, clientSecret: v }))} placeholder="Hubtel Client Secret" type="password" />
+            <CInput value={hubtelSmsConfig.senderName} onChange={v => setHubtelSmsConfig(p => ({ ...p, senderName: v }))} placeholder="Sender Name (e.g. FoviAI)" />
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={saveHubtelSms} disabled={loading}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save SMS Config
+            </Button>
+            <div className="border-t border-border pt-3">
+              <p className="text-[11px] text-muted-foreground mb-2">Send a test SMS:</p>
+              <div className="flex gap-2">
+                <CInput value={testPhone} onChange={setTestPhone} placeholder="+233XXXXXXXXX" />
+                <Button variant="outline" className="shrink-0 text-xs cursor-pointer" onClick={handleTestSms} disabled={loading || !testPhone}>Test</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ADMIN: HUBTEL PAYMENT TAB ====== */}
+      {activeSection === 'admin-pay' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Configure Hubtel Mobile Money payment gateway.</p>
+          </div>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><Building2 className="h-3.5 w-3.5" /> Hubtel Payment Configuration</h4>
+            <CInput value={hubtelPayConfig.clientId} onChange={v => setHubtelPayConfig(p => ({ ...p, clientId: v }))} placeholder="Hubtel Client ID" />
+            <CInput value={hubtelPayConfig.clientSecret} onChange={v => setHubtelPayConfig(p => ({ ...p, clientSecret: v }))} placeholder="Hubtel Client Secret" type="password" />
+            <CInput value={hubtelPayConfig.accountNumber} onChange={v => setHubtelPayConfig(p => ({ ...p, accountNumber: v }))} placeholder="Merchant Account Number" />
+            <CInput value={hubtelPayConfig.callbackUrl} onChange={v => setHubtelPayConfig(p => ({ ...p, callbackUrl: v }))} placeholder="Callback URL (for payment notifications)" />
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={saveHubtelPay} disabled={loading}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save Payment Config
             </Button>
           </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-[11px] text-muted-foreground">Add an extra layer of security to your account using an authenticator app.</p>
-            <Button variant="outline" className="w-full gap-2 text-xs cursor-pointer" onClick={handleSetup2FA} disabled={twoFactorLoading}>
-              {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Enable 2FA
-            </Button>
+        </div>
+      )}
+
+      {/* ====== ADMIN: SMTP TAB ====== */}
+      {activeSection === 'admin-smtp' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Configure SMTP email service for password reset, OTP, and notifications.</p>
           </div>
-        )}
-      </div>
-
-      {/* SMS OTP */}
-      <div className="p-4 rounded-xl border border-border/50 bg-card">
-        <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
-          <Smartphone className="h-3.5 w-3.5" /> SMS OTP
-        </h4>
-        <p className="text-[11px] text-muted-foreground mb-3">Receive login codes via SMS. Requires Twilio integration on the server.</p>
-        <div className="space-y-2">
-          <input type="tel" placeholder="+1 (555) 123-4567" value={smsPhone} onChange={e => setSmsPhone(e.target.value)}
-            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
-          <Button variant="outline" className="w-full text-xs cursor-pointer" disabled>
-            <Lock className="h-3 w-3 mr-1.5" /> Configure on Server
-          </Button>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><Server className="h-3.5 w-3.5" /> SMTP Configuration</h4>
+            <CInput value={smtpConfig.host} onChange={v => setSmtpConfig(p => ({ ...p, host: v }))} placeholder="SMTP Host (e.g. smtp.gmail.com)" />
+            <div className="grid grid-cols-2 gap-2">
+              <CInput value={smtpConfig.port} onChange={v => setSmtpConfig(p => ({ ...p, port: v }))} placeholder="Port" />
+              <CInput value={smtpConfig.from} onChange={v => setSmtpConfig(p => ({ ...p, from: v }))} placeholder="From Email" />
+            </div>
+            <CInput value={smtpConfig.user} onChange={v => setSmtpConfig(p => ({ ...p, user: v }))} placeholder="SMTP Username" />
+            <CInput value={smtpConfig.password} onChange={v => setSmtpConfig(p => ({ ...p, password: v }))} placeholder="SMTP Password" type="password" />
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={saveSmtp} disabled={loading}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save SMTP Config
+            </Button>
+            <div className="border-t border-border pt-3">
+              <p className="text-[11px] text-muted-foreground mb-2">Send a test email:</p>
+              <div className="flex gap-2">
+                <CInput value={testEmail} onChange={setTestEmail} placeholder="test@example.com" type="email" />
+                <Button variant="outline" className="shrink-0 text-xs cursor-pointer" onClick={handleTestEmail} disabled={loading || !testEmail}>Test</Button>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* Email OTP */}
-      <div className="p-4 rounded-xl border border-border/50 bg-card">
-        <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
-          <Mail className="h-3.5 w-3.5" /> Email OTP
-        </h4>
-        <p className="text-[11px] text-muted-foreground mb-3">Receive login codes via email. Requires email service integration (SendGrid/Resend).</p>
-        <div className="space-y-2">
-          <input type="email" placeholder={authUser?.email || 'you@example.com'} value={emailAddr} onChange={e => setEmailAddr(e.target.value)}
-            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
-          <Button variant="outline" className="w-full text-xs cursor-pointer" disabled>
-            <Lock className="h-3 w-3 mr-1.5" /> Configure on Server
-          </Button>
-        </div>
-      </div>
-
-      {/* Change Password */}
-      <div className="p-4 rounded-xl border border-border/50 bg-card">
-        <h4 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-          <Lock className="h-3.5 w-3.5" /> Change Password
-        </h4>
-        <div className="space-y-2">
-          <input type="password" placeholder="Current password" value={passwords.current}
-            onChange={e => setPasswords(p => ({ ...p, current: e.target.value }))}
-            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
-          <input type="password" placeholder="New password (min 8 chars)" value={passwords.newPw}
-            onChange={e => setPasswords(p => ({ ...p, newPw: e.target.value }))}
-            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
-          <input type="password" placeholder="Confirm new password" value={passwords.confirm}
-            onChange={e => setPasswords(p => ({ ...p, confirm: e.target.value }))}
-            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
-          <Button className="w-full text-xs cursor-pointer" onClick={handleChangePassword}
-            disabled={twoFactorLoading || !passwords.current || !passwords.newPw || !passwords.confirm}>
-            {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : 'Update Password'}
-          </Button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1359,19 +1677,48 @@ export default function TradingDashboard() {
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
   // Hydrate alerts, accounts & auth from localStorage on first mount
+  // Validates JWT token with the server to ensure session is still valid
   useEffect(() => {
     hydrateAlertsFromStorage();
-    // Restore auth state from localStorage
-    try {
-      const token = localStorage.getItem('fovi_token');
-      const userStr = localStorage.getItem('fovi_user');
-      if (token && userStr) {
-        const user = JSON.parse(userStr);
-        if (user?.id && user?.email) {
-          useTradingStore.getState().setAuth(user, token);
+    // Restore auth state from localStorage, but validate the token with the server
+    (async () => {
+      try {
+        const token = localStorage.getItem('fovi_token');
+        const userStr = localStorage.getItem('fovi_user');
+        if (token && userStr) {
+          // Validate the JWT with the server
+          const res = await fetch('/api/auth/me', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.user) {
+              useTradingStore.getState().setAuth(data.user, token);
+            } else {
+              // Token is invalid or expired — clear it
+              localStorage.removeItem('fovi_token');
+              localStorage.removeItem('fovi_user');
+            }
+          } else {
+            // Token validation failed — clear it
+            localStorage.removeItem('fovi_token');
+            localStorage.removeItem('fovi_user');
+          }
         }
+      } catch {
+        // Network error — try restoring from localStorage as fallback
+        try {
+          const token = localStorage.getItem('fovi_token');
+          const userStr = localStorage.getItem('fovi_user');
+          if (token && userStr) {
+            const user = JSON.parse(userStr);
+            if (user?.id && user?.email) {
+              useTradingStore.getState().setAuth(user, token);
+            }
+          }
+        } catch { /* ignore */ }
       }
-    } catch { /* ignore */ }
+    })();
     // If no accounts loaded yet, seed from localStorage
     const { accounts: currentAccounts } = useTradingStore.getState();
     if (currentAccounts.length === 0) {

@@ -1,11 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const twoFactorSetupSchema = z.object({
+  userId: z.string().min(1),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: '2fa-setup' });
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
+      return NextResponse.json(
+        { error: 'Too many 2FA setup attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
     const body = await request.json();
-    const { userId } = body;
-    if (!userId) return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+    const parsed = twoFactorSetupSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    }
+
+    const { userId } = parsed.data;
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('userSettings')) {
       return NextResponse.json({ error: '2FA requires a database connection.' }, { status: 503 });
     }

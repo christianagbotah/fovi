@@ -1,12 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const twoFactorDisableSchema = z.object({
+  userId: z.string().min(1),
+  token: z.string().min(1),
+  code: z.string().regex(/^\d{6}$/),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 10, keyPrefix: '2fa-disable' });
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
+      return NextResponse.json(
+        { error: 'Too many 2FA disable attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
     const body = await request.json();
-    const { code, userId } = body;
-    if (!userId || !code) return NextResponse.json({ error: 'User ID and code required' }, { status: 400 });
-    if (!/^\d{6}$/.test(code)) return NextResponse.json({ error: 'Code must be 6 digits' }, { status: 400 });
+    const parsed = twoFactorDisableSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    }
+
+    const { userId, code } = parsed.data;
     if (!isDbAvailable() || !db) return NextResponse.json({ error: 'Requires database.' }, { status: 503 });
 
     const settings = await safeDbQuery(() => db!.userSettings.findUnique({ where: { userId } }));

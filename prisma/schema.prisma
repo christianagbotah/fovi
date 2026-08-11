@@ -23,6 +23,7 @@ model User {
   aiConversations AiConversation[]
   bots           Bot[]
   backtests      Backtest[]
+  subscriptions  Subscription[]
 }
 
 model UserSettings {
@@ -37,6 +38,9 @@ model UserSettings {
   twoFactorMethod String @default("totp")  // totp, sms, email
   twoFactorSecret String?
   phoneNumber String?
+  smsEnabled      Boolean  @default(false)
+  smsOtpEnabled   Boolean  @default(false)
+  emailOtpEnabled Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -331,4 +335,65 @@ model AiMessage {
   content         String
   metadata        String?
   createdAt       DateTime @default(now())
+}
+
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  config    String   @default("{}")
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model SmsOtp {
+  id          String   @id @default(cuid())
+  userId      String
+  phoneNumber String
+  code        String
+  purpose     String   @default("login")
+  expiresAt   DateTime
+  verified    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model EmailOtp {
+  id        String   @id @default(cuid())
+  userId    String?
+  email     String
+  code      String
+  purpose   String   @default("login")
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan            String
+  status          String   @default("active")
+  hubtelInvoiceId String?
+  hubtelResponse  String?
+  amount          Float
+  currency        String   @default("GHS")
+  startedAt       DateTime @default(now())
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SubscriptionPlan {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  displayName String
+  price       Float
+  currency    String   @default("GHS")
+  features    String   @default("[]")
+  maxBots     Int      @default(1)
+  maxAccounts Int      @default(1)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

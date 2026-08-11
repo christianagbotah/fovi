@@ -1,47 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const signupSchema = z.object({
+  email: z.email(),
+  name: z.string().min(1).optional(),
+  password: z.string().min(8),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 3, keyPrefix: 'signup' });
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
+      return NextResponse.json(
+        { error: 'Too many sign-up attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
     const body = await request.json();
-    const {
-      email,
-      password,
-      fullName,
-      phone,
-      country,
-      experienceLevel,
-      assetTypes,
-      concerns,
-      portfolioRange,
-      referralSource,
-    } = body;
-
-    const name = fullName || '';
-
-    // Validate required fields
-    if (!email || !password || !name.trim()) {
+    const parsed = signupSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Email, password, and name are required' },
+        { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
-    if (password.length < 8) {
-      return NextResponse.json(
-        { error: 'Password must be at least 8 characters' },
-        { status: 400 }
-      );
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: 'Invalid email format' },
-        { status: 400 }
-      );
-    }
+    const { email, password, name: schemaName } = parsed.data;
+    const name = schemaName || body.fullName || '';
 
     const emailLower = email.toLowerCase().trim();
 
@@ -58,13 +54,13 @@ export async function POST(request: NextRequest) {
       const passwordHash = hashPassword(password);
 
       const profileData = JSON.stringify({
-        phone: phone || null,
-        country: country || null,
-        tradingExperience: experienceLevel || null,
-        tradedAssets: assetTypes || [],
-        tradingConcerns: concerns || [],
-        portfolioSize: portfolioRange || null,
-        referralSource: referralSource || null,
+        phone: body.phone || null,
+        country: body.country || null,
+        tradingExperience: body.experienceLevel || null,
+        tradedAssets: body.assetTypes || [],
+        tradingConcerns: body.concerns || [],
+        portfolioSize: body.portfolioRange || null,
+        referralSource: body.referralSource || null,
       });
 
       const user = await db.user.create({

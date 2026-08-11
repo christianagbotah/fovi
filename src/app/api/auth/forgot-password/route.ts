@@ -1,27 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { generateResetToken, hashToken } from '@/lib/auth';
+import { sendEmail } from '@/lib/email';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const forgotPasswordSchema = z.object({
+  email: z.email(),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 3, keyPrefix: 'forgot-pw' });
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
+      return NextResponse.json(
+        { error: 'Too many password reset attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
     const body = await request.json();
-    const { email } = body;
-
-    if (!email) {
+    const parsed = forgotPasswordSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Email is required' },
+        { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
+    const { email } = parsed.data;
     const emailLower = email.toLowerCase().trim();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(emailLower)) {
-      return NextResponse.json(
-        { error: 'Invalid email format' },
-        { status: 400 }
-      );
-    }
 
     if (isDbAvailable() && db && hasModel('user')) {
       const user = await safeDbQuery(() =>
@@ -43,8 +58,23 @@ export async function POST(request: NextRequest) {
           })
         );
 
-        // In production, send an email with `resetToken` here.
-        // The token is NOT stored — only its hash is persisted.
+        // Send password reset email (no-op if SMTP not configured)
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000';
+        const resetLink = `${baseUrl}/auth/reset-password?token=${resetToken}`;
+
+        await sendEmail({
+          to: user.email,
+          subject: 'Fovi AI — Password Reset',
+          html: `
+            <h2>Password Reset Request</h2>
+            <p>Hi ${user.name || 'there'},</p>
+            <p>We received a request to reset your password. Click the link below to proceed:</p>
+            <p><a href="${resetLink}" style="display:inline-block;padding:10px 20px;background:#10b981;color:#fff;text-decoration:none;border-radius:6px;">Reset Password</a></p>
+            <p>This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+            <p>— Fovi AI Team</p>
+          `,
+          text: `Reset your password here: ${resetLink}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.\n— Fovi AI Team`,
+        });
       }
     }
 

@@ -1,22 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const changePasswordSchema = z.object({
+  token: z.string(),
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'change-pw' });
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { token, currentPassword, newPassword } = body;
-
-    if (!token || !currentPassword || !newPassword) {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
       return NextResponse.json(
-        { error: 'Token, current password, and new password are required' },
+        { error: 'Too many password change attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
+    const body = await request.json();
+    const parsed = changePasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
-    if (newPassword.length < 8) {
+    const { currentPassword, newPassword } = parsed.data;
+    const { userId } = body;
+
+    if (!userId) {
       return NextResponse.json(
-        { error: 'New password must be at least 8 characters long' },
+        { error: 'User ID is required' },
         { status: 400 }
       );
     }
@@ -25,16 +50,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Password change is not available in demo mode. This feature requires a database connection.' },
         { status: 503 }
-      );
-    }
-
-    // For this endpoint we expect userId to be provided alongside the token
-    const { userId } = body;
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID is required' },
-        { status: 400 }
       );
     }
 

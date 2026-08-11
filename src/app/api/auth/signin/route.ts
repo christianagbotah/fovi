@@ -1,19 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
-import { verifyPassword, generateToken } from '@/lib/auth';
+import { verifyPassword, generateAccessToken } from '@/lib/auth';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const signinSchema = z.object({
+  email: z.email(),
+  password: z.string().min(8),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'signin' });
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, password } = body;
-
-    if (!email || !password) {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
       return NextResponse.json(
-        { error: 'Email and password are required' },
+        { error: 'Too many sign-in attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
+    const body = await request.json();
+    const parsed = signinSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
+    const { email, password } = parsed.data;
     const emailLower = email.toLowerCase().trim();
 
     if (isDbAvailable() && db && hasModel('user')) {
@@ -65,7 +87,8 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const token = generateToken();
+      const isAdmin = process.env.ADMIN_EMAIL && emailLower === process.env.ADMIN_EMAIL.toLowerCase();
+      const token = await generateAccessToken(user.id, user.email, user.name || undefined, isAdmin ? 'admin' : undefined);
 
       return NextResponse.json({
         success: true,
@@ -80,6 +103,7 @@ export async function POST(request: NextRequest) {
 
     // Demo mode - accept demo@fovi.ai / password123
     if (emailLower === 'demo@fovi.ai' && password === 'password123') {
+      const token = await generateAccessToken('demo-user', 'demo@fovi.ai', 'Demo User');
       return NextResponse.json({
         success: true,
         user: {
@@ -87,7 +111,7 @@ export async function POST(request: NextRequest) {
           email: 'demo@fovi.ai',
           name: 'Demo User',
         },
-        token: generateToken(),
+        token,
       });
     }
 
