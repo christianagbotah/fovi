@@ -6,7 +6,7 @@
 //
 // Architecture:
 //   - Reads bot configs + positions directly from PostgreSQL (postgres package)
-//   - Executes trades via HTTP calls to the Next.js API (localhost:3000)
+//   - Executes trades via HTTP calls to the Next.js API (localhost:3002)
 //   - Updates bot stats + positions directly in PostgreSQL
 //   - Falls back to demo mode when DB is unavailable
 // ============================================================
@@ -17,9 +17,9 @@ import postgres from 'postgres';
 // Configuration
 // ============================================================
 
-const PORT = 3010;
+const PORT = 3012;
 const POLL_INTERVAL_MS = 60_000; // 60 seconds
-const NEXTJS_API = 'http://localhost:3000';
+const NEXTJS_API = 'http://localhost:3002';
 
 // ============================================================
 // Types (mirrors Prisma schema, plain objects from SQL)

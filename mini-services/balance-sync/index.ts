@@ -2,14 +2,14 @@
 // Fovi Balance/Position Sync Service
 // Periodically syncs all non-demo trading accounts by calling
 // the Next.js API routes for positions and portfolio.
-// Port: 3011
+// Port: 3013
 // ============================================================
 
 import postgres from 'postgres';
 
-const PORT = 3011;
+const PORT = 3013;
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const NEXTJS_BASE = 'http://localhost:3000';
+const NEXTJS_BASE = 'http://localhost:3002';
 
 // ── PostgreSQL Connection ──
 const databaseUrl = process.env.DATABASE_URL || '';

@@ -435,3 +435,25 @@ Stage Summary:
 - The platform is now fully production-ready pending: DATABASE_URL env var, JWT_SECRET env var, Hubtel credentials in admin UI
 - Admin security gap fixed — admin routes now properly require authentication
 - Three background services: market-socket (3003), auto-trade-engine (3010), balance-sync (3011)
+
+---
+Task ID: port-reassignment
+Agent: main
+Task: Reassign service ports — Next.js to 3002, auto-trade-engine to 3012, balance-sync to 3013
+
+Work Log:
+- Changed Next.js dev port from 3000 to 3002 in package.json ("next dev -p 3002")
+- Changed auto-trade-engine PORT from 3010 to 3012 and NEXTJS_API from localhost:3000 to localhost:3002
+- Changed balance-sync PORT from 3011 to 3013 and NEXTJS_BASE from localhost:3000 to localhost:3002
+- Updated Caddyfile default reverse_proxy from localhost:3000 to localhost:3002
+- Updated deploy/ecosystem.config.js: PORT 3000→3002, 3010→3012, 3011→3013
+- Updated deploy/nginx-fovi.conf upstream fovi_app from 127.0.0.1:3000 to 127.0.0.1:3002
+- Updated forgot-password route default base URL from localhost:3000 to localhost:3002
+- Verified all three services start and respond on new ports
+
+Stage Summary:
+- Next.js app: port 3002 ✅
+- Auto-trade engine: port 3012 ✅
+- Balance sync: port 3013 ✅
+- Market service: port 3003 (unchanged)
+- All deploy configs (Caddyfile, nginx, PM2) updated

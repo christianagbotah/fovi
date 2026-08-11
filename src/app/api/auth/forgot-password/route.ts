@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
         );
 
         // Send password reset email (no-op if SMTP not configured)
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000';
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3002';
         const resetLink = `${baseUrl}/auth/reset-password?token=${resetToken}`;
 
         await sendEmail({

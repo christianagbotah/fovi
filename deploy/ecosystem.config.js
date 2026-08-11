@@ -7,7 +7,7 @@ module.exports = {
       instances: 1,
       autorestart: true,
       max_memory_restart: '1G',
-      env: { PORT: 3000, NODE_ENV: 'production' },
+      env: { PORT: 3002, NODE_ENV: 'production' },
     },
     {
       name: 'fovi-market',
@@ -25,7 +25,7 @@ module.exports = {
       interpreter: 'bun',
       instances: 1,
       autorestart: true,
-      env: { PORT: 3010 },
+      env: { PORT: 3012 },
     },
     {
       name: 'fovi-balance-sync',
@@ -34,7 +34,7 @@ module.exports = {
       interpreter: 'bun',
       instances: 1,
       autorestart: true,
-      env: { PORT: 3011 },
+      env: { PORT: 3013 },
     },
   ],
 };
