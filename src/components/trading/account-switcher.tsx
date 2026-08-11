@@ -346,7 +346,7 @@ export function AccountSwitcher() {
       </Sheet>
 
       {/* Add / Link Account Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={(open) => { if (!open) closeAddDialog(); }} modal={false}>
+      <Dialog open={showAddDialog} onOpenChange={(open) => { if (!open) closeAddDialog(); }}>
         <DialogContent
           className="max-w-sm"
           onInteractOutside={(e) => e.preventDefault()}

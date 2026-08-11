@@ -1,0 +1,40 @@
+module.exports = {
+  apps: [
+    {
+      name: 'fovi-app',
+      script: 'node_modules/.bin/next',
+      args: 'start',
+      instances: 1,
+      autorestart: true,
+      max_memory_restart: '1G',
+      env: { PORT: 3000, NODE_ENV: 'production' },
+    },
+    {
+      name: 'fovi-market',
+      script: 'index.ts',
+      cwd: './mini-services/market-service',
+      interpreter: 'bun',
+      instances: 1,
+      autorestart: true,
+      env: { PORT: 3003 },
+    },
+    {
+      name: 'fovi-auto-trade',
+      script: 'index.ts',
+      cwd: './mini-services/auto-trade-engine',
+      interpreter: 'bun',
+      instances: 1,
+      autorestart: true,
+      env: { PORT: 3010 },
+    },
+    {
+      name: 'fovi-balance-sync',
+      script: 'index.ts',
+      cwd: './mini-services/balance-sync',
+      interpreter: 'bun',
+      instances: 1,
+      autorestart: true,
+      env: { PORT: 3011 },
+    },
+  ],
+};

@@ -13,6 +13,7 @@ import type {
   Side,
 } from '../types';
 import type { IBroker } from './factory';
+import { brokerRateLimit } from '../broker-rate-limit';
 
 // Alpaca REST API base URLs
 const ALPACA_REST = {
@@ -58,6 +59,7 @@ export class AlpacaBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getAccountInfo(): Promise<BrokerAccountInfo> {
+    await brokerRateLimit('alpaca');
     const data = await this.request<{
       id: string;
       cash: string;
@@ -86,6 +88,7 @@ export class AlpacaBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getPositions(): Promise<BrokerPosition[]> {
+    await brokerRateLimit('alpaca');
     const data = await this.request<{
       symbol: string;
       qty: string;
@@ -126,6 +129,7 @@ export class AlpacaBroker implements IBroker {
     limitPrice?: number;
     stopPrice?: number;
   }): Promise<BrokerOrderResult> {
+    await brokerRateLimit('alpaca');
     const alpacaOrder: Record<string, unknown> = {
       symbol: params.symbol,
       qty: params.qty.toString(),
@@ -167,6 +171,7 @@ export class AlpacaBroker implements IBroker {
   }
 
   async closePosition(symbol: string): Promise<BrokerOrderResult> {
+    await brokerRateLimit('alpaca');
     // Alpaca has a dedicated close-position endpoint
     const data = await this.deleteRequest<{
       id: string;
@@ -198,6 +203,7 @@ export class AlpacaBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getCandles(symbol: string, timeframe: string, limit: number = 100): Promise<CandleData[]> {
+    await brokerRateLimit('alpaca');
     const alpacaTimeframe = TIMEFRAME_MAP[timeframe] || '1Day';
     const end = new Date().toISOString();
     // Approximate start based on timeframe and limit
@@ -238,6 +244,7 @@ export class AlpacaBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getPrice(symbol: string): Promise<number> {
+    await brokerRateLimit('alpaca');
     const data = await this.dataRequest<{
       symbol: string;
       bid_price: number;

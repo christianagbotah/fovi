@@ -90,12 +90,20 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  // Admin access check
-  if (isAdmin && payload && payload.role !== 'admin') {
-    return NextResponse.json(
-      { error: 'Admin access required.' },
-      { status: 403 }
-    );
+  // Admin access check — require valid admin JWT (reject unauthenticated too)
+  if (isAdmin) {
+    if (!payload) {
+      return NextResponse.json(
+        { error: 'Admin authentication required.' },
+        { status: 401 }
+      );
+    }
+    if (payload.type !== 'access' || payload.role !== 'admin') {
+      return NextResponse.json(
+        { error: 'Admin access required.' },
+        { status: 403 }
+      );
+    }
   }
 
   // If we have a valid payload, inject user info headers for downstream routes

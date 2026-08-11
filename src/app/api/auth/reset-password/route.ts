@@ -1,25 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, hashToken } from '@/lib/auth';
+import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'reset-pw' });
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit check
+    const rateResult = limiter(request);
+    if (!rateResult.allowed) {
+      return NextResponse.json(
+        { error: 'Too many password reset attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    // Zod validation
     const body = await request.json();
-    const { token, newPassword } = body;
-
-    if (!token || !newPassword) {
+    const parsed = resetPasswordSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Token and new password are required' },
+        { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
-    if (newPassword.length < 8) {
-      return NextResponse.json(
-        { error: 'Password must be at least 8 characters long' },
-        { status: 400 }
-      );
-    }
+    const { token, newPassword } = parsed.data;
 
     if (!isDbAvailable() || !db || !hasModel('user')) {
       return NextResponse.json(

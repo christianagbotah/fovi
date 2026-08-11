@@ -13,6 +13,7 @@ import type {
   Side,
 } from '../types';
 import type { IBroker } from './factory';
+import { brokerRateLimit } from '../broker-rate-limit';
 
 // OKX API v5 base URL (same for live and demo — demo is activated via header)
 const OKX_BASE_URL = 'https://www.okx.com/api/v5';
@@ -88,6 +89,7 @@ export class OkxBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getAccountInfo(): Promise<BrokerAccountInfo> {
+    await brokerRateLimit('okx');
     const data = await this.signedRequest<OkxResponse<OkxAccountBalance[]>>(
       'GET',
       '/account/balance',
@@ -115,6 +117,7 @@ export class OkxBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getPositions(): Promise<BrokerPosition[]> {
+    await brokerRateLimit('okx');
     const data = await this.signedRequest<OkxResponse<OkxPosition[]>>(
       'GET',
       '/account/positions',
@@ -181,6 +184,7 @@ export class OkxBroker implements IBroker {
       }
     }
 
+    await brokerRateLimit('okx');
     const data = await this.signedRequest<OkxResponse<OkxOrderResult[]>>(
       'POST',
       '/trade/order',
@@ -244,6 +248,7 @@ export class OkxBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getCandles(symbol: string, timeframe: string, limit: number = 100): Promise<CandleData[]> {
+    await brokerRateLimit('okx');
     const interval = INTERVAL_MAP[timeframe] || '1H';
     const instId = this.toOkxInstId(symbol);
     const params = new URLSearchParams({
@@ -285,6 +290,7 @@ export class OkxBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getPrice(symbol: string): Promise<number> {
+    await brokerRateLimit('okx');
     const instId = this.toOkxInstId(symbol);
     const url = `${this.baseUrl}/market/ticker?instId=${encodeURIComponent(instId)}`;
     const res = await fetch(url);

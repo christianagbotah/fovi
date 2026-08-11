@@ -13,6 +13,8 @@ import type {
   Side,
 } from '../types';
 import type { IBroker } from './factory';
+import { formatBinanceQty, formatBinancePrice } from './binance-exchange-info';
+import { brokerRateLimit } from '../broker-rate-limit';
 
 // Binance API base URLs
 const BINANCE_REST = {
@@ -59,6 +61,7 @@ export class BinanceBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getAccountInfo(): Promise<BrokerAccountInfo> {
+    await brokerRateLimit('binance');
     const data = await this.signedRequest<{
       accountType: string;
       balances: { asset: string; free: string; locked: string }[];
@@ -91,6 +94,7 @@ export class BinanceBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getPositions(): Promise<BrokerPosition[]> {
+    await brokerRateLimit('binance');
     const data = await this.signedRequest<{
       balances: { asset: string; free: string; locked: string }[];
     }>('/api/v3/account');
@@ -146,29 +150,30 @@ export class BinanceBroker implements IBroker {
     limitPrice?: number;
     stopPrice?: number;
   }): Promise<BrokerOrderResult> {
+    await brokerRateLimit('binance');
     const binanceParams: Record<string, string> = {
       symbol: params.symbol,
       side: params.side.toUpperCase(),
       type: this.mapOrderType(params.type),
-      quantity: this.formatQty(params.qty, params.symbol),
+      quantity: await this.formatQty(params.qty, params.symbol),
     };
 
     if (params.type === 'limit' || params.type === 'stop_limit') {
       if (params.limitPrice !== undefined) {
-        binanceParams.price = this.formatPrice(params.limitPrice, params.symbol);
+        binanceParams.price = await this.formatPrice(params.limitPrice, params.symbol);
       }
       binanceParams.timeInForce = 'GTC';
     }
 
     if (params.type === 'stop') {
       if (params.stopPrice !== undefined) {
-        binanceParams.stopPrice = this.formatPrice(params.stopPrice, params.symbol);
+        binanceParams.stopPrice = await this.formatPrice(params.stopPrice, params.symbol);
       }
     }
 
     if (params.type === 'stop_limit') {
       if (params.stopPrice !== undefined) {
-        binanceParams.stopPrice = this.formatPrice(params.stopPrice, params.symbol);
+        binanceParams.stopPrice = await this.formatPrice(params.stopPrice, params.symbol);
       }
     }
 
@@ -206,6 +211,7 @@ export class BinanceBroker implements IBroker {
   }
 
   async closePosition(symbol: string): Promise<BrokerOrderResult> {
+    await brokerRateLimit('binance');
     // For spot, we need to sell all of the base asset
     // Get the balance first
     const data = await this.signedRequest<{
@@ -265,6 +271,7 @@ export class BinanceBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getCandles(symbol: string, timeframe: string, limit: number = 100): Promise<CandleData[]> {
+    await brokerRateLimit('binance');
     const interval = INTERVAL_MAP[timeframe] || '1h';
     const params = new URLSearchParams({
       symbol,
@@ -298,6 +305,7 @@ export class BinanceBroker implements IBroker {
   // ----------------------------------------------------------
 
   async getPrice(symbol: string): Promise<number> {
+    await brokerRateLimit('binance');
     const url = `${this.baseUrl}/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`;
     const res = await fetch(url);
 
@@ -420,21 +428,27 @@ export class BinanceBroker implements IBroker {
   }
 
   /**
-   * Format quantity with appropriate decimal places.
-   * Binance requires specific step sizes per symbol.
-   * We use a safe default of 8 decimals; users should
-   * configure exchange info per-symbol for production.
+   * Format quantity using Binance exchange info (step size).
+   * Falls back to 8-decimal trim if exchange info is unavailable.
    */
-  private formatQty(qty: number, _symbol: string): string {
-    return qty.toFixed(8).replace(/\.?0+$/, '');
+  private async formatQty(qty: number, symbol: string): Promise<string> {
+    try {
+      return await formatBinanceQty(symbol, qty);
+    } catch {
+      return qty.toFixed(8).replace(/\.?0+$/, '');
+    }
   }
 
   /**
-   * Format price with appropriate decimal places.
-   * Binance requires specific tick sizes per symbol.
+   * Format price using Binance exchange info (tick size).
+   * Falls back to 8-decimal trim if exchange info is unavailable.
    */
-  private formatPrice(price: number, _symbol: string): string {
-    return price.toFixed(8).replace(/\.?0+$/, '');
+  private async formatPrice(price: number, symbol: string): Promise<string> {
+    try {
+      return await formatBinancePrice(symbol, price);
+    } catch {
+      return price.toFixed(8).replace(/\.?0+$/, '');
+    }
   }
 }
 
