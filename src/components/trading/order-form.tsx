@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTradingStore } from '@/lib/store/trading-store';
-import { getDemoPrice, getDemoSymbolName } from '@/lib/broker/demo';
 import { formatPrice } from '@/lib/market-sim';
 import { toast } from 'sonner';
 import type { OrderSide, OrderType } from '@/lib/types';
@@ -45,7 +44,10 @@ export function OrderForm() {
   const [symbolDropdownOpen, setSymbolDropdownOpen] = useState(false);
 
   const symbol = localSymbol || effectiveSymbol || '';
-  const currentPrice = symbol ? getDemoPrice(symbol) : 0;
+  // Use live WebSocket price if available, fall back to allSymbols, then 0
+  const livePrice = livePrices.find(p => p.symbol === symbol);
+  const storePrice = allSymbols.find(s => s.symbol === symbol);
+  const currentPrice = livePrice?.price ?? storePrice?.price ?? 0;
 
   const [side, setSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
@@ -240,7 +242,12 @@ export function OrderForm() {
                           <span className="text-xs text-muted-foreground">{s.name}</span>
                         </div>
                         <span className="text-xs tabular-nums text-muted-foreground">
-                          {formatPrice(getDemoPrice(s.symbol), s.symbol)}
+                          {livePrices.find(p => p.symbol === s.symbol)?.price
+                            ? formatPrice(livePrices.find(p => p.symbol === s.symbol)!.price, s.symbol)
+                            : allSymbols.find(a => a.symbol === s.symbol)?.price
+                              ? formatPrice(allSymbols.find(a => a.symbol === s.symbol)!.price, s.symbol)
+                              : '—'
+                          }
                         </span>
                       </button>
                     ))

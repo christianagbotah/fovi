@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomBytes } from 'crypto';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
-import { hashPassword } from '@/lib/auth';
+import { hashPassword, hashToken } from '@/lib/auth';
+import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -53,21 +55,18 @@ export async function POST(request: NextRequest) {
 
       const passwordHash = hashPassword(password);
 
-      const profileData = JSON.stringify({
-        phone: body.phone || null,
-        country: body.country || null,
-        tradingExperience: body.experienceLevel || null,
-        tradedAssets: body.assetTypes || [],
-        tradingConcerns: body.concerns || [],
-        portfolioSize: body.portfolioRange || null,
-        referralSource: body.referralSource || null,
-      });
+      // Generate email verification token (1 hour expiry)
+      const rawVerifyToken = randomBytes(32).toString('hex');
+      const hashedVerifyToken = hashToken(rawVerifyToken);
+      const verifyExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
       const user = await db.user.create({
         data: {
           email: emailLower,
           name: name.trim(),
           passwordHash,
+          emailVerifyToken: hashedVerifyToken,
+          emailVerifyExpiry: verifyExpiry,
         },
       });
 
@@ -78,12 +77,49 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      // Auto-create demo trading account (5.5)
+      if (hasModel('tradingAccount')) {
+        try {
+          await db.tradingAccount.create({
+            data: {
+              userId: user.id,
+              broker: 'demo',
+              accountType: 'demo',
+              label: 'Demo Account',
+              balance: 100000,
+              currency: 'USD',
+              isActive: true,
+              isDefault: true,
+            },
+          });
+        } catch (accErr) {
+          console.warn('[signup] Failed to create demo trading account (non-critical):', accErr);
+        }
+      }
+
+      // Send verification email (fire-and-forget)
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '';
+      sendEmail({
+        to: emailLower,
+        subject: 'Verify your email address',
+        html: `
+          <h2>Welcome to Fovi!</h2>
+          <p>Hi ${name.trim() || 'there'},</p>
+          <p>Please verify your email address by clicking the link below:</p>
+          <p><a href="${appUrl}/verify-email?token=${rawVerifyToken}" style="display:inline-block;padding:10px 20px;background:#10b981;color:#fff;border-radius:6px;text-decoration:none;">Verify Email</a></p>
+          <p>This link expires in 1 hour.</p>
+          <p>If you didn't create an account, you can safely ignore this email.</p>
+        `.trim(),
+        text: `Welcome to Fovi! Please verify your email: ${appUrl}/verify-email?token=${rawVerifyToken}`,
+      }).catch(() => {});
+
       return NextResponse.json({
         success: true,
         user: {
           id: user.id,
           email: user.email,
           name: user.name,
+          emailVerified: false,
         },
       });
     }
@@ -95,6 +131,7 @@ export async function POST(request: NextRequest) {
         id: 'new-user-' + Date.now(),
         email: emailLower,
         name: name.trim(),
+        emailVerified: false,
       },
     });
   } catch {

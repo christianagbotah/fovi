@@ -13,6 +13,9 @@ model User {
   name           String?
   passwordHash   String
   isActive       Boolean  @default(true)
+  emailVerified  Boolean  @default(false)
+  emailVerifyToken String?
+  emailVerifyExpiry DateTime?
   resetToken     String?
   resetTokenExpiry DateTime?
   createdAt      DateTime @default(now())

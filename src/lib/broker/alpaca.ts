@@ -259,6 +259,23 @@ export class AlpacaBroker implements IBroker {
     return data.last_trade_price;
   }
 
+  async cancelOrder(symbol: string, orderId: string): Promise<void> {
+    await brokerRateLimit('alpaca');
+    const url = `${this.baseUrl}/v2/orders/${orderId}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        ...this.headers,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new AlpacaError(res.status, `Alpaca cancel order error: ${res.status} ${text}`, `/v2/orders/${orderId}`);
+    }
+  }
+
   // ----------------------------------------------------------
   // Internal helpers
   // ----------------------------------------------------------

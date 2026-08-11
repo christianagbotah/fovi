@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
 import { getUserId, getUserIdSync } from '@/lib/get-user-id';
+import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
 
 const DEMO_BOTS = [
   {
@@ -182,6 +183,16 @@ export async function POST(req: NextRequest) {
       };
       return NextResponse.json(fallback);
     }
+
+    // --- Subscription limit check ---
+    const botCheck = await checkSubscriptionLimit(userId, 'maxBots');
+    if (!botCheck.allowed) {
+      return NextResponse.json(
+        { error: getLimitMessage('maxBots'), current: botCheck.current, limit: botCheck.limit },
+        { status: 403 },
+      );
+    }
+
     // Find or default account
     let account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },

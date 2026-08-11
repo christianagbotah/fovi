@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
 import { getGlobalAdminLevy } from '@/lib/system-config';
+import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
 
 const DEFAULT_CONFIG = {
   id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
@@ -97,6 +98,17 @@ export async function PUT(request: Request) {
     });
     if (!defaultAccount) {
       return NextResponse.json({ error: 'No default account found' }, { status: 404 });
+    }
+
+    // --- Subscription limit check (only when enabling auto-trade) ---
+    if (enabled === true || newStatus === 'running') {
+      const botCheck = await checkSubscriptionLimit(userId, 'maxBots');
+      if (!botCheck.allowed) {
+        return NextResponse.json(
+          { error: getLimitMessage('maxBots'), current: botCheck.current, limit: botCheck.limit },
+          { status: 403 },
+        );
+      }
     }
 
     const updateData: Record<string, unknown> = { status: newStatus };

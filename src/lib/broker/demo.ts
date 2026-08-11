@@ -295,6 +295,10 @@ export class DemoBroker {
   async getPrice(symbol: string): Promise<number> {
     return getDemoPrice(symbol);
   }
+
+  async cancelOrder(_symbol: string, _orderId: string): Promise<void> {
+    // Demo orders fill immediately — nothing to cancel
+  }
 }
 
 export { getAssetType, BASE_PRICES, SYMBOL_NAMES };

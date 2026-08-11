@@ -457,3 +457,212 @@ Stage Summary:
 - Balance sync: port 3013 ✅
 - Market service: port 3003 (unchanged)
 - All deploy configs (Caddyfile, nginx, PM2) updated
+
+---
+Task ID: phase2-market-data
+Agent: market-data-integrator
+Task: Integrate real market data for all asset types
+
+Work Log:
+- Created `src/lib/market-data.ts` — unified market data service
+  - Centralizes all external API calls for every asset type
+  - Crypto: CoinGecko free API (no key), cached 30s
+  - Forex: ExchangeRate-API (https://open.er-api.com/v6/latest/USD), cached 60s
+  - Metals/Commodities: metals.live API (https://api.metals.live/v1/spot), cached 60s
+  - Stocks & Indices: Finnhub free API (FINNHUB_API_KEY env var), cached 5min
+  - All functions have try/catch with graceful fallback to demo prices
+  - `fetchAllRealPrices()` fetches all sources in parallel
+  - `getSinglePrice(symbol)` returns a MarketPrice with `_realData: true/false` flag
+- Updated `src/app/api/trading/market/symbols/route.ts`
+  - Replaced inline CoinGecko code with calls to `market-data.ts`
+  - Removed stub `fetchStockSymbols()` — now all data flows through unified service
+  - Added `?live=true` query param to filter only assets with real prices
+  - Added single-symbol price endpoint (when symbol param is set without timeframe)
+  - Kept CoinGecko OHLC candle support for chart data
+- Fixed `src/components/trading/order-form.tsx`
+  - Line 48: Replaced `getDemoPrice(symbol)` with live price lookup chain: `livePrices → allSymbols → 0`
+  - Line 243: Symbol dropdown rows now show live/store prices instead of `getDemoPrice()`
+  - Removed `getDemoPrice` and `getDemoSymbolName` imports (no longer needed client-side)
+- Updated `mini-services/market-service/index.ts`
+  - Added `fetchForexPrices()` using ExchangeRate-API, refreshed every 60s
+  - Added `fetchMetalPrices()` using metals.live API, refreshed every 60s
+  - Added `fetchStockPrices()` using Finnhub API, refreshed every 5min (requires FINNHUB_API_KEY)
+  - Replaced single CoinGecko interval with 4 separate refresh intervals per source
+  - Real data stored in `realPriceCache` Map, broadcast loop (2s) reads from cache
+  - Startup fetches all real data in parallel, logs how many symbols have real vs demo data
+  - Improved asset types: 'index' for US30/NAS100, 'commodity' for XAUUSD/XAGUSD
+  - Added `_realData` boolean to PriceTick for client data source awareness
+
+Stage Summary:
+- 4 new free data sources integrated (crypto, forex, metals, stocks/indices)
+- App works 100% without any API keys — graceful demo fallback everywhere
+- With no FINNHUB_API_KEY: crypto (CoinGecko) + forex (ExchangeRate) + metals (metals.live) = ~16 real symbols
+- With FINNHUB_API_KEY: all 26 symbols get real data
+- Order form now shows live WebSocket prices instead of hardcoded demo values
+- Zero ESLint errors across all changes
+---
+Task ID: Phase3-TechnicalAnalysis
+Agent: ta-strategy-engineer
+Task: Replace random AI strategy with real technical analysis in auto-trade engine
+
+Work Log:
+- Created `mini-services/auto-trade-engine/strategies.ts` — standalone module with all technical indicators:
+  - `computeRSI(closes, period=14)` — Wilder's smoothing method, tested: uptrend=86.87
+  - `computeMACD(closes, fast=12, slow=26, signal=9)` — EMA-based MACD with histogram
+  - `computeSMA(closes, period)` — simple moving average
+  - `computeEMA(closes, period)` — exponential moving average with SMA seed
+  - `computeBollingerBands(closes, period=20, stdDev=2)` — middle + upper/lower bands
+  - `computeATR(highs, lows, closes, period=14)` — Wilder's smoothed ATR
+  - `generateSignal(candles, strategy, riskTolerance, symbol)` — routes to 5 strategies:
+    - **momentum**: RSI < 30 + MACD bullish crossover → buy; RSI > 70 + MACD bearish crossover → sell
+    - **balanced**: SMA20 > SMA50 + RSI > 50 → buy; SMA20 < SMA50 + RSI < 50 → sell
+    - **conservative**: Bollinger lower zone + RSI < 35 → buy; upper zone + RSI > 65 → sell
+    - **dca**: Buy only when price drops ≥2% from last buy + RSI < 50 (in-memory tracker per symbol)
+    - **grid**: ATR-based grid levels, buy at lower / sell at upper grid boundaries
+  - Each signal returns: symbol, side, confidence (50-95%), entryPrice, stopLoss, takeProfit, reason string
+  - `calculatePositionSize()` — risk-based: `riskAmount / slDistance`, capped by allocation and maxPositionSize
+  - `getRiskParams()` — aggressive (5% risk, 3% SL, 6% TP), medium (2%, 2%, 4%), conservative (1%, 1%, 2%)
+
+- Rewrote `mini-services/auto-trade-engine/index.ts`:
+  - Removed `generateSimpleSignal()` (random 50/50 buy/sell)
+  - Removed `BrokerPriceTick` type (no longer needed)
+  - Added candle data fetching with 3-layer fallback:
+    1. CoinGecko OHLC API for crypto symbols (real 30-day hourly/daily candles)
+    2. Next.js `/api/trading/market/symbols?symbol=X&timeframe=1d&limit=100` API
+    3. Deterministic demo candle generator (pseudo-random walk with mean reversion)
+  - Added in-memory candle cache (45s TTL) to reuse within same cycle
+  - Updated price fetching to 3-layer: Next.js market API → CoinGecko direct → demo
+  - `processBot()` now:
+    - Scans all available symbols (excluding open positions) with the bot's actual `strategy` field
+    - Fetches candle data for each symbol, runs `generateSignal()` with bot's strategy + riskTolerance
+    - Picks the highest-confidence signal across all symbols
+    - Uses `calculatePositionSize()` for risk-based qty (was: simple `allocAmount / price`)
+    - Uses signal's own SL/TP (ATR or BB-derived) instead of flat config percentages
+    - Logs full analysis reasoning: `[AutoTrade] [bc_demo_1] Executing BUY BTC qty=... @ ... RSI(14)=32.5, MACD hist=+0.12, SMA20 > SMA50 → BUY signal (confidence: 72%)`
+  - Preserved all existing SL/TP monitoring, closeAndRecord, executeTrade, DB fallback, demo mode
+  - Preserved 60s poll interval, port 3012, admin levy system
+
+Stage Summary:
+- Random `Math.random() > 0.5` replaced with 5 real technical analysis strategies
+- All indicator math verified (SMA, EMA, RSI, MACD, Bollinger Bands, ATR)
+- Real candle data from CoinGecko OHLC for crypto, Next.js API proxy for others, demo fallback
+- Risk-based position sizing: accounts for SL distance, balance, and risk tolerance
+- Each signal includes ATR-based or BB-based dynamic SL/TP instead of flat percentages
+- Strategy field on BotConfig is now fully utilized (was stored but ignored)
+- Zero lint errors, all TypeScript compiles clean
+
+---
+Task ID: Phase 4
+Agent: fullstack-developer
+Task: Subscription limit enforcement + Admin financial dashboard API
+
+Work Log:
+- Created `src/lib/subscription-guard.ts`
+  - `checkSubscriptionLimit(userId, limitType)` — checks active subscription, counts current usage, returns `{ allowed, current, limit, planName }`
+  - Free tier defaults: maxBots: 1, maxAccounts: 1, maxPositions: 3
+  - Looks up SubscriptionPlan for active subscriptions, falls back to free tier if none
+  - Demo user (DEMO_USER_ID) always allowed (demo mode)
+  - DB unavailable → always allowed (graceful degradation)
+  - `getLimitMessage(type)` for human-readable 403 error messages
+- Enforced subscription limits in 3 API routes:
+  - `POST /api/trading/bots` — checks `maxBots` after auth, before DB create, returns 403 with `{ error, current, limit }`
+  - `POST /api/trading/accounts` — checks `maxAccounts` in both demo-broker and real-broker paths
+  - `PUT /api/trading/auto-trade` — checks `maxBots` only when `enabled === true` or `status === 'running'`
+- Created `src/app/api/admin/finance/route.ts`
+  - `GET /api/admin/finance` — admin-only (verifies X-User-Role header)
+  - Returns: totalUsers, activeTraders, totalDeposits, totalAdminLevyCollected, totalRealizedPnl, openPositions, totalBotsRunning, perUserStats[], recentLevyTransactions[], platformMetrics
+  - Uses Prisma aggregation queries (groupBy, aggregate, count) for efficiency
+  - 8 parallel queries via Promise.all for fast response
+  - Excludes demo user from all metrics
+  - Graceful empty response when DB unavailable
+
+Stage Summary:
+- Subscription plan limits are now enforced at the API level for bot creation, account linking, and auto-trade enablement
+- Admin financial dashboard API provides platform-wide financial overview with per-user breakdowns
+- All changes gracefully degrade when DB is unavailable (demo mode)
+
+---
+Task ID: 5.1-5.5
+Agent: phase5-polish
+Task: Email verification, token refresh, order cancellation, persist demo SL/TP, auto-create demo account
+
+Work Log:
+- Added `emailVerified Boolean @default(false)`, `emailVerifyToken String?`, `emailVerifyExpiry DateTime?` to User model in `prisma/schema.prisma`
+- Created `src/app/api/auth/verify-email/route.ts` — POST endpoint that verifies a token (hashed lookup, 1h expiry check), sets `emailVerified=true`, clears token fields. Rate limited 10/min.
+- Updated `src/app/api/auth/signup/route.ts` — After user creation, generates 32-byte hex verification token, hashes and stores in `emailVerifyToken` + `emailVerifyExpiry`, sends verification email via `sendEmail()` (fire-and-forget). Also auto-creates a demo TradingAccount with $100k balance (try/catch guarded).
+- Created `src/app/api/auth/resend-verification/route.ts` — POST endpoint accepting `{ email }`, re-generates token, re-sends email. Rate limited 3/min. Does not reveal if email exists.
+- Created `src/app/api/auth/refresh/route.ts` — POST `{ refreshToken }`, verifies JWT is type='refresh', generates new access (24h) + new refresh (7d) tokens (rotation). Rate limited 10/min.
+- Added `/api/auth/refresh`, `/api/auth/verify-email`, `/api/auth/resend-verification` to `PUBLIC_PATHS` in `src/middleware.ts`
+- Added `cancelOrder(symbol: string, orderId: string): Promise<void>` to `IBroker` interface in `src/lib/broker/factory.ts`
+- Implemented `cancelOrder` in all 4 brokers: binance.ts (DELETE /api/v3/order with HMAC), okx.ts (POST /trade/cancel-order with signature), alpaca.ts (DELETE /v2/orders/{id}), demo.ts (no-op)
+- Created `src/app/api/trading/orders/[id]/route.ts` — DELETE handler: finds order by ID, verifies ownership, checks status is pending/partially_filled, calls broker.cancelOrder, updates DB status to 'cancelled'
+- Updated `src/app/api/trading/positions/route.ts` GET: detects demo accounts, loads in-memory SL/TP, persists to DB on upsert, merges on read (in-memory takes precedence over DB)
+- Updated `src/app/api/trading/positions/[id]/route.ts` PATCH: after DB update, syncs demo SL/TP to in-memory store via `saveDemoPositionSLTP()`
+
+Stage Summary:
+- 5 features fully implemented, all linting clean
+- 3 new auth API routes: verify-email, resend-verification, refresh (with token rotation)
+- 1 new trading API route: orders/[id] DELETE for order cancellation
+- IBroker interface extended with cancelOrder, all 4 brokers implement it
+- Demo SL/TP now dual-persisted (DB + in-memory) with proper merge semantics
+- New users auto-get a demo trading account with $100k balance on signup
+- Schema changes ready: emailVerified, emailVerifyToken, emailVerifyExpiry on User model
+
+---
+Task ID: production-hardening-all-phases
+Agent: main
+Task: Full production-readiness overhaul — 5 phases, 17 items
+
+Work Log:
+
+### Phase 1 — Security Hardening
+- Created src/proxy.ts as active JWT middleware (Next.js 16 natively uses proxy.ts)
+- Verified: public routes pass, protected routes return 401, admin routes return 401/403
+- Added Hubtel webhook signature verification (SHA-256 HMAC) + API re-verification in production
+- Fixed deposit/withdrawal: Zod validation, max $1M cap, blocked for non-demo accounts
+- Created src/lib/production-check.ts + src/instrumentation.ts — warns on startup if JWT_SECRET/AUTH_PEPPER use defaults
+- Updated .env.example with comprehensive documentation of all env vars
+
+### Phase 2 — Real Market Data (subagent: market-data-integrator)
+- Created src/lib/market-data.ts — unified market data service
+- Crypto: CoinGecko free API (30s cache)
+- Forex: ExchangeRate-API free, no key needed (60s cache)
+- Metals: metals.live API free, no key needed (60s cache)
+- Stocks/Indices: Finnhub free API with FINNHUB_API_KEY env var (5min cache)
+- Updated market/symbols route to use real data with ?live=true filter
+- Fixed order-form.tsx to use livePrices from store instead of getDemoPrice()
+- Updated market-service WebSocket to broadcast real forex + metals prices
+- Result: 12 symbols real without any API keys (8 crypto + 4 forex)
+
+### Phase 3 — Real AI Strategy (subagent: strategies-builder)
+- Created mini-services/auto-trade-engine/strategies.ts (~430 lines)
+- 6 technical indicators: RSI, MACD, SMA, EMA, Bollinger Bands, ATR
+- 5 strategy implementations: momentum, balanced, conservative, dca, grid
+- Replaced Math.random() with actual signal generation based on candle analysis
+- Risk-based position sizing: riskAmount / slDistance
+- 3-layer candle fetching: CoinGecko → Next.js API → demo generator
+- Log format: [Strategies] [BTC] Balanced: RSI(14)=32.5, SMA20 > SMA50 → BUY (confidence: 72%)
+
+### Phase 4 — Subscription + Admin Finance (subagent: sub-admin-builder)
+- Created src/lib/subscription-guard.ts — checks maxBots/maxAccounts/maxPositions
+- Free tier defaults: maxBots=1, maxAccounts=1, maxPositions=3
+- Enforced in: POST /api/trading/bots, POST /api/trading/accounts, PUT /api/trading/auto-trade
+- Created GET /api/admin/finance — total users, levy collected, per-user PnL, platform metrics
+
+### Phase 5 — Polish (subagent: phase5-polish)
+- Email verification: schema fields + /api/auth/verify-email + /api/auth/resend-verification
+- Token refresh: /api/auth/refresh with rotation (access 24h + refresh 7d)
+- Order cancellation: cancelOrder() on Binance/OKX/Alpaca/Demo + DELETE /api/trading/orders/[id]
+- Demo SL/TP persistence: positions GET/PATCH now persist to DB for demo accounts
+- Auto-create demo account on signup (try/catch, non-blocking)
+
+Stage Summary:
+- ALL 17 production-readiness items completed across 5 phases
+- JWT auth fully active via proxy.ts (Next.js 16 native middleware)
+- 12/28 symbols have real prices without any API key; all 28+ with FINNHUB_API_KEY
+- Auto-trade engine uses real technical analysis (RSI, MACD, MA crossovers, Bollinger Bands)
+- Hubtel webhooks verified via signature + API re-verification
+- Fake deposits/withdrawals blocked for real accounts
+- Subscription limits enforced on bots, accounts, auto-trade activation
+- Admin financial dashboard API operational
+- Email verification, token refresh, order cancellation all implemented

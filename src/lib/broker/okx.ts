@@ -243,8 +243,19 @@ export class OkxBroker implements IBroker {
     });
   }
 
+  async cancelOrder(symbol: string, orderId: string): Promise<void> {
+    const instId = this.toOkxInstId(symbol);
+    const body = JSON.stringify({ instId, ordId: orderId });
+    await brokerRateLimit('okx');
+    await this.signedRequest<OkxResponse<OkxOrderResult[]>>(
+      'POST',
+      '/trade/cancel-order',
+      body,
+    );
+  }
+
   // ----------------------------------------------------------
-  // Market Data — Candles (PUBLIC endpoint, no signing required)
+  // Market Data (PUBLIC endpoint, no signing required)
   // ----------------------------------------------------------
 
   async getCandles(symbol: string, timeframe: string, limit: number = 100): Promise<CandleData[]> {

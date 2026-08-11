@@ -64,6 +64,7 @@ export interface IBroker {
     volume: number;
   }[]>;
   getPrice(symbol: string): Promise<number>;
+  cancelOrder(symbol: string, orderId: string): Promise<void>;
 }
 
 export function createBroker(config: BrokerConfig): IBroker {

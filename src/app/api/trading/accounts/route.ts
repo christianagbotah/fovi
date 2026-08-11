@@ -7,6 +7,7 @@ import { DemoBroker } from '@/lib/broker/demo';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { encrypt } from '@/lib/encryption';
 import { v4 as uuidv4 } from 'uuid';
+import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
 
 // Demo fallback data — now includes allocation fields
 const makeDemoAccount = (overrides: Record<string, any> = {}) => ({
@@ -44,6 +45,16 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 100000, linkedBalance: 100000 }));
       }
       const userId = await getUserId(req);
+
+      // --- Subscription limit check ---
+      const accountCheck = await checkSubscriptionLimit(userId, 'maxAccounts');
+      if (!accountCheck.allowed) {
+        return NextResponse.json(
+          { error: getLimitMessage('maxAccounts'), current: accountCheck.current, limit: accountCheck.limit },
+          { status: 403 },
+        );
+      }
+
       const account = await db.tradingAccount.create({
         data: {
           id, userId, broker, accountType,
@@ -67,6 +78,15 @@ export async function POST(req: NextRequest) {
     }
 
     const userId = await getUserId(req);
+
+    // --- Subscription limit check ---
+    const accountCheck = await checkSubscriptionLimit(userId, 'maxAccounts');
+    if (!accountCheck.allowed) {
+      return NextResponse.json(
+        { error: getLimitMessage('maxAccounts'), current: accountCheck.current, limit: accountCheck.limit },
+        { status: 403 },
+      );
+    }
 
     // Create account with encrypted credentials
     const account = await db.tradingAccount.create({

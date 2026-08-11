@@ -3,6 +3,7 @@ import { db, hasModel } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { getGlobalAdminLevy } from '@/lib/system-config';
+import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
 
 // PATCH — update TP/SL or other position fields
 export async function PATCH(
@@ -44,6 +45,16 @@ export async function PATCH(
       where: { id },
       data: updateData,
     });
+
+    // For demo positions, also update the in-memory demo-sltp-store
+    const isDemo = position.account.broker === 'demo' || position.account.accountType === 'demo';
+    if (isDemo && (body.stopLoss !== undefined || body.takeProfit !== undefined)) {
+      saveDemoPositionSLTP(
+        position.symbol,
+        body.stopLoss ?? updated.stopLoss,
+        body.takeProfit ?? updated.takeProfit,
+      );
+    }
 
     return NextResponse.json(updated);
   } catch (error) {

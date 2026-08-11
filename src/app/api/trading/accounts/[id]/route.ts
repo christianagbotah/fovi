@@ -1,20 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
+import { z } from 'zod/v4';
+
+const patchSchema = z.object({
+  balance: z.number().min(0).optional(),
+  action: z.enum(['deposit', 'withdraw']).optional(),
+  amount: z.number().positive().max(1_000_000).optional(),
+});
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  let body: any = {};
   try {
     const { id } = await params;
-    body = await req.json();
-    const { balance, action, amount } = body;
+    const raw = await req.json();
+    const parsed = patchSchema.safeParse(raw);
 
-    if (typeof balance !== 'number' || balance < 0) {
-      return NextResponse.json({ error: 'Invalid balance' }, { status: 400 });
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Invalid request', details: parsed.error.issues },
+        { status: 400 },
+      );
     }
 
+    const { balance, action, amount } = parsed.data;
+
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json({ success: true, balance });
+      return NextResponse.json({ success: true, balance: balance ?? 0 });
     }
 
     const userId = await getUserId(req);
@@ -24,14 +35,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    let newBalance = balance;
-    if (action === 'deposit' && typeof amount === 'number' && amount > 0) {
-      newBalance = account.balance + amount;
-    } else if (action === 'withdraw' && typeof amount === 'number' && amount > 0) {
-      if (amount > account.balance) {
-        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+    let newBalance = typeof balance === 'number' ? balance : account.balance;
+
+    // Only demo accounts can use direct deposit/withdrawal
+    // Real accounts must go through the broker
+    if (action && amount) {
+      if (account.accountType !== 'demo' && account.broker !== 'demo') {
+        return NextResponse.json(
+          { error: 'Deposits and withdrawals for real accounts must be made through your broker.' },
+          { status: 400 },
+        );
       }
-      newBalance = account.balance - amount;
+
+      if (action === 'deposit') {
+        newBalance = account.balance + amount;
+      } else if (action === 'withdraw') {
+        if (amount > account.balance) {
+          return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+        }
+        newBalance = account.balance - amount;
+      }
     }
 
     const updated = await db.tradingAccount.update({
@@ -42,7 +65,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ success: true, balance: updated.balance, previousBalance: account.balance });
   } catch (error) {
     console.warn('[accounts/[id] PATCH] error:', error);
-    return NextResponse.json({ success: true, balance: body.balance ?? 0 });
+    return NextResponse.json({ error: 'Failed to update account' }, { status: 500 });
   }
 }
 

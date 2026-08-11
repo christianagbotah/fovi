@@ -318,6 +318,27 @@ export class BinanceBroker implements IBroker {
     return parseFloat(data.price);
   }
 
+  async cancelOrder(symbol: string, orderId: string): Promise<void> {
+    await brokerRateLimit('binance');
+    const params = {
+      symbol,
+      orderId,
+    };
+    const queryString = `timestamp=${Date.now()}&recvWindow=${this.recvWindow}&symbol=${encodeURIComponent(symbol)}&orderId=${orderId}`;
+    const signature = await this.sign(queryString);
+    const url = `${this.baseUrl}/api/v3/order?${queryString}&signature=${signature}`;
+
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: { 'X-MBX-APIKEY': this.apiKey },
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new BinanceError(res.status, `Binance cancel order error: ${res.status} ${body}`, '/api/v3/order');
+    }
+  }
+
   // ----------------------------------------------------------
   // HMAC-SHA256 Signing (Web Crypto API)
   // ----------------------------------------------------------

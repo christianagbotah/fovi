@@ -9,9 +9,18 @@
 //   - Executes trades via HTTP calls to the Next.js API (localhost:3002)
 //   - Updates bot stats + positions directly in PostgreSQL
 //   - Falls back to demo mode when DB is unavailable
+//   - Uses real technical analysis (RSI, MACD, SMA, BB, ATR) for signals
+//   - Fetches real candle data (CoinGecko OHLC) when available
 // ============================================================
 
 import postgres from 'postgres';
+import {
+  generateSignal,
+  calculatePositionSize,
+  updateDCALastBuy,
+  type CandleData,
+  type TradeSignal,
+} from './strategies';
 
 // ============================================================
 // Configuration
@@ -68,19 +77,6 @@ interface PositionRow {
   stopLoss: number | null;
   takeProfit: number | null;
   status: string;
-}
-
-interface BrokerPriceTick {
-  symbol: string;
-  name: string;
-  assetType: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  volume: number;
-  high24h: number;
-  low24h: number;
-  timestamp: number;
 }
 
 // ============================================================
@@ -230,77 +226,209 @@ function getDemoPositions(accountId: string): PositionRow[] {
 
 const DEMO_SYMBOLS = ['AAPL', 'NVDA', 'BTC', 'ETH', 'TSLA', 'GOOGL', 'MSFT', 'SOL', 'META', 'AMD'];
 
+const DEMO_BASE_PRICES: Record<string, number> = {
+  AAPL: 195.5, GOOGL: 178.2, MSFT: 445.8, AMZN: 198.3, NVDA: 920.5,
+  TSLA: 245.6, META: 530.2, NFLX: 720.1, AMD: 178.5, INTC: 32.4,
+  BTC: 67500, ETH: 3520, SOL: 172.5, BNB: 595, XRP: 0.58,
+  DOGE: 0.165, ADA: 0.48, AVAX: 38.2, DOT: 7.35, LINK: 17.8,
+};
+
 function getDemoPrice(symbol: string): number {
-  const basePrices: Record<string, number> = {
-    AAPL: 195.5, GOOGL: 178.2, MSFT: 445.8, AMZN: 198.3, NVDA: 920.5,
-    TSLA: 245.6, META: 530.2, NFLX: 720.1, AMD: 178.5, INTC: 32.4,
-    BTC: 67500, ETH: 3520, SOL: 172.5, BNB: 595, XRP: 0.58,
-    DOGE: 0.165, ADA: 0.48, AVAX: 38.2, DOT: 7.35, LINK: 17.8,
-  };
-  const base = basePrices[symbol] || 100;
+  const base = DEMO_BASE_PRICES[symbol] || 100;
   const seed = Math.sin(Date.now() / 5000 + base) * 10000;
   const rand = seed - Math.floor(seed);
   return Math.max(0.01, Math.round((base + (rand - 0.48) * 2 * 0.002 * base) * 100) / 100);
 }
 
 // ============================================================
-// Market Price Fetch — try CoinGecko first, then demo fallback
+// Market Price Fetch — 3-layer: CoinGecko/Next.js API → direct DB → demo
 // ============================================================
 
-async function fetchMarketPrice(symbol: string): Promise<number> {
-  // CoinGecko ID mapping for crypto
-  const coingeckoIds: Record<string, string> = {
-    BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
-    XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
-    DOT: 'polkadot', LINK: 'chainlink',
-  };
+// CoinGecko ID mapping for crypto
+const COINGECKO_IDS: Record<string, string> = {
+  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
+  XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
+  DOT: 'polkadot', LINK: 'chainlink',
+};
 
-  if (coingeckoIds[symbol]) {
+/** Detect if a symbol is crypto */
+function isCryptoSymbol(symbol: string): boolean {
+  return symbol.toUpperCase() in COINGECKO_IDS;
+}
+
+async function fetchMarketPrice(symbol: string): Promise<number> {
+  // Layer 1: Try Next.js market API for live price
+  try {
+    const res = await fetch(
+      `${NEXTJS_API}/api/trading/market/symbols?symbol=${encodeURIComponent(symbol)}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (res.ok) {
+      const data = await res.json() as Record<string, unknown>;
+      const price = data.price ?? data.currentPrice;
+      if (typeof price === 'number' && price > 0) return price;
+    }
+  } catch {
+    // fall through
+  }
+
+  // Layer 2: CoinGecko direct for crypto
+  if (isCryptoSymbol(symbol)) {
     try {
+      const id = COINGECKO_IDS[symbol.toUpperCase()];
       const res = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoIds[symbol]}&vs_currencies=usd`,
+        `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`,
         { signal: AbortSignal.timeout(5000) }
       );
       if (res.ok) {
-        const data = await res.json();
-        const price = data[coingeckoIds[symbol]]?.usd;
+        const data = await res.json() as Record<string, { usd?: number }>;
+        const price = data[id]?.usd;
         if (price && price > 0) return price;
       }
     } catch {
-      // fall through to demo
+      // fall through
     }
   }
 
+  // Layer 3: Demo simulation
   return getDemoPrice(symbol);
 }
 
 // ============================================================
-// Simple Signal Generator (placeholder for AI/ML model)
+// Candle Data Fetching — for Technical Analysis
 // ============================================================
 
-interface TradeSignal {
-  symbol: string;
-  direction: 'buy' | 'sell';
-  confidence: number;
-  reason: string;
+// In-memory cache for candle data within a cycle
+const candleCache = new Map<string, { candles: CandleData[]; ts: number }>();
+const CANDLE_CACHE_TTL = 45_000; // 45 seconds — reuse within same cycle
+
+async function fetchCandles(symbol: string, limit: number = 100): Promise<CandleData[]> {
+  // Check cache first
+  const cacheKey = `${symbol}_${limit}`;
+  const cached = candleCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CANDLE_CACHE_TTL) {
+    return cached.candles;
+  }
+
+  let candles: CandleData[] | null = null;
+
+  // Layer 1: Try CoinGecko OHLC for crypto
+  if (isCryptoSymbol(symbol)) {
+    candles = await fetchCoinGeckoOHLC(symbol, limit);
+  }
+
+  // Layer 2: Try Next.js API (which proxies to various sources)
+  if (!candles || candles.length < 10) {
+    candles = await fetchNextJSCandles(symbol, limit);
+  }
+
+  // Layer 3: Generate demo candles
+  if (!candles || candles.length < 10) {
+    candles = generateDemoCandles(symbol, limit);
+  }
+
+  // Cache the result
+  candleCache.set(cacheKey, { candles, ts: Date.now() });
+  return candles;
 }
 
-function generateSimpleSignal(symbols: string[]): TradeSignal | null {
-  if (symbols.length === 0) return null;
+/** Fetch real OHLC from CoinGecko */
+async function fetchCoinGeckoOHLC(symbol: string, limit: number): Promise<CandleData[] | null> {
+  const coinId = COINGECKO_IDS[symbol.toUpperCase()];
+  if (!coinId) return null;
 
-  // Pick a random symbol
-  const symbol = symbols[Math.floor(Math.random() * symbols.length)];
+  try {
+    // CoinGecko OHLC: days=30 gives ~720 hourly candles or ~30 daily candles
+    const days = 30;
+    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`CoinGecko OHLC HTTP ${res.status}`);
 
-  // Simple mock signal: 50/50 directional bias with random confidence
-  const direction = Math.random() > 0.5 ? 'buy' : 'sell';
-  const confidence = 55 + Math.floor(Math.random() * 30); // 55-85%
+    const raw = (await res.json()) as number[][];
+    if (!Array.isArray(raw) || raw.length === 0) return null;
 
-  return {
-    symbol,
-    direction,
-    confidence,
-    reason: `Auto-generated ${direction} signal (confidence: ${confidence}%)`,
-  };
+    // CoinGecko OHLC format: [timestamp_ms, open, high, low, close]
+    const candles: CandleData[] = raw.slice(-limit).map((c) => ({
+      timestamp: c[0],
+      open: c[1],
+      high: c[2],
+      low: c[3],
+      close: c[4],
+      volume: 0, // CoinGecko OHLC doesn't include volume
+    }));
+
+    console.log(`[AutoTrade] Fetched ${candles.length} real OHLC candles for ${symbol} from CoinGecko`);
+    return candles;
+  } catch (err) {
+    console.warn(`[AutoTrade] CoinGecko OHLC failed for ${symbol}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/** Fetch candles from Next.js market API */
+async function fetchNextJSCandles(symbol: string, limit: number): Promise<CandleData[] | null> {
+  try {
+    const url = `${NEXTJS_API}/api/trading/market/symbols?symbol=${encodeURIComponent(symbol)}&timeframe=1d&limit=${limit}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+
+    const data = await res.json() as CandleData[];
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    console.log(`[AutoTrade] Fetched ${data.length} candles for ${symbol} from Next.js API`);
+    return data;
+  } catch (err) {
+    console.warn(`[AutoTrade] Next.js candle fetch failed for ${symbol}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/** Generate realistic demo candles for backtesting / fallback */
+function generateDemoCandles(symbol: string, limit: number): CandleData[] {
+  const base = DEMO_BASE_PRICES[symbol] || 100;
+  const now = Date.now();
+  const candles: CandleData[] = [];
+
+  // Use deterministic seed for consistent candles within a cycle
+  let price = base;
+  const volatility = base > 1000 ? 0.015 : base > 10 ? 0.02 : 0.03;
+
+  // Seed from current minute so it changes slowly
+  const minuteSeed = Math.floor(now / 60000);
+
+  for (let i = 0; i < limit; i++) {
+    // Pseudo-random walk with mean reversion
+    const seed = Math.sin(minuteSeed + i * 1.618 + base * 0.01) * 10000;
+    const rand = seed - Math.floor(seed); // 0-1
+    const change = (rand - 0.49) * 2 * volatility; // slight upward bias
+
+    const open = price;
+    const close = price * (1 + change);
+    const high = Math.max(open, close) * (1 + Math.abs(rand - 0.5) * volatility * 0.5);
+    const low = Math.min(open, close) * (1 - Math.abs(rand - 0.5) * volatility * 0.5);
+
+    candles.push({
+      timestamp: now - (limit - i) * 86400000, // daily candles going back
+      open: roundPrice(open),
+      high: roundPrice(high),
+      low: roundPrice(low),
+      close: roundPrice(close),
+      volume: Math.round(base * 1000 * (0.8 + rand * 0.4)),
+    });
+
+    price = close;
+  }
+
+  console.log(`[AutoTrade] Generated ${candles.length} demo candles for ${symbol} (base=${base})`);
+  return candles;
+}
+
+/** Round price to reasonable precision */
+function roundPrice(price: number): number {
+  if (price >= 1000) return Math.round(price * 100) / 100;
+  if (price >= 1) return Math.round(price * 1000) / 1000;
+  if (price >= 0.01) return Math.round(price * 100000) / 100000;
+  return Math.round(price * 1000000) / 1000000;
 }
 
 // ============================================================
@@ -310,7 +438,7 @@ function generateSimpleSignal(symbols: string[]): TradeSignal | null {
 async function callNextJSApi(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   try {
     const url = `${NEXTJS_API}${path}`;
@@ -405,7 +533,9 @@ async function runCycle() {
 
 async function processBot(config: BotConfigRow) {
   const tag = `[AutoTrade] [${config.id.slice(0, 8)}]`;
-  console.log(`${tag} Processing bot (strategy: ${config.strategy}, account: ${config.account_id})`);
+  const strategy = config.strategy || 'balanced';
+  const risk = config.riskTolerance || 'medium';
+  console.log(`${tag} Processing bot (strategy: ${strategy}, risk: ${risk}, account: ${config.account_id})`);
 
   // ── Step 1: Get current positions from DB ──
   let positions: PositionRow[] = [];
@@ -422,7 +552,7 @@ async function processBot(config: BotConfigRow) {
 
   console.log(`${tag} ${positions.length} open position(s)`);
 
-  // ── Step 2: Check SL/TP on open positions ──
+  // ── Step 2: Check SL/TP on open positions using live prices ──
   const closedSymbols: Set<string> = new Set();
 
   for (const pos of positions) {
@@ -481,65 +611,101 @@ async function processBot(config: BotConfigRow) {
     return;
   }
 
-  // Determine symbols to trade
-  // BotConfig doesn't have a symbols field, so we use the strategy + risk to pick
-  const symbols = DEMO_SYMBOLS.filter((s) => !closedSymbols.has(s));
+  // Determine symbols to scan (exclude symbols with existing open positions)
+  const openSymbols = new Set(
+    positions
+      .filter((p) => !closedSymbols.has(p.symbol))
+      .map((p) => p.symbol),
+  );
+  const symbols = DEMO_SYMBOLS.filter((s) => !openSymbols.has(s));
 
   if (symbols.length === 0) {
-    console.log(`${tag} No symbols available to trade`);
+    console.log(`${tag} No symbols available to scan`);
     return;
   }
 
-  // Generate signal
-  const signal = generateSimpleSignal(symbols);
-  if (!signal) {
-    console.log(`${tag} No signal generated this cycle`);
+  // ── Step 4: Run technical analysis on each symbol, pick best signal ──
+  let bestSignal: TradeSignal | null = null;
+
+  for (const symbol of symbols) {
+    try {
+      // Fetch candle data for analysis
+      const candles = await fetchCandles(symbol, 100);
+      if (candles.length < 10) {
+        console.log(`${tag} [${symbol}] Not enough candles (${candles.length}) — skipping`);
+        continue;
+      }
+
+      // Generate signal using the configured strategy
+      const signal = generateSignal(candles, strategy, risk, symbol);
+      if (!signal) continue;
+
+      // Track best signal (highest confidence)
+      if (!bestSignal || signal.confidence > bestSignal.confidence) {
+        bestSignal = signal;
+      }
+    } catch (err) {
+      console.warn(`${tag} [${symbol}] Analysis error:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (!bestSignal) {
+    console.log(`${tag} No actionable signal generated this cycle (scanned ${symbols.length} symbols with ${strategy} strategy)`);
     return;
   }
 
-  // Validate confidence threshold (skip low-confidence signals)
-  const minConfidence = config.riskTolerance === 'aggressive' ? 50 : config.riskTolerance === 'conservative' ? 70 : 60;
-  if (signal.confidence < minConfidence) {
-    console.log(`${tag} Signal confidence ${signal.confidence}% below threshold ${minConfidence}% — skipping`);
+  // ── Step 5: Validate confidence threshold ──
+  const minConfidence = risk === 'aggressive' ? 50 : risk === 'conservative' ? 70 : 60;
+  if (bestSignal.confidence < minConfidence) {
+    console.log(`${tag} Best signal confidence ${bestSignal.confidence}% below threshold ${minConfidence}% — skipping`);
     return;
   }
 
-  // Get current price
-  const price = await fetchMarketPrice(signal.symbol);
-  if (price <= 0) {
-    console.log(`${tag} Invalid price for ${signal.symbol}: ${price} — skipping`);
+  // ── Step 6: Get live price for execution ──
+  const livePrice = await fetchMarketPrice(bestSignal.symbol);
+  if (livePrice <= 0) {
+    console.log(`${tag} Invalid live price for ${bestSignal.symbol}: ${livePrice} — skipping`);
     return;
   }
 
-  // Calculate position size
+  // ── Step 7: Risk-based position sizing ──
+  const accountBalance = config.account_balance || 100000;
   const allocAmount = config.allocationAmount || 10000;
   const maxPosSize = config.maxPositionSize || allocAmount * 0.2;
-  const qty = Math.max(0.0001, Math.min(maxPosSize / price, allocAmount / price));
 
-  // Calculate SL/TP prices
-  const slPercent = config.stopLossPercent || 2.0;
-  const tpPercent = config.takeProfitPercent || 4.0;
-  const stopLoss =
-    signal.direction === 'buy' ? Math.round(price * (1 - slPercent / 100) * 100) / 100
-      : Math.round(price * (1 + slPercent / 100) * 100) / 100;
-  const takeProfit =
-    signal.direction === 'buy' ? Math.round(price * (1 + tpPercent / 100) * 100) / 100
-      : Math.round(price * (1 - tpPercent / 100) * 100) / 100;
-
-  console.log(
-    `${tag} Opening ${signal.direction.toUpperCase()} ${signal.symbol} qty=${qty.toFixed(4)} @ ${price.toFixed(2)} SL=${stopLoss.toFixed(2)} TP=${takeProfit.toFixed(2)} (confidence: ${signal.confidence}%)`
+  const qty = calculatePositionSize(
+    accountBalance,
+    risk,
+    livePrice,
+    bestSignal.stopLoss,
+    maxPosSize,
+    allocAmount,
   );
 
-  // Execute via Next.js API
+  if (qty <= 0) {
+    console.log(`${tag} Calculated qty=0 for ${bestSignal.symbol} — skipping`);
+    return;
+  }
+
+  // Update DCA tracker if this is a buy
+  if (bestSignal.side === 'buy') {
+    updateDCALastBuy(bestSignal.symbol, livePrice);
+  }
+
+  console.log(
+    `${tag} Executing ${bestSignal.side.toUpperCase()} ${bestSignal.symbol} qty=${qty.toFixed(6)} @ ${livePrice.toFixed(2)} SL=${bestSignal.stopLoss.toFixed(2)} TP=${bestSignal.takeProfit.toFixed(2)} (confidence: ${bestSignal.confidence}% strategy: ${strategy})`
+  );
+
+  // ── Step 8: Execute via Next.js API ──
   await executeTrade(config, {
-    symbol: signal.symbol,
-    side: signal.direction,
+    symbol: bestSignal.symbol,
+    side: bestSignal.side,
     qty,
-    price,
-    stopLoss,
-    takeProfit,
-    confidence: signal.confidence,
-    reason: signal.reason,
+    price: livePrice,
+    stopLoss: bestSignal.stopLoss,
+    takeProfit: bestSignal.takeProfit,
+    confidence: bestSignal.confidence,
+    reason: bestSignal.reason,
   });
 }
 
@@ -770,4 +936,5 @@ process.on('SIGINT', () => {
 
 console.log(`[AutoTrade] Poll interval: ${POLL_INTERVAL_MS / 1000}s`);
 console.log(`[AutoTrade] Next.js API target: ${NEXTJS_API}`);
+console.log(`[AutoTrade] Strategies: momentum | balanced | conservative | dca | grid`);
 console.log(`[AutoTrade] Ready — waiting for first cycle...`);
