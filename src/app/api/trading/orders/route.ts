@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
+import { getUserId, getUserIdSync } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { DemoBroker } from '@/lib/broker/demo';
 import { getAssetType } from '@/lib/broker/demo';
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-    const userId = 'usr_demo_1';
+    const userId = getUserIdSync(req);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
@@ -88,24 +89,10 @@ export async function POST(req: NextRequest) {
 
   // ── DB available: full flow ──
   try {
-    const userId = await ensureDemoUser();
-    if (!userId) {
-      // Fallback to demo broker
-      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
-      const result = await broker.placeOrder({
-        symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
-      });
-      if (result.status === 'rejected') {
-        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
-      }
-      return NextResponse.json({
-        id: result.orderId, symbol, side, type, qty,
-        filledQty: result.filledQty, filledPrice: result.filledPrice,
-        status: result.status, createdAt: new Date().toISOString(),
-      });
-    }
+    const userId = await getUserId(req);
 
-    const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
+    const whereClause = body.accountId ? { id: body.accountId, userId } : { userId, isDefault: true };
+    const account = await db.tradingAccount.findFirst({ where: whereClause });
     if (!account) return NextResponse.json({ error: 'No account found' }, { status: 400 });
 
     const broker = createBrokerFromAccount(account);
@@ -169,6 +156,32 @@ export async function POST(req: NextRequest) {
         } catch (posErr) {
           console.warn('[orders POST] position upsert error:', posErr);
         }
+      }
+    }
+
+    // Submit SL/TP as actual broker orders
+    if (result.filledPrice && result.filledQty > 0 && (stopLoss || takeProfit)) {
+      try {
+        if (stopLoss) {
+          await broker.placeOrder({
+            symbol,
+            side: side === 'buy' ? 'sell' : 'buy',
+            type: 'stop',
+            qty: result.filledQty,
+            stopPrice: stopLoss,
+          });
+        }
+        if (takeProfit) {
+          await broker.placeOrder({
+            symbol,
+            side: side === 'buy' ? 'sell' : 'buy',
+            type: 'limit',
+            qty: result.filledQty,
+            limitPrice: takeProfit,
+          });
+        }
+      } catch (sltpErr) {
+        console.warn('[orders POST] SL/TP order submission failed (non-critical):', sltpErr);
       }
     }
 

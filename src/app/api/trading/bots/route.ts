@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
+import { getUserId, getUserIdSync } from '@/lib/get-user-id';
 
 const DEMO_BOTS = [
   {
@@ -103,12 +104,12 @@ const DEMO_BOTS = [
   },
 ];
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   if (!db || !hasModel('bot')) {
     return NextResponse.json(DEMO_BOTS);
   }
   try {
-    const userId = 'usr_demo_1';
+    const userId = getUserIdSync(req);
     const bots = await db.bot.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -160,7 +161,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(created);
   }
   try {
-    const userId = await ensureDemoUser();
+    await ensureDemoUser();
+    const userId = await getUserId(req);
     if (!userId) {
       // Fallback to demo response if DB or user unavailable
       const fallback = {

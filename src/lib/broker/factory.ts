@@ -7,6 +7,7 @@ import { DemoBroker } from './demo';
 import { AlpacaBroker } from './alpaca';
 import { BinanceBroker } from './binance';
 import { OkxBroker } from './okx';
+import { decrypt } from '@/lib/encryption';
 
 // Broker interface that all providers implement
 export interface IBroker {
@@ -85,13 +86,15 @@ export function createBrokerFromAccount(account: {
   accountId: string | null;
   apiKey: string | null;
   apiSecret: string | null;
+  passphrase?: string | null;
   id: string;
 }): IBroker {
   const config: BrokerConfig = {
     provider: (account.broker || 'demo') as BrokerConfig['provider'],
     accountId: account.id,
-    apiKey: account.apiKey || undefined,
-    apiSecret: account.apiSecret || undefined,
+    apiKey: account.apiKey ? decrypt(account.apiKey) || account.apiKey : undefined,
+    apiSecret: account.apiSecret ? decrypt(account.apiSecret) || account.apiSecret : undefined,
+    passphrase: account.passphrase ? decrypt(account.passphrase) || account.passphrase : undefined,
     isDemo: account.accountType === 'demo',
   };
   return createBroker(config);

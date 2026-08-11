@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserIdSync } from '@/lib/get-user-id';
 
 export async function GET(
   req: NextRequest,
@@ -10,9 +11,13 @@ export async function GET(
     return NextResponse.json({ success: true, id, message: 'demo mode' });
   }
   try {
+    const userId = getUserIdSync(req);
     const bot = await db.bot.findUnique({ where: { id } });
     if (!bot) {
       return NextResponse.json({ success: true, id, message: 'not found (demo)' });
+    }
+    if (bot.userId !== userId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json(bot);
   } catch (error) {
@@ -32,6 +37,11 @@ export async function PUT(
     return NextResponse.json({ success: true, id, updated: body });
   }
   try {
+    const userId = getUserIdSync(req);
+    const bot = await db.bot.findUnique({ where: { id } });
+    if (bot && bot.userId !== userId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const { id: _id, ...rest } = body;
     // Convert config object to JSON string if provided as object
     const data: Record<string, unknown> = { ...rest };
@@ -59,6 +69,11 @@ export async function DELETE(
     return NextResponse.json({ success: true });
   }
   try {
+    const userId = getUserIdSync(req);
+    const bot = await db.bot.findUnique({ where: { id } });
+    if (bot && bot.userId !== userId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     await db.bot.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {

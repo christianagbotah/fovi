@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserIdSync } from '@/lib/get-user-id';
 
 const PORTFOLIO_SYMBOLS = ['BTC', 'ETH', 'AAPL', 'NVDA', 'TSLA', 'SOL', 'GOOGL'];
 
@@ -28,12 +29,12 @@ function buildDemoResponse() {
   };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(buildDemoResponse());
   }
   try {
-    const userId = 'usr_demo_1';
+    const userId = getUserIdSync(req);
     // Pull user's open positions to derive their actual portfolio symbols
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },

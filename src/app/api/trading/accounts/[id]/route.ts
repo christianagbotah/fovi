@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
+import { getUserId } from '@/lib/get-user-id';
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let body: any = {};
@@ -16,10 +17,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ success: true, balance });
     }
 
-    const userId = await ensureDemoUser();
-    if (!userId) {
-      return NextResponse.json({ success: true, balance });
-    }
+    const userId = await getUserId(req);
 
     const account = await db.tradingAccount.findFirst({ where: { id, userId } });
     if (!account) {
@@ -54,10 +52,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   }
   try {
     const { id } = await params;
-    const userId = await ensureDemoUser();
-    if (!userId) {
-      return NextResponse.json({ success: true });
-    }
+    const userId = await getUserId(req);
     await db.tradingAccount.deleteMany({ where: { id, userId } });
     return NextResponse.json({ success: true });
   } catch (error) {

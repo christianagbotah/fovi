@@ -2,7 +2,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
+import { getUserId } from '@/lib/get-user-id';
 import { DemoBroker } from '@/lib/broker/demo';
+import { createBrokerFromAccount } from '@/lib/broker/factory';
+import { encrypt } from '@/lib/encryption';
 import { v4 as uuidv4 } from 'uuid';
 
 // Demo fallback data — now includes allocation fields
@@ -35,34 +38,90 @@ export async function POST(req: NextRequest) {
     const accountType = body.accountType || 'demo';
     const isLinked = broker !== 'demo';
 
+    // Demo path: no validation or encryption needed
+    if (broker === 'demo') {
+      if (!db || !hasModel('tradingAccount')) {
+        return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 100000, linkedBalance: 100000 }));
+      }
+      const userId = await getUserId(req);
+      const account = await db.tradingAccount.create({
+        data: {
+          id, userId, broker, accountType,
+          isDefault: body.isDefault || false,
+          balance: body.balance || 100000,
+          linkedBalance: body.linkedBalance ?? body.balance ?? 100000,
+          totalAllocated: 0, totalRealizedProfit: 0,
+          currency: body.currency || 'USD',
+        },
+      });
+      return NextResponse.json(account);
+    }
+
+    // Non-demo: encrypt credentials
+    const encryptedApiKey = body.apiKey ? encrypt(body.apiKey) : null;
+    const encryptedApiSecret = body.apiSecret ? encrypt(body.apiSecret) : null;
+    const encryptedPassphrase = body.passphrase ? encrypt(body.passphrase) : null;
+
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: isLinked ? 0 : 100000, linkedBalance: isLinked ? 0 : 100000 }));
+      return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 0, linkedBalance: 0 }));
     }
 
-    const userId = await ensureDemoUser();
-    if (!userId) {
-      return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: isLinked ? 0 : 100000, linkedBalance: isLinked ? 0 : 100000 }));
-    }
+    const userId = await getUserId(req);
 
+    // Create account with encrypted credentials
     const account = await db.tradingAccount.create({
       data: {
         id, userId, broker, accountType,
-        accountId: body.accountId, apiKey: body.apiKey, apiSecret: body.apiSecret,
-        passphrase: body.passphrase,
-        isDefault: body.isDefault || false, balance: body.balance || 100000,
-        linkedBalance: body.linkedBalance ?? body.balance ?? 100000,
+        accountId: body.accountId,
+        apiKey: encryptedApiKey,
+        apiSecret: encryptedApiSecret,
+        passphrase: encryptedPassphrase,
+        isDefault: body.isDefault || false,
+        balance: 0,
+        linkedBalance: 0,
         totalAllocated: 0, totalRealizedProfit: 0,
         currency: body.currency || 'USD',
       },
     });
-    return NextResponse.json(account);
+
+    // Validate credentials by calling the broker
+    try {
+      const brokerInstance = createBrokerFromAccount({
+        broker,
+        accountType,
+        accountId: body.accountId || null,
+        apiKey: body.apiKey || null,
+        apiSecret: body.apiSecret || null,
+        passphrase: body.passphrase || null,
+        id,
+      });
+      const info = await brokerInstance.getAccountInfo();
+
+      // Update account with real balance from broker
+      const updatedAccount = await db.tradingAccount.update({
+        where: { id },
+        data: {
+          balance: info.balance,
+          linkedBalance: info.balance,
+          currency: info.currency,
+        },
+      });
+      return NextResponse.json(updatedAccount);
+    } catch (validationError: any) {
+      // Validation failed — delete the account
+      try { await db.tradingAccount.delete({ where: { id } }); } catch { /* best effort */ }
+      return NextResponse.json(
+        { error: `Credential validation failed: ${validationError?.message || 'Unknown error'}` },
+        { status: 400 }
+      );
+    }
   } catch (error) {
     console.warn('[accounts POST] DB error, using fallback:', error);
     return NextResponse.json(makeDemoAccount({ id: uuidv4() }));
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     if (!db || !hasModel('tradingAccount')) {
       // Enrich demo accounts with live broker balance
@@ -71,10 +130,10 @@ export async function GET() {
       return NextResponse.json([makeDemoAccount({ balance: info.balance, linkedBalance: info.balance })]);
     }
 
-    const userId = await ensureDemoUser();
-    if (!userId) {
-      return NextResponse.json(DEMO_ACCOUNTS);
-    }
+    const userId = await getUserId(req);
+
+    // Ensure demo user row exists for FK constraints
+    await ensureDemoUser();
 
     // Ensure demo account exists
     try {

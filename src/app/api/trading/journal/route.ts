@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
+import { getUserId, getUserIdSync } from '@/lib/get-user-id';
 
 const DEMO_ENTRIES = [
   {
@@ -116,12 +117,12 @@ const DEMO_ENTRIES = [
 
 const DB_MODEL = 'tradeJournal';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   if (!db || !hasModel(DB_MODEL)) {
     return NextResponse.json(DEMO_ENTRIES);
   }
   try {
-    const userId = 'usr_demo_1';
+    const userId = getUserIdSync(req);
     const entries = await db.tradeJournal.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -164,7 +165,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(created);
   }
   try {
-    const userId = await ensureDemoUser();
+    await ensureDemoUser();
+    const userId = await getUserId(req);
     if (!userId) {
       // DB or user unavailable, return demo fallback
       const fallback = {

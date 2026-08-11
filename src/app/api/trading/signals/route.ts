@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
+import { getUserId } from '@/lib/get-user-id';
 
 export async function GET(req: NextRequest) {
   try {
@@ -12,8 +13,8 @@ export async function GET(req: NextRequest) {
     const accountId = searchParams.get('accountId');
 
     // Ensure demo user exists for FK constraints
-    const userId = await ensureDemoUser();
-    if (!userId) return NextResponse.json([]);
+    await ensureDemoUser();
+    const userId = await getUserId(req);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },

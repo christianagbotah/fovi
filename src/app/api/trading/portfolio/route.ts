@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserIdSync } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json({
@@ -11,9 +12,11 @@ export async function GET() {
         activeSignals: 0, winRate: 0, totalTrades: 0,
       });
     }
-    const userId = 'usr_demo_1';
+    const { searchParams } = new URL(req.url);
+    const accountId = searchParams.get('accountId');
+    const userId = getUserIdSync(req);
     const account = await db.tradingAccount.findFirst({
-      where: { userId, isDefault: true },
+      where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
     if (!account) {
       return NextResponse.json({

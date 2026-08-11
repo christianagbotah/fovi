@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserIdSync } from '@/lib/get-user-id';
 
 export async function POST(
   req: NextRequest,
@@ -11,9 +12,13 @@ export async function POST(
     return NextResponse.json({ success: true, enabled: true, status: 'running' });
   }
   try {
+    const userId = getUserIdSync(req);
     const bot = await db.bot.findUnique({ where: { id } });
     if (!bot) {
       return NextResponse.json({ success: true, enabled: true, status: 'running' });
+    }
+    if (bot.userId !== userId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const newEnabled = !bot.enabled;
     const newStatus = newEnabled ? 'running' : 'stopped';

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ArrowLeftRight, Plus, Trash2, ChevronDown, Check, Wallet,
+  Plus, Trash2, ChevronDown, Check, Wallet,
   Briefcase, Zap, Landmark, ShieldCheck, KeyRound, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -374,9 +374,6 @@ export function AccountSwitcher() {
                   </SelectItem>
                   <SelectItem value="okx">
                     <span className="flex items-center gap-2"><Landmark className="h-4 w-4" /> OKX (Crypto)</span>
-                  </SelectItem>
-                  <SelectItem value="deriv">
-                    <span className="flex items-center gap-2"><ArrowLeftRight className="h-4 w-4" /> Deriv (Forex/Synthetic)</span>
                   </SelectItem>
                 </SelectContent>
               </Select>

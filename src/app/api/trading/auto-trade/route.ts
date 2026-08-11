@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
+import { getUserId } from '@/lib/get-user-id';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 
 const DEFAULT_CONFIG = {
@@ -11,7 +12,7 @@ const DEFAULT_CONFIG = {
 };
 
 // GET /api/trading/auto-trade — DB is the source of truth
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const globalLevy = await getGlobalAdminLevy();
 
@@ -19,8 +20,9 @@ export async function GET() {
       return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy });
     }
     await ensureDemoUser();
+    const userId = await getUserId(req);
     const defaultAccount = await db.tradingAccount.findFirst({
-      where: { isDefault: true },
+      where: { userId, isDefault: true },
     });
     if (!defaultAccount) return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy });
 
@@ -89,8 +91,9 @@ export async function PUT(request: Request) {
 
   try {
     await ensureDemoUser();
+    const userId = await getUserId(request);
     const defaultAccount = await db.tradingAccount.findFirst({
-      where: { isDefault: true },
+      where: { userId, isDefault: true },
     });
     if (!defaultAccount) {
       return NextResponse.json({ error: 'No default account found' }, { status: 404 });

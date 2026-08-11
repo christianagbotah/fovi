@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserIdSync } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { DemoBroker } from '@/lib/broker/demo';
 import { getDemoPrice, getAssetType } from '@/lib/broker/demo';
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-    const userId = 'usr_demo_1';
+    const userId = getUserIdSync(req);
 
     const account = await db.tradingAccount.findFirst({
       where: accountId ? { id: accountId, userId } : { userId, isDefault: true },
