@@ -78,3 +78,32 @@ Stage Summary:
 - Proxy file at src/proxy.ts (not middleware.ts) for Next.js 16 compatibility
 - Admin role is determined by ADMIN_EMAIL env var, not a DB field
 - All auth routes compile and lint successfully
+---
+Task ID: 1-15
+Agent: main
+Task: Fix auth system, add proxy.ts route protection, admin subscription management with Hubtel
+
+Work Log:
+- Read and analyzed all existing auth files (auth.ts, signin, forgot-password, 2FA routes, etc.)
+- Found JWT auth, Hubtel SMS/OTP/payment, subscription system already implemented
+- Found proxy.ts (Next.js 16 convention) had incomplete route protection
+- Updated proxy.ts with three-tier auth: public, optional-auth (trading/demo), protected (subscriptions, 2FA, change-password, admin)
+- Proxy injects X-User-Id/X-User-Email/X-User-Role headers from verified JWT
+- Fixed change-password route to use X-User-Id from proxy instead of insecure body parameter
+- Fixed 2FA setup/verify/disable routes to use X-User-Id from proxy
+- Fixed frontend (page.tsx) to send Authorization headers for all 2FA and password change calls
+- Fixed 2FA setup _check to use Authorization header and properly read twoFactorEnabled status
+- Created admin subscription management API: /api/admin/subscriptions (list all subs, send payment link)
+- Created admin users API: /api/admin/users (list all users)
+- Added admin "Subs Mgmt" tab in SecuritySettings UI with:
+  - Send payment link to user (select user + plan + optional phone)
+  - Create new subscription plans
+  - View all subscription plans
+  - View all subscriptions with status badges
+- Deleted conflicting middleware.ts (Next.js 16 uses proxy.ts)
+
+Stage Summary:
+- All API routes now have proper JWT-based auth via proxy.ts
+- Admin can manage subscriptions and send Hubtel Mobile Money payment links to users
+- Demo mode still works (trading routes have optional auth)
+- Clean lint, dev server runs successfully, all routes return 200

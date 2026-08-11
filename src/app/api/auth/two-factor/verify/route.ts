@@ -4,8 +4,6 @@ import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
 const twoFactorVerifySchema = z.object({
-  userId: z.string().min(1),
-  token: z.string().min(1),
   code: z.string().regex(/^\d{6}$/),
 });
 
@@ -25,6 +23,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Use userId from middleware (set from verified JWT)
+    const userId = request.headers.get('X-User-Id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
     // Zod validation
     const body = await request.json();
     const parsed = twoFactorVerifySchema.safeParse(body);
@@ -32,7 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
     }
 
-    const { userId, code } = parsed.data;
+    const { code } = parsed.data;
     if (!isDbAvailable() || !db) return NextResponse.json({ error: 'Requires database.' }, { status: 503 });
 
     const settings = await safeDbQuery(() => db!.userSettings.findUnique({ where: { userId } }));

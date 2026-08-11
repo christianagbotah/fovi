@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { rateLimit } from '@/lib/rate-limit';
-import { z } from 'zod/v4';
-
-const twoFactorSetupSchema = z.object({
-  userId: z.string().min(1),
-});
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: '2fa-setup' });
 
@@ -23,14 +18,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Zod validation
-    const body = await request.json();
-    const parsed = twoFactorSetupSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    // Use userId from middleware (set from verified JWT)
+    const userId = request.headers.get('X-User-Id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const { userId } = parsed.data;
+    // Check if this is a status check (no actual setup)
+    const body = await request.json().catch(() => ({}));
+    if (body._check) {
+      if (!isDbAvailable() || !db || !hasModel('userSettings')) {
+        return NextResponse.json({ twoFactorEnabled: false });
+      }
+      const settings = await safeDbQuery(() =>
+        db!.userSettings.findUnique({ where: { userId }, select: { twoFactorEnabled: true, twoFactorMethod: true, phoneNumber: true } })
+      );
+      return NextResponse.json({ twoFactorEnabled: settings?.twoFactorEnabled ?? false, method: settings?.twoFactorMethod, phone: settings?.phoneNumber });
+    }
+
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('userSettings')) {
       return NextResponse.json({ error: '2FA requires a database connection.' }, { status: 503 });
     }

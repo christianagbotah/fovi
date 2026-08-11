@@ -827,6 +827,14 @@ function SecuritySettings() {
   const [plans, setPlans] = useState<any[]>([]);
   const [subscribingPlan, setSubscribingPlan] = useState<string | null>(null);
 
+  // Admin subscription management state
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [adminSubs, setAdminSubs] = useState<any[]>([]);
+  const [sendLinkUser, setSendLinkUser] = useState('');
+  const [sendLinkPlan, setSendLinkPlan] = useState('');
+  const [sendLinkPhone, setSendLinkPhone] = useState('');
+  const [allPlans, setAllPlans] = useState<any[]>([]);
+
   // Admin config state
   const [hubtelSmsConfig, setHubtelSmsConfig] = useState({ clientId: '', clientSecret: '', senderName: 'FoviAI' });
   const [hubtelPayConfig, setHubtelPayConfig] = useState({ clientId: '', clientSecret: '', accountNumber: '', callbackUrl: '' });
@@ -845,10 +853,10 @@ function SecuritySettings() {
     (async () => {
       try {
         const res = await fetch('/api/auth/two-factor/setup', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: authUser.id, _check: true }),
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ _check: true }),
         });
-        // We just check settings status silently
+        if (res.ok) { const d = await res.json(); if (d.twoFactorEnabled) setTwoFactorEnabled(true); }
       } catch { /* ignore */ }
       // Load subscription
       try {
@@ -886,7 +894,7 @@ function SecuritySettings() {
     if (!authUser?.id) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: authUser.id }) });
+      const res = await fetch('/api/auth/two-factor/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to setup 2FA'); return; }
       setQrCode(data.qr_code_base64); setSetupSecret(data.secret); setShowSetup(true);
@@ -895,7 +903,7 @@ function SecuritySettings() {
   const handleVerify2FA = async () => {
     if (!authUser?.id) return; setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: authUser.id, token, code: verifyCode }) });
+      const res = await fetch('/api/auth/two-factor/verify', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ code: verifyCode }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
       setTwoFactorEnabled(true); setShowSetup(false); setVerifyCode(''); showMsg('success', 'Two-factor authentication enabled!');
@@ -904,7 +912,7 @@ function SecuritySettings() {
   const handleDisable2FA = async () => {
     if (!authUser?.id) return; setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/disable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: authUser.id, token, code: disableCode }) });
+      const res = await fetch('/api/auth/two-factor/disable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ code: disableCode }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
       setTwoFactorEnabled(false); setDisableCode(''); showMsg('success', '2FA disabled');
@@ -918,7 +926,7 @@ function SecuritySettings() {
     if (passwords.newPw.length < 8) { showMsg('error', 'Password must be at least 8 characters'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, currentPassword: passwords.current, newPassword: passwords.newPw }) });
+      const res = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ currentPassword: passwords.current, newPassword: passwords.newPw }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to change password'); return; }
       setPasswords({ current: '', newPw: '', confirm: '' }); showMsg('success', 'Password changed successfully');
@@ -1032,6 +1040,60 @@ function SecuritySettings() {
       className="w-full h-9 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
   );
 
+  // Admin subscription management handlers
+  const loadAdminSubData = async () => {
+    if (!isAdmin) return;
+    try {
+      const [usersRes, subsRes, plansRes] = await Promise.all([
+        fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/admin/subscriptions', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/subscriptions/plans', { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (usersRes.ok) { const d = await usersRes.json(); if (d.users) setAdminUsers(d.users); }
+      if (subsRes.ok) { const d = await subsRes.json(); if (d.subscriptions) setAdminSubs(d.subscriptions); }
+      if (plansRes.ok) { const d = await plansRes.json(); if (Array.isArray(d)) { setAllPlans(d); setPlans(d); } }
+    } catch { /* ignore */ }
+  };
+
+  const handleSendPaymentLink = async () => {
+    if (!sendLinkUser || !sendLinkPlan) { showMsg('error', 'Select a user and a plan'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/subscriptions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId: sendLinkUser, planId: sendLinkPlan, phoneNumber: sendLinkPhone || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to send payment link'); return; }
+      if (data.invoiceUrl) { window.open(data.invoiceUrl, '_blank'); showMsg('success', `Payment link sent to ${data.user?.email || 'user'} for ${data.plan}`); }
+      setSendLinkUser(''); setSendLinkPlan(''); setSendLinkPhone('');
+      loadAdminSubData();
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  const handleCreatePlan = async () => {
+    const name = prompt('Plan internal name (e.g. starter, pro, enterprise):');
+    if (!name) return;
+    const displayName = prompt('Display name (e.g. Starter Plan):') || name;
+    const priceStr = prompt('Price in GHS (e.g. 50):');
+    if (!priceStr) return;
+    const price = parseFloat(priceStr);
+    if (isNaN(price) || price < 0) { showMsg('error', 'Invalid price'); return; }
+    setLoading(true);
+    try {
+      const featuresStr = prompt('Features (comma-separated, e.g. 5 Bots,Live Trading,Priority Support)') || '';
+      const features = featuresStr.split(',').map((f: string) => f.trim()).filter(Boolean);
+      const res = await fetch('/api/subscriptions/plans', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: name.toLowerCase().replace(/\s+/g, '-'), displayName, price, currency: 'GHS', features, maxBots: 5, maxAccounts: 2 }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to create plan'); return; }
+      showMsg('success', `Plan "${displayName}" created!`);
+      loadAdminSubData();
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
   return (
     <div className="space-y-4">
       {msg && (
@@ -1062,6 +1124,7 @@ function SecuritySettings() {
         {isAdmin && <SettingsTab id="admin-sms" label="Hubtel SMS" icon={MessageCircle} active={activeSection === 'admin-sms'} onClick={setActiveSection} />}
         {isAdmin && <SettingsTab id="admin-pay" label="Payments" icon={Building2} active={activeSection === 'admin-pay'} onClick={setActiveSection} />}
         {isAdmin && <SettingsTab id="admin-smtp" label="SMTP" icon={Server} active={activeSection === 'admin-smtp'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-subs" label="Subs Mgmt" icon={Crown} active={activeSection === 'admin-subs'} onClick={() => { setActiveSection('admin-subs'); loadAdminSubData(); }} />}
       </div>
 
       {/* ====== SECURITY TAB ====== */}
@@ -1302,6 +1365,100 @@ function SecuritySettings() {
                 <Button variant="outline" className="shrink-0 text-xs cursor-pointer" onClick={handleTestEmail} disabled={loading || !testEmail}>Test</Button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ADMIN: SUBSCRIPTION MANAGEMENT TAB ====== */}
+      {activeSection === 'admin-subs' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Manage subscription plans and send payment links to users via Hubtel Mobile Money.</p>
+          </div>
+
+          {/* Send Payment Link */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><Receipt className="h-3.5 w-3.5" /> Send Subscription Payment Link</h4>
+            <div className="space-y-2">
+              <label className="text-[10px] text-muted-foreground font-medium">Select User</label>
+              <select value={sendLinkUser} onChange={e => setSendLinkUser(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50">
+                <option value="">-- Select user --</option>
+                {adminUsers.map((u: any) => (
+                  <option key={u.id} value={u.id}>{u.name || u.email} ({u.email})</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] text-muted-foreground font-medium">Select Plan</label>
+              <select value={sendLinkPlan} onChange={e => setSendLinkPlan(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50">
+                <option value="">-- Select plan --</option>
+                {allPlans.filter((p: any) => p.name !== 'free').map((plan: any) => (
+                  <option key={plan.id} value={plan.id}>{plan.displayName || plan.name} — GH₵{plan.price}/mo</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] text-muted-foreground font-medium">User Phone (optional, for Mobile Money)</label>
+              <CInput value={sendLinkPhone} onChange={setSendLinkPhone} placeholder="+233XXXXXXXXX" />
+            </div>
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={handleSendPaymentLink} disabled={loading || !sendLinkUser || !sendLinkPlan}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send Payment Link via Hubtel
+            </Button>
+          </div>
+
+          {/* Create Plan */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" /> Subscription Plans ({allPlans.length})</h4>
+              <Button variant="outline" className="h-7 text-[10px] gap-1 cursor-pointer" onClick={handleCreatePlan} disabled={loading}>
+                <Plus className="h-3 w-3" /> New Plan
+              </Button>
+            </div>
+            {allPlans.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground text-center py-3">No plans created yet. Click "New Plan" to add one.</p>
+            ) : (
+              <div className="space-y-2">
+                {allPlans.map((plan: any) => (
+                  <div key={plan.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/50 border border-border/30">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold truncate">{plan.displayName || plan.name}</p>
+                      <p className="text-[10px] text-muted-foreground">GH₵{plan.price}/mo · {plan.maxBots} bots · {plan.maxAccounts} accounts</p>
+                    </div>
+                    <Badge className={`text-[10px] shrink-0 ml-2 ${plan.isActive ? 'bg-emerald-500/10 text-emerald-500 border-0' : 'bg-red-500/10 text-red-500 border-0'}`}>
+                        {plan.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* All Subscriptions */}
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><History className="h-3.5 w-3.5" /> All Subscriptions ({adminSubs.length})</h4>
+            {adminSubs.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground text-center py-3">No subscriptions yet.</p>
+            ) : (
+              <div className="max-h-64 overflow-y-auto space-y-2">
+                {adminSubs.map((sub: any) => (
+                  <div key={sub.id} className="p-2.5 rounded-lg bg-muted/50 border border-border/30">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs font-semibold truncate">{sub.user?.name || sub.user?.email || 'Unknown'}</p>
+                      <Badge className={`text-[10px] shrink-0 ml-2 ${
+                        sub.status === 'active' ? 'bg-emerald-500/10 text-emerald-500 border-0' :
+                        sub.status === 'past_due' ? 'bg-amber-500/10 text-amber-500 border-0' :
+                        'bg-red-500/10 text-red-500 border-0'
+                      }`}>
+                        {sub.status}
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">{sub.plan} · GH₵{sub.amount} · {new Date(sub.createdAt).toLocaleDateString()}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

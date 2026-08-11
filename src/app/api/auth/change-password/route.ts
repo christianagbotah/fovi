@@ -5,7 +5,6 @@ import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
 const changePasswordSchema = z.object({
-  token: z.string(),
   currentPassword: z.string().min(1),
   newPassword: z.string().min(8),
 });
@@ -36,15 +35,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { currentPassword, newPassword } = parsed.data;
-    const { userId } = body;
-
+    // Use userId from middleware (set from verified JWT)
+    const userId = request.headers.get('X-User-Id');
     if (!userId) {
       return NextResponse.json(
-        { error: 'User ID is required' },
-        { status: 400 }
+        { error: 'Authentication required' },
+        { status: 401 }
       );
     }
+
+    const { currentPassword, newPassword } = parsed.data;
 
     if (!isDbAvailable() || !db || !hasModel('user')) {
       return NextResponse.json(
@@ -54,9 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     const user = await safeDbQuery(() =>
-      db!.user.findUnique({
-        where: { id: userId },
-      })
+      db!.user.findUnique({ where: { id: userId } })
     );
 
     if (!user) {

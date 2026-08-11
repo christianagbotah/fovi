@@ -2,33 +2,53 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { createPaymentInvoice } from '@/lib/hubtel';
-import { randomUUID } from 'crypto';
 
-const subscribeSchema = z.object({
-  planId: z.string().min(1),
-  phoneNumber: z.string().min(1).optional(),
-  email: z.string().min(1).optional(),
-});
-
-// POST: create subscription and payment invoice
-export async function POST(request: NextRequest) {
+// GET: list all subscriptions with user info (admin only)
+export async function GET() {
   try {
-    const userId = request.headers.get('X-User-Id');
-    if (!userId) {
-      return NextResponse.json({ error: 'Authentication required.' }, { status: 401 });
+    if (!isDbAvailable() || !db || !hasModel('subscription') || !hasModel('user')) {
+      return NextResponse.json({ subscriptions: [] });
     }
 
+    const subscriptions = await safeDbQuery(() =>
+      db!.subscription.findMany({
+        include: {
+          user: {
+            select: { id: true, email: true, name: true, isActive: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      })
+    );
+
+    return NextResponse.json({ subscriptions: subscriptions || [] });
+  } catch (err) {
+    console.error('[Admin Subscriptions] Failed to list:', err);
+    return NextResponse.json({ error: 'Failed to fetch subscriptions.' }, { status: 500 });
+  }
+}
+
+const sendLinkSchema = z.object({
+  userId: z.string().min(1),
+  planId: z.string().min(1),
+  phoneNumber: z.string().optional(),
+});
+
+// POST: admin sends a subscription payment link to a user via Hubtel
+export async function POST(request: NextRequest) {
+  try {
     const body = await request.json();
-    const parsed = subscribeSchema.safeParse(body);
+    const parsed = sendLinkSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
     }
 
-    if (!isDbAvailable() || !db || !hasModel('subscriptionPlan') || !hasModel('subscription')) {
+    if (!isDbAvailable() || !db || !hasModel('subscriptionPlan') || !hasModel('subscription') || !hasModel('user')) {
       return NextResponse.json({ error: 'Database is not available.' }, { status: 500 });
     }
 
-    const { planId, phoneNumber, email } = parsed.data;
+    const { userId, planId, phoneNumber } = parsed.data;
 
     // Fetch the plan
     const plan = await safeDbQuery(() =>
@@ -48,7 +68,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found.' }, { status: 404 });
     }
 
-    const clientReference = `fovi-sub-${userId}-${planId}-${Date.now()}`;
+    const clientReference = `fovi-admin-${userId}-${planId}-${Date.now()}`;
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL || '';
 
     // Calculate subscription period (1 month from now)
@@ -61,7 +81,7 @@ export async function POST(request: NextRequest) {
       data: {
         userId,
         plan: plan.name,
-        status: 'past_due', // Will be set to 'active' on successful payment
+        status: 'past_due',
         amount: plan.price,
         currency: plan.currency,
         startedAt: startsAt,
@@ -72,20 +92,19 @@ export async function POST(request: NextRequest) {
     // Create Hubtel payment invoice
     const invoiceResult = await createPaymentInvoice({
       totalAmount: plan.price,
-      description: `Fovi AI ${plan.displayName} Plan — Monthly Subscription`,
+      description: `Fovi AI ${plan.displayName} Plan — Monthly Subscription (Admin Sent)`,
       clientReference,
       customer: {
-        email: email || user.email,
+        email: user.email,
         phoneNumber: phoneNumber || undefined,
         name: user.name || undefined,
       },
       callbackUrl: `${baseUrl}/api/payments/hubtel/callback`,
-      cancelUrl: `${baseUrl}/settings`,
-      returnUrl: `${baseUrl}/settings`,
+      cancelUrl: `${baseUrl}/`,
+      returnUrl: `${baseUrl}/`,
     });
 
     if (!invoiceResult.success) {
-      // Update subscription status to cancelled
       await safeDbQuery(() =>
         db!.subscription.update({
           where: { id: subscription.id },
@@ -114,10 +133,12 @@ export async function POST(request: NextRequest) {
       success: true,
       invoiceUrl: invoiceResult.invoiceUrl,
       subscriptionId: subscription.id,
+      user: { email: user.email, name: user.name },
+      plan: plan.displayName,
       clientReference,
     });
   } catch (err) {
-    console.error('[Subscribe] Failed:', err);
-    return NextResponse.json({ error: 'Failed to create subscription.' }, { status: 500 });
+    console.error('[Admin Subscriptions] Failed to send link:', err);
+    return NextResponse.json({ error: 'Failed to send subscription link.' }, { status: 500 });
   }
 }
