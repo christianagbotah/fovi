@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { invalidateSmtpCache } from '@/lib/email';
 
 const saveSchema = z.object({
   host: z.string().min(1),
@@ -66,6 +67,8 @@ export async function POST(request: NextRequest) {
       create: { key: 'smtp', config: JSON.stringify(parsed.data) },
       update: { config: JSON.stringify(parsed.data) },
     });
+
+    invalidateSmtpCache();
 
     return NextResponse.json({ success: true, message: 'SMTP config saved successfully.' });
   } catch (err) {

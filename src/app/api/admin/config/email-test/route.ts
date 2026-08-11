@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
     }
 
-    if (!isEmailConfigured()) {
+    if (!(await isEmailConfigured())) {
       return NextResponse.json(
         { error: 'SMTP is not configured. Please set up SMTP settings first.' },
         { status: 400 }

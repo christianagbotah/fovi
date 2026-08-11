@@ -23,6 +23,7 @@ import {
 import { useTradingStore } from '@/lib/store/trading-store';
 import type { AutoTradeActivity, AIOpenPosition, AIClosedTrade } from '@/lib/store/trading-store';
 import { toast } from 'sonner';
+import { getGlobalAdminLevy } from '@/lib/system-config';
 
 // ============================================================
 // Symbol reference prices for realistic simulation
@@ -237,6 +238,11 @@ export function AITradingDashboard() {
     }
     loadFromDB();
   }, [setBotConfig, setAutoTradeActivity]);
+
+  // ---- Fetch global admin levy from system config (read-only, set by admin) ----
+  useEffect(() => {
+    getGlobalAdminLevy().then(v => setBotConfig(p => ({ ...p, adminLevyPercent: v })));
+  }, []);
 
   // ---- Sync portfolio state for dashboard tab ----
   useEffect(() => {
@@ -1337,17 +1343,11 @@ export function AITradingDashboard() {
                   <div>
                     <label className="text-xs text-muted-foreground font-medium mb-1 flex items-center gap-1">
                       <Percent className="h-3 w-3" /> Admin Levy (%)
-                      <span className="text-[9px] text-red-400 font-bold ml-1">REQUIRED</span>
                     </label>
-                    <div className="relative">
-                      <Input type="number" min={1} max={50} step={0.5} value={botConfig.adminLevyPercent}
-                        onChange={e => {
-                          const val = Math.max(1, parseFloat(e.target.value) || 10);
-                          setBotConfig({ adminLevyPercent: val });
-                        }} className="h-10 pr-16" />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-red-500 font-bold pointer-events-none">NON-REMOVABLE</span>
+                    <div className="h-10 px-3 rounded-md bg-muted/50 border border-border/30 flex items-center text-sm font-medium">
+                      {levyPercent}% <span className="ml-auto text-[10px] text-muted-foreground">Set by admin</span>
                     </div>
-                    <p className="text-[9px] text-red-400/80 mt-1 font-medium">% of profit deducted per trade and sent to admin. This fee cannot be disabled.</p>
+                    <p className="text-[9px] text-red-400/80 mt-1 font-medium">% of profit deducted per trade and sent to admin. Configured by platform admin.</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground font-medium mb-1 block">Strategy</label>

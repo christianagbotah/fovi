@@ -235,7 +235,7 @@ export async function sendOtpViaEmail(
   email: string,
   code: string
 ): Promise<{ success: boolean; error?: string }> {
-  if (!isEmailConfigured()) {
+  if (!(await isEmailConfigured())) {
     console.warn('[Email OTP] SMTP not configured — OTP email not sent.');
     return { success: false, error: 'Email service is not configured. Please set up SMTP in admin settings.' };
   }

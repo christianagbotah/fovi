@@ -842,6 +842,32 @@ function SecuritySettings() {
   const [testPhone, setTestPhone] = useState('');
   const [testEmail, setTestEmail] = useState('');
 
+  // Trading config state
+  const [tradingConfig, setTradingConfig] = useState({
+    defaultAdminLevyPercent: 10,
+    defaultMaxPositions: 5,
+    defaultStopLossPercent: 2.0,
+    defaultTakeProfitPercent: 4.0,
+    defaultMaxPositionSizePercent: 20,
+  });
+
+  // OTP config state
+  const [otpConfig, setOtpConfig] = useState({ codeLength: 6, expiryMinutes: 10, maxAttempts: 5 });
+
+  // Platform config state
+  const [platformConfig, setPlatformConfig] = useState({ platformName: 'Fovi AI', supportEmail: 'support@fovi.ai', platformUrl: '' });
+
+  // User management state
+  const [showUserMgmt, setShowUserMgmt] = useState(false);
+  const [resetPwUserId, setResetPwUserId] = useState<string | null>(null);
+  const [resetPwValue, setResetPwValue] = useState('');
+
+  // Plan edit state
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
+  const [editPlanForm, setEditPlanForm] = useState({ name: '', displayName: '', price: '', features: '', maxBots: '5', maxAccounts: '2' });
+  const [showCreatePlan, setShowCreatePlan] = useState(false);
+  const [newPlanForm, setNewPlanForm] = useState({ name: '', displayName: '', price: '', features: '', maxBots: '5', maxAccounts: '2' });
+
   const isAdmin = authUser?.role === 'admin' || authUser?.email === 'admin@fovi.ai';
   const token = typeof window !== 'undefined' ? localStorage.getItem('fovi_token') || '' : '';
 
@@ -871,14 +897,20 @@ function SecuritySettings() {
       // Load admin configs
       if (isAdmin) {
         try {
-          const [smsRes, payRes, smtpRes] = await Promise.all([
+          const [smsRes, payRes, smtpRes, tradingRes, otpRes, platformRes] = await Promise.all([
             fetch('/api/admin/config/hubtel-sms', { headers: { Authorization: `Bearer ${token}` } }),
             fetch('/api/admin/config/hubtel-payment', { headers: { Authorization: `Bearer ${token}` } }),
             fetch('/api/admin/config/smtp', { headers: { Authorization: `Bearer ${token}` } }),
+            fetch('/api/admin/config/trading', { headers: { Authorization: `Bearer ${token}` } }),
+            fetch('/api/admin/config/otp', { headers: { Authorization: `Bearer ${token}` } }),
+            fetch('/api/admin/config/platform', { headers: { Authorization: `Bearer ${token}` } }),
           ]);
           if (smsRes.ok) { const d = await smsRes.json(); if (d.config) setHubtelSmsConfig(p => ({ ...p, ...d.config })); }
           if (payRes.ok) { const d = await payRes.json(); if (d.config) setHubtelPayConfig(p => ({ ...p, ...d.config })); }
           if (smtpRes.ok) { const d = await smtpRes.json(); if (d.config) setSmtpConfig(p => ({ ...p, ...d.config })); }
+          if (tradingRes.ok) { const d = await tradingRes.json(); setTradingConfig(p => ({ ...p, ...d })); }
+          if (otpRes.ok) { const d = await otpRes.json(); setOtpConfig(p => ({ ...p, ...d })); }
+          if (platformRes.ok) { const d = await platformRes.json(); setPlatformConfig(p => ({ ...p, ...d })); }
         } catch { /* ignore */ }
       }
     })();
@@ -1071,27 +1103,141 @@ function SecuritySettings() {
     } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
   };
 
-  const handleCreatePlan = async () => {
-    const name = prompt('Plan internal name (e.g. starter, pro, enterprise):');
-    if (!name) return;
-    const displayName = prompt('Display name (e.g. Starter Plan):') || name;
-    const priceStr = prompt('Price in GHS (e.g. 50):');
-    if (!priceStr) return;
-    const price = parseFloat(priceStr);
+  // Save trading config
+  const saveTradingConfig = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/trading', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(tradingConfig) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
+      showMsg('success', 'Trading config saved!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // Save OTP config
+  const saveOtpConfig = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/otp', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(otpConfig) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
+      showMsg('success', 'OTP config saved!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // Save platform config
+  const savePlatformConfig = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/config/platform', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(platformConfig) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
+      showMsg('success', 'Platform config saved!');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // User management handlers
+  const handleToggleUserActive = async (userId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'toggle_active' }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to update user'); return; }
+      showMsg('success', data.message);
+      loadAdminSubData();
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  const handleResetUserPassword = async (userId: string) => {
+    if (!resetPwValue || resetPwValue.length < 8) { showMsg('error', 'Password must be at least 8 characters'); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'reset_password', newPassword: resetPwValue }) });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to reset password'); return; }
+      showMsg('success', data.message);
+      setResetPwUserId(null); setResetPwValue('');
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to delete user'); return; }
+      showMsg('success', data.message);
+      loadAdminSubData();
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  // Plan CRUD handlers
+  const handleCreatePlanSubmit = async () => {
+    if (!newPlanForm.name || !newPlanForm.displayName || !newPlanForm.price) { showMsg('error', 'Name, display name, and price are required'); return; }
+    const price = parseFloat(newPlanForm.price);
     if (isNaN(price) || price < 0) { showMsg('error', 'Invalid price'); return; }
     setLoading(true);
     try {
-      const featuresStr = prompt('Features (comma-separated, e.g. 5 Bots,Live Trading,Priority Support)') || '';
-      const features = featuresStr.split(',').map((f: string) => f.trim()).filter(Boolean);
+      const features = newPlanForm.features.split(',').map((f: string) => f.trim()).filter(Boolean);
       const res = await fetch('/api/subscriptions/plans', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: name.toLowerCase().replace(/\s+/g, '-'), displayName, price, currency: 'GHS', features, maxBots: 5, maxAccounts: 2 }),
+        body: JSON.stringify({ name: newPlanForm.name.toLowerCase().replace(/\s+/g, '-'), displayName: newPlanForm.displayName, price, currency: 'GHS', features, maxBots: parseInt(newPlanForm.maxBots) || 5, maxAccounts: parseInt(newPlanForm.maxAccounts) || 2 }),
       });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to create plan'); return; }
-      showMsg('success', `Plan "${displayName}" created!`);
+      showMsg('success', `Plan "${newPlanForm.displayName}" created!`);
+      setNewPlanForm({ name: '', displayName: '', price: '', features: '', maxBots: '5', maxAccounts: '2' });
+      setShowCreatePlan(false);
       loadAdminSubData();
     } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  const handleEditPlan = (plan: any) => {
+    setEditingPlanId(plan.id);
+    setEditPlanForm({
+      name: plan.name || '',
+      displayName: plan.displayName || plan.name || '',
+      price: String(plan.price || 0),
+      features: plan.features ? (typeof plan.features === 'string' ? plan.features : JSON.parse(plan.features)).join(', ') : '',
+      maxBots: String(plan.maxBots || 5),
+      maxAccounts: String(plan.maxAccounts || 2),
+    });
+  };
+
+  const handleUpdatePlan = async () => {
+    if (!editingPlanId) return;
+    if (!editPlanForm.displayName || !editPlanForm.price) { showMsg('error', 'Display name and price are required'); return; }
+    const price = parseFloat(editPlanForm.price);
+    if (isNaN(price) || price < 0) { showMsg('error', 'Invalid price'); return; }
+    setLoading(true);
+    try {
+      const features = editPlanForm.features.split(',').map((f: string) => f.trim()).filter(Boolean);
+      const res = await fetch(`/api/subscriptions/plans/${editingPlanId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ displayName: editPlanForm.displayName, price, currency: 'GHS', features, maxBots: parseInt(editPlanForm.maxBots) || 5, maxAccounts: parseInt(editPlanForm.maxAccounts) || 2 }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to update plan'); return; }
+      showMsg('success', 'Plan updated!');
+      setEditingPlanId(null);
+      loadAdminSubData();
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  const handleDeletePlan = async (planId: string, planName: string) => {
+    if (!confirm(`Delete plan "${planName}"? This cannot be undone.`)) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/subscriptions/plans/${planId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to delete plan'); return; }
+      showMsg('success', 'Plan deleted!');
+      loadAdminSubData();
+    } catch { showMsg('error', 'Network error'); } finally { setLoading(false); }
+  };
+
+  const handleCreatePlan = async () => {
+    setShowCreatePlan(true);
   };
 
   return (
@@ -1124,6 +1270,10 @@ function SecuritySettings() {
         {isAdmin && <SettingsTab id="admin-sms" label="Hubtel SMS" icon={MessageCircle} active={activeSection === 'admin-sms'} onClick={setActiveSection} />}
         {isAdmin && <SettingsTab id="admin-pay" label="Payments" icon={Building2} active={activeSection === 'admin-pay'} onClick={setActiveSection} />}
         {isAdmin && <SettingsTab id="admin-smtp" label="SMTP" icon={Server} active={activeSection === 'admin-smtp'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-trading" label="Trading" icon={Target} active={activeSection === 'admin-trading'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-otp" label="OTP" icon={KeyRound} active={activeSection === 'admin-otp'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-platform" label="Branding" icon={Globe} active={activeSection === 'admin-platform'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-users" label="Users" icon={User} active={activeSection === 'admin-users'} onClick={() => { setActiveSection('admin-users'); loadAdminSubData(); }} />}
         {isAdmin && <SettingsTab id="admin-subs" label="Subs Mgmt" icon={Crown} active={activeSection === 'admin-subs'} onClick={() => { setActiveSection('admin-subs'); loadAdminSubData(); }} />}
       </div>
 
@@ -1369,6 +1519,153 @@ function SecuritySettings() {
         </div>
       )}
 
+      {/* ====== ADMIN: TRADING CONFIG TAB ====== */}
+      {activeSection === 'admin-trading' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Configure global trading parameters and the mandatory admin levy.</p>
+          </div>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><Target className="h-3.5 w-3.5" /> Trading Configuration</h4>
+            <div>
+              <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Admin Levy (%) <span className="text-red-400">*</span></label>
+              <CInput value={String(tradingConfig.defaultAdminLevyPercent)} onChange={v => setTradingConfig(p => ({ ...p, defaultAdminLevyPercent: parseFloat(v) || 10 }))} placeholder="10" type="number" />
+              <p className="text-[9px] text-muted-foreground mt-1">Percentage of profit deducted per trade. Users cannot modify this.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Max Positions</label>
+                <CInput value={String(tradingConfig.defaultMaxPositions)} onChange={v => setTradingConfig(p => ({ ...p, defaultMaxPositions: parseInt(v) || 5 }))} placeholder="5" type="number" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Max Position Size (%)</label>
+                <CInput value={String(tradingConfig.defaultMaxPositionSizePercent)} onChange={v => setTradingConfig(p => ({ ...p, defaultMaxPositionSizePercent: parseFloat(v) || 20 }))} placeholder="20" type="number" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Default Stop Loss (%)</label>
+                <CInput value={String(tradingConfig.defaultStopLossPercent)} onChange={v => setTradingConfig(p => ({ ...p, defaultStopLossPercent: parseFloat(v) || 2 }))} placeholder="2.0" type="number" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Default Take Profit (%)</label>
+                <CInput value={String(tradingConfig.defaultTakeProfitPercent)} onChange={v => setTradingConfig(p => ({ ...p, defaultTakeProfitPercent: parseFloat(v) || 4 }))} placeholder="4.0" type="number" />
+              </div>
+            </div>
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={saveTradingConfig} disabled={loading}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save Trading Config
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ADMIN: OTP CONFIG TAB ====== */}
+      {activeSection === 'admin-otp' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Configure OTP verification settings for SMS and Email login.</p>
+          </div>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" /> OTP Configuration</h4>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Code Length</label>
+                <CInput value={String(otpConfig.codeLength)} onChange={v => setOtpConfig(p => ({ ...p, codeLength: parseInt(v) || 6 }))} placeholder="6" type="number" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Expiry (min)</label>
+                <CInput value={String(otpConfig.expiryMinutes)} onChange={v => setOtpConfig(p => ({ ...p, expiryMinutes: parseInt(v) || 10 }))} placeholder="10" type="number" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Max Attempts</label>
+                <CInput value={String(otpConfig.maxAttempts)} onChange={v => setOtpConfig(p => ({ ...p, maxAttempts: parseInt(v) || 5 }))} placeholder="5" type="number" />
+              </div>
+            </div>
+            <p className="text-[9px] text-muted-foreground">Changes apply to new OTP codes. Previously sent codes keep their original expiry.</p>
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={saveOtpConfig} disabled={loading}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save OTP Config
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ADMIN: PLATFORM BRANDING TAB ====== */}
+      {activeSection === 'admin-platform' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Configure platform branding and contact information.</p>
+          </div>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><Globe className="h-3.5 w-3.5" /> Platform Branding</h4>
+            <div>
+              <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Platform Name</label>
+              <CInput value={platformConfig.platformName} onChange={v => setPlatformConfig(p => ({ ...p, platformName: v }))} placeholder="Fovi AI" />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Support Email</label>
+              <CInput value={platformConfig.supportEmail} onChange={v => setPlatformConfig(p => ({ ...p, supportEmail: v }))} placeholder="support@fovi.ai" type="email" />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground font-medium mb-1 block">Platform URL</label>
+              <CInput value={platformConfig.platformUrl} onChange={v => setPlatformConfig(p => ({ ...p, platformUrl: v }))} placeholder="https://fovi.lightworldtech.com" />
+              <p className="text-[9px] text-muted-foreground mt-1">Used in email footers, payment callbacks, and OTP messages.</p>
+            </div>
+            <Button className="w-full gap-2 text-xs cursor-pointer" onClick={savePlatformConfig} disabled={loading}>
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save Platform Config
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ADMIN: USER MANAGEMENT TAB ====== */}
+      {activeSection === 'admin-users' && isAdmin && (
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <p className="text-[11px] text-amber-600 font-medium">Admin Only — Manage user accounts: activate/deactivate, reset passwords, and delete users.</p>
+          </div>
+          <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
+            <h4 className="text-xs font-semibold flex items-center gap-1.5"><User className="h-3.5 w-3.5" /> Registered Users ({adminUsers.length})</h4>
+            {adminUsers.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground text-center py-3">No users found.</p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto space-y-2">
+                {adminUsers.map((u: any) => (
+                  <div key={u.id} className="p-3 rounded-lg bg-muted/50 border border-border/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold truncate">{u.name || 'No name'}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">{u.email}</p>
+                      </div>
+                      <Badge className={`text-[10px] shrink-0 ml-2 ${u.isActive ? 'bg-emerald-500/10 text-emerald-500 border-0' : 'bg-red-500/10 text-red-500 border-0'}`}>
+                        {u.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </div>
+                    <p className="text-[9px] text-muted-foreground">Joined: {new Date(u.createdAt).toLocaleDateString()}</p>
+                    <div className="flex gap-1.5 pt-1">
+                      <button onClick={() => handleToggleUserActive(u.id)} className="flex-1 py-1.5 rounded-md text-[10px] font-medium border border-border/50 hover:bg-muted transition-colors cursor-pointer">
+                        {u.isActive ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button onClick={() => { setResetPwUserId(resetPwUserId === u.id ? null : u.id); setResetPwValue(''); }} className="flex-1 py-1.5 rounded-md text-[10px] font-medium border border-border/50 hover:bg-muted transition-colors cursor-pointer">
+                        Reset Password
+                      </button>
+                      <button onClick={() => { if (confirm(`Delete user "${u.email}"? They will be deactivated.`)) handleDeleteUser(u.id); }} className="py-1.5 px-2 rounded-md text-[10px] font-medium border border-red-500/20 text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {resetPwUserId === u.id && (
+                      <div className="flex gap-1.5 pt-1 border-t border-border/30">
+                        <CInput value={resetPwValue} onChange={setResetPwValue} placeholder="New password (min 8 chars)" type="password" />
+                        <Button size="sm" className="shrink-0 text-[10px] h-9 cursor-pointer" onClick={() => handleResetUserPassword(u.id)} disabled={loading || resetPwValue.length < 8}>Reset</Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ====== ADMIN: SUBSCRIPTION MANAGEMENT TAB ====== */}
       {activeSection === 'admin-subs' && isAdmin && (
         <div className="space-y-4">
@@ -1412,23 +1709,74 @@ function SecuritySettings() {
           <div className="p-4 rounded-xl border border-border/50 bg-card space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-semibold flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" /> Subscription Plans ({allPlans.length})</h4>
-              <Button variant="outline" className="h-7 text-[10px] gap-1 cursor-pointer" onClick={handleCreatePlan} disabled={loading}>
-                <Plus className="h-3 w-3" /> New Plan
+              <Button variant="outline" className="h-7 text-[10px] gap-1 cursor-pointer" onClick={handleCreatePlan} disabled={loading || showCreatePlan}>
+                <Plus className="h-3 w-3" /> {showCreatePlan ? 'Cancel' : 'New Plan'}
               </Button>
             </div>
-            {allPlans.length === 0 ? (
+
+            {/* Create Plan Form */}
+            {showCreatePlan && (
+              <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-2">
+                <p className="text-[10px] font-semibold text-muted-foreground">Create New Plan</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <CInput value={newPlanForm.name} onChange={v => setNewPlanForm(p => ({ ...p, name: v }))} placeholder="Internal name (e.g. pro)" />
+                  <CInput value={newPlanForm.displayName} onChange={v => setNewPlanForm(p => ({ ...p, displayName: v }))} placeholder="Display name (e.g. Pro Plan)" />
+                </div>
+                <CInput value={newPlanForm.price} onChange={v => setNewPlanForm(p => ({ ...p, price: v }))} placeholder="Price in GHS (e.g. 50)" type="number" />
+                <CInput value={newPlanForm.features} onChange={v => setNewPlanForm(p => ({ ...p, features: v }))} placeholder="Features (comma-separated)" />
+                <div className="grid grid-cols-2 gap-2">
+                  <CInput value={newPlanForm.maxBots} onChange={v => setNewPlanForm(p => ({ ...p, maxBots: v }))} placeholder="Max bots (e.g. 5)" type="number" />
+                  <CInput value={newPlanForm.maxAccounts} onChange={v => setNewPlanForm(p => ({ ...p, maxAccounts: v }))} placeholder="Max accounts (e.g. 2)" type="number" />
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1 text-[10px] cursor-pointer" onClick={() => { setShowCreatePlan(false); setNewPlanForm({ name: '', displayName: '', price: '', features: '', maxBots: '5', maxAccounts: '2' }); }}>Cancel</Button>
+                  <Button className="flex-1 text-[10px] cursor-pointer" onClick={handleCreatePlanSubmit} disabled={loading}>Create Plan</Button>
+                </div>
+              </div>
+            )}
+
+            {allPlans.length === 0 && !showCreatePlan ? (
               <p className="text-[11px] text-muted-foreground text-center py-3">No plans created yet. Click "New Plan" to add one.</p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-96 overflow-y-auto">
                 {allPlans.map((plan: any) => (
-                  <div key={plan.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/50 border border-border/30">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold truncate">{plan.displayName || plan.name}</p>
-                      <p className="text-[10px] text-muted-foreground">GH₵{plan.price}/mo · {plan.maxBots} bots · {plan.maxAccounts} accounts</p>
-                    </div>
-                    <Badge className={`text-[10px] shrink-0 ml-2 ${plan.isActive ? 'bg-emerald-500/10 text-emerald-500 border-0' : 'bg-red-500/10 text-red-500 border-0'}`}>
-                        {plan.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
+                  <div key={plan.id} className="rounded-lg bg-muted/50 border border-border/30">
+                    {editingPlanId === plan.id ? (
+                      <div className="p-3 space-y-2">
+                        <p className="text-[10px] font-semibold text-muted-foreground">Editing: {plan.displayName || plan.name}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <CInput value={editPlanForm.displayName} onChange={v => setEditPlanForm(p => ({ ...p, displayName: v }))} placeholder="Display name" />
+                          <CInput value={editPlanForm.price} onChange={v => setEditPlanForm(p => ({ ...p, price: v }))} placeholder="Price (GHS)" type="number" />
+                        </div>
+                        <CInput value={editPlanForm.features} onChange={v => setEditPlanForm(p => ({ ...p, features: v }))} placeholder="Features (comma-separated)" />
+                        <div className="grid grid-cols-2 gap-2">
+                          <CInput value={editPlanForm.maxBots} onChange={v => setEditPlanForm(p => ({ ...p, maxBots: v }))} placeholder="Max bots" type="number" />
+                          <CInput value={editPlanForm.maxAccounts} onChange={v => setEditPlanForm(p => ({ ...p, maxAccounts: v }))} placeholder="Max accounts" type="number" />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" className="flex-1 text-[10px] cursor-pointer" onClick={() => setEditingPlanId(null)}>Cancel</Button>
+                          <Button className="flex-1 text-[10px] cursor-pointer" onClick={handleUpdatePlan} disabled={loading}>Save Changes</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold truncate">{plan.displayName || plan.name}</p>
+                          <p className="text-[10px] text-muted-foreground">GH₵{plan.price}/mo · {plan.maxBots} bots · {plan.maxAccounts} accounts</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <Badge className={`text-[10px] ${plan.isActive ? 'bg-emerald-500/10 text-emerald-500 border-0' : 'bg-red-500/10 text-red-500 border-0'}`}>
+                            {plan.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                          <button onClick={() => handleEditPlan(plan)} className="p-1 rounded hover:bg-muted transition-colors cursor-pointer" title="Edit plan">
+                            <Settings className="h-3 w-3 text-muted-foreground" />
+                          </button>
+                          <button onClick={() => handleDeletePlan(plan.id, plan.displayName || plan.name)} className="p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete plan">
+                            <X className="h-3 w-3 text-red-400" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

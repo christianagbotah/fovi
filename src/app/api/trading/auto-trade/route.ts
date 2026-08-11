@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser } from '@/lib/db';
+import { getGlobalAdminLevy } from '@/lib/system-config';
 
 const DEFAULT_CONFIG = {
   id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
@@ -12,14 +13,16 @@ const DEFAULT_CONFIG = {
 // GET /api/trading/auto-trade — DB is the source of truth
 export async function GET() {
   try {
+    const globalLevy = await getGlobalAdminLevy();
+
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json(DEFAULT_CONFIG);
+      return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy });
     }
     await ensureDemoUser();
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { isDefault: true },
     });
-    if (!defaultAccount) return NextResponse.json(DEFAULT_CONFIG);
+    if (!defaultAccount) return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy });
 
     let config = await db.botConfig.findFirst({
       where: { accountId: defaultAccount.id },
@@ -36,7 +39,7 @@ export async function GET() {
       ...config,
       winRate,
       accountBalance: defaultAccount.balance,
-      adminLevyPercent: 10,
+      adminLevyPercent: globalLevy,
       adminLevyCollected: 0,
     });
   } catch (error) {
@@ -62,6 +65,9 @@ export async function PUT(request: Request) {
     adminLevyPercent, adminLevyCollected,
   } = body;
 
+  // Always use the global admin levy — users cannot set their own
+  const globalLevy = await getGlobalAdminLevy();
+
   // Derive status from enabled if not explicitly provided
   let newStatus = status;
   if (newStatus === undefined || newStatus === null) {
@@ -75,6 +81,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({
       ...DEFAULT_CONFIG,
       ...body,
+      adminLevyPercent: globalLevy,
       status: newStatus,
       enabled: enabled ?? false,
     });
@@ -142,7 +149,7 @@ export async function PUT(request: Request) {
       ...config,
       winRate,
       accountBalance: defaultAccount.balance,
-      adminLevyPercent: 10,
+      adminLevyPercent: globalLevy,
       adminLevyCollected: 0,
     });
   } catch (error) {
