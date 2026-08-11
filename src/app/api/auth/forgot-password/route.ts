@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, isDbAvailable } from '@/lib/db';
-import { generateResetToken } from '@/lib/auth';
+import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { generateResetToken, hashToken } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,13 +24,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (isDbAvailable() && db && hasModel('user')) {
-      const user = await db.user.findUnique({ where: { email: emailLower } });
+      const user = await safeDbQuery(() =>
+        db!.user.findUnique({ where: { email: emailLower } })
+      );
 
       if (user) {
-        // In production, send an email with the reset token
-        // For now, just return success to avoid email enumeration
-        const _token = generateResetToken();
-        void _token;
+        const resetToken = generateResetToken();
+        const hashedToken = hashToken(resetToken);
+        const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+        await safeDbQuery(() =>
+          db!.user.update({
+            where: { id: user.id },
+            data: {
+              resetToken: hashedToken,
+              resetTokenExpiry: expiry,
+            },
+          })
+        );
+
+        // In production, send an email with `resetToken` here.
+        // The token is NOT stored — only its hash is persisted.
       }
     }
 
@@ -40,9 +54,10 @@ export async function POST(request: NextRequest) {
       message: 'If an account with this email exists, a reset link has been sent.',
     });
   } catch {
-    return NextResponse.json(
-      { error: 'An unexpected error occurred' },
-      { status: 500 }
-    );
+    // Even on error, return success to prevent enumeration
+    return NextResponse.json({
+      success: true,
+      message: 'If an account with this email exists, a reset link has been sent.',
+    });
   }
 }

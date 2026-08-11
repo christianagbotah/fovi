@@ -115,7 +115,20 @@ const DEFAULT_ALERTS: PriceAlert[] = [
   { id: '4', symbol: 'NVDA', condition: 'above', targetPrice: 145, currentPrice: 138.67, triggered: false },
 ];
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+}
+
 interface TradingState {
+  // Auth
+  authUser: AuthUser | null;
+  authToken: string | null;
+  isAuthenticated: boolean;
+  setAuth: (user: AuthUser, token: string) => void;
+  clearAuth: () => void;
+
   // Accounts
   accounts: TradingAccount[];
   activeAccountId: string | null;
@@ -197,6 +210,21 @@ interface TradingState {
 }
 
 export const useTradingStore = create<TradingState>((set, get) => ({
+  // Auth
+  authUser: null,
+  authToken: null,
+  isAuthenticated: false,
+  setAuth: (user, token) => {
+    set({ authUser: user, authToken: token, isAuthenticated: true });
+    localStorage.setItem('fovi_token', token);
+    localStorage.setItem('fovi_user', JSON.stringify(user));
+  },
+  clearAuth: () => {
+    set({ authUser: null, authToken: null, isAuthenticated: false });
+    localStorage.removeItem('fovi_token');
+    localStorage.removeItem('fovi_user');
+  },
+
   // Accounts
   accounts: [],
   activeAccountId: null,

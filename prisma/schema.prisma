@@ -13,6 +13,8 @@ model User {
   name           String?
   passwordHash   String
   isActive       Boolean  @default(true)
+  resetToken     String?
+  resetTokenExpiry DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -31,6 +33,10 @@ model UserSettings {
   riskTolerance   String   @default("medium")
   autoTradeEnabled Boolean @default(false)
   notificationsEnabled Boolean @default(true)
+  twoFactorEnabled Boolean @default(false)
+  twoFactorMethod String @default("totp")  // totp, sms, email
+  twoFactorSecret String?
+  phoneNumber String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

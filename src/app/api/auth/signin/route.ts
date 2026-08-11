@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, isDbAvailable } from '@/lib/db';
+import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { verifyPassword, generateToken } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
@@ -17,7 +17,18 @@ export async function POST(request: NextRequest) {
     const emailLower = email.toLowerCase().trim();
 
     if (isDbAvailable() && db && hasModel('user')) {
-      const user = await db.user.findUnique({ where: { email: emailLower } });
+      const user = await safeDbQuery(() =>
+        db!.user.findUnique({
+          where: { email: emailLower },
+          include: {
+            settings: {
+              select: {
+                twoFactorEnabled: true,
+              },
+            },
+          },
+        })
+      );
 
       if (!user || !user.passwordHash) {
         return NextResponse.json(
@@ -39,6 +50,19 @@ export async function POST(request: NextRequest) {
           { error: 'Account is deactivated' },
           { status: 403 }
         );
+      }
+
+      // Check if 2FA is enabled — if so, require a second step
+      if (user.settings?.twoFactorEnabled) {
+        return NextResponse.json({
+          success: true,
+          requiresTwoFactor: true,
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+          },
+        });
       }
 
       const token = generateToken();

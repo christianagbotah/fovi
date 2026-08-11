@@ -9,6 +9,7 @@ import {
   Send, Loader2, X, ChevronRight, AlertTriangle, History, Eye, Crosshair,
   Bot, LineChart, FlaskConical, BookOpen, Globe, GitBranch, Timer,
   ArrowLeft, User, Lock, Mail, Phone, ChevronDown, Link2, Zap,
+  LogOut, ShieldCheck, Smartphone, KeyRound,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
@@ -776,10 +777,225 @@ function OrderHistoryPanel() {
 }
 
 // ============================================================
+// Security Settings (2FA, Password, SMS/Email config)
+// ============================================================
+function SecuritySettings() {
+  const { authUser, clearAuth } = useTradingStore();
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [twoFactorLoading, setTwoFactorLoading] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const [qrCode, setQrCode] = useState('');
+  const [setupSecret, setSetupSecret] = useState('');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [disableCode, setDisableCode] = useState('');
+  const [passwords, setPasswords] = useState({ current: '', newPw: '', confirm: '' });
+  const [smsPhone, setSmsPhone] = useState('');
+  const [emailAddr, setEmailAddr] = useState('');
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const showMsg = (type: 'success' | 'error', text: string) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 4000); };
+
+  const handleSetup2FA = async () => {
+    if (!authUser?.id) return;
+    setTwoFactorLoading(true);
+    try {
+      const res = await fetch('/api/auth/two-factor/setup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: authUser.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to setup 2FA'); return; }
+      setQrCode(data.qr_code_base64);
+      setSetupSecret(data.secret);
+      setShowSetup(true);
+    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+  };
+
+  const handleVerify2FA = async () => {
+    if (!authUser?.id) return;
+    setTwoFactorLoading(true);
+    try {
+      const token = localStorage.getItem('fovi_token') || '';
+      const res = await fetch('/api/auth/two-factor/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: authUser.id, token, code: verifyCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
+      setTwoFactorEnabled(true);
+      setShowSetup(false);
+      setVerifyCode('');
+      showMsg('success', 'Two-factor authentication enabled!');
+    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+  };
+
+  const handleDisable2FA = async () => {
+    if (!authUser?.id) return;
+    setTwoFactorLoading(true);
+    try {
+      const token = localStorage.getItem('fovi_token') || '';
+      const res = await fetch('/api/auth/two-factor/disable', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: authUser.id, token, code: disableCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
+      setTwoFactorEnabled(false);
+      setDisableCode('');
+      showMsg('success', 'Two-factor authentication disabled');
+    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+  };
+
+  const handleChangePassword = async () => {
+    if (!passwords.current || !passwords.newPw || !passwords.confirm) return;
+    if (passwords.newPw !== passwords.confirm) { showMsg('error', 'Passwords do not match'); return; }
+    if (passwords.newPw.length < 8) { showMsg('error', 'Password must be at least 8 characters'); return; }
+    setTwoFactorLoading(true);
+    try {
+      const token = localStorage.getItem('fovi_token') || '';
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, currentPassword: passwords.current, newPassword: passwords.newPw }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showMsg('error', data.error || 'Failed to change password'); return; }
+      setPasswords({ current: '', newPw: '', confirm: '' });
+      showMsg('success', 'Password changed successfully');
+    } catch { showMsg('error', 'Network error'); } finally { setTwoFactorLoading(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {msg && (
+        <div className={`rounded-lg border px-3 py-2.5 text-xs font-medium ${msg.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
+          {msg.text}
+        </div>
+      )}
+
+      {/* User Info */}
+      <div className="p-4 rounded-xl border border-border/50 bg-card">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+            <User className="h-5 w-5 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold truncate">{authUser?.name || 'User'}</p>
+            <p className="text-[11px] text-muted-foreground truncate">{authUser?.email}</p>
+          </div>
+          <Badge variant={twoFactorEnabled ? 'default' : 'outline'} className={twoFactorEnabled ? 'bg-emerald-500/10 text-emerald-500 border-0 text-[10px]' : 'text-[10px]'}>
+            {twoFactorEnabled ? '2FA ON' : '2FA OFF'}
+          </Badge>
+        </div>
+        <button onClick={() => { clearAuth(); window.location.href = '/'; }}
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-red-500/20 text-red-500 text-xs font-medium hover:bg-red-500/10 transition-colors cursor-pointer">
+          <LogOut className="h-3.5 w-3.5" /> Sign Out
+        </button>
+      </div>
+
+      {/* Two-Factor Authentication (TOTP) */}
+      <div className="p-4 rounded-xl border border-border/50 bg-card">
+        <h4 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+          <KeyRound className="h-3.5 w-3.5" /> Two-Factor Authentication (TOTP)
+        </h4>
+
+        {showSetup ? (
+          <div className="space-y-3">
+            <p className="text-[11px] text-muted-foreground">Scan this QR code with Google Authenticator, Authy, or any TOTP app:</p>
+            {qrCode && <img src={qrCode} alt="2FA QR Code" className="mx-auto w-40 h-40 rounded-lg border border-border" />}
+            <p className="text-[10px] text-muted-foreground text-center font-mono bg-muted/50 rounded px-2 py-1 break-all">{setupSecret}</p>
+            <p className="text-[11px] text-muted-foreground">Enter the 6-digit code to verify:</p>
+            <input type="text" inputMode="numeric" maxLength={6} placeholder="000000"
+              value={verifyCode} onChange={e => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+              className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1 text-xs cursor-pointer" onClick={() => { setShowSetup(false); setQrCode(''); setVerifyCode(''); }} disabled={twoFactorLoading}>Cancel</Button>
+              <Button className="flex-1 text-xs cursor-pointer" onClick={handleVerify2FA} disabled={twoFactorLoading || verifyCode.length !== 6}>
+                {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Verify & Enable'}
+              </Button>
+            </div>
+          </div>
+        ) : twoFactorEnabled ? (
+          <div className="space-y-3">
+            <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> 2FA is active on your account</p>
+            <p className="text-[11px] text-muted-foreground">Enter a current code to disable two-factor authentication:</p>
+            <input type="text" inputMode="numeric" maxLength={6} placeholder="000000"
+              value={disableCode} onChange={e => setDisableCode(e.target.value.replace(/\D/g, ''))}
+              className="w-full h-10 px-3 rounded-lg bg-muted text-sm text-center tracking-[0.3em] font-mono outline-none focus:ring-2 focus:ring-primary/50" />
+            <Button variant="outline" className="w-full text-xs text-red-500 border-red-500/20 hover:bg-red-500/10 cursor-pointer"
+              onClick={handleDisable2FA} disabled={twoFactorLoading || disableCode.length !== 6}>
+              {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null} Disable 2FA
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-[11px] text-muted-foreground">Add an extra layer of security to your account using an authenticator app.</p>
+            <Button variant="outline" className="w-full gap-2 text-xs cursor-pointer" onClick={handleSetup2FA} disabled={twoFactorLoading}>
+              {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Enable 2FA
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* SMS OTP */}
+      <div className="p-4 rounded-xl border border-border/50 bg-card">
+        <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+          <Smartphone className="h-3.5 w-3.5" /> SMS OTP
+        </h4>
+        <p className="text-[11px] text-muted-foreground mb-3">Receive login codes via SMS. Requires Twilio integration on the server.</p>
+        <div className="space-y-2">
+          <input type="tel" placeholder="+1 (555) 123-4567" value={smsPhone} onChange={e => setSmsPhone(e.target.value)}
+            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+          <Button variant="outline" className="w-full text-xs cursor-pointer" disabled>
+            <Lock className="h-3 w-3 mr-1.5" /> Configure on Server
+          </Button>
+        </div>
+      </div>
+
+      {/* Email OTP */}
+      <div className="p-4 rounded-xl border border-border/50 bg-card">
+        <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+          <Mail className="h-3.5 w-3.5" /> Email OTP
+        </h4>
+        <p className="text-[11px] text-muted-foreground mb-3">Receive login codes via email. Requires email service integration (SendGrid/Resend).</p>
+        <div className="space-y-2">
+          <input type="email" placeholder={authUser?.email || 'you@example.com'} value={emailAddr} onChange={e => setEmailAddr(e.target.value)}
+            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+          <Button variant="outline" className="w-full text-xs cursor-pointer" disabled>
+            <Lock className="h-3 w-3 mr-1.5" /> Configure on Server
+          </Button>
+        </div>
+      </div>
+
+      {/* Change Password */}
+      <div className="p-4 rounded-xl border border-border/50 bg-card">
+        <h4 className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+          <Lock className="h-3.5 w-3.5" /> Change Password
+        </h4>
+        <div className="space-y-2">
+          <input type="password" placeholder="Current password" value={passwords.current}
+            onChange={e => setPasswords(p => ({ ...p, current: e.target.value }))}
+            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+          <input type="password" placeholder="New password (min 8 chars)" value={passwords.newPw}
+            onChange={e => setPasswords(p => ({ ...p, newPw: e.target.value }))}
+            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+          <input type="password" placeholder="Confirm new password" value={passwords.confirm}
+            onChange={e => setPasswords(p => ({ ...p, confirm: e.target.value }))}
+            className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50" />
+          <Button className="w-full text-xs cursor-pointer" onClick={handleChangePassword}
+            disabled={twoFactorLoading || !passwords.current || !passwords.newPw || !passwords.confirm}>
+            {twoFactorLoading ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : 'Update Password'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Settings Sheet
 // ============================================================
 function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { accounts, setAccounts } = useTradingStore();
+  const { accounts, setAccounts, isAuthenticated } = useTradingStore();
   const [connecting, setConnecting] = useState(false);
   const [broker, setBroker] = useState('alpaca');
   const [apiKey, setApiKey] = useState('');
@@ -895,21 +1111,25 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             </div>
 
             {/* Login / Sign Up */}
-            <div className="p-4 rounded-xl border border-primary/20 bg-primary/5">
-              <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
-                <Briefcase className="h-3.5 w-3.5" />
-                Account
-              </h4>
-              <a
-                href="/auth/signin"
-                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
-              >
-                Sign In / Sign Up
-              </a>
-              <p className="text-[10px] text-muted-foreground text-center mt-1.5">
-                Connect your broker accounts after signing in
-              </p>
-            </div>
+            {isAuthenticated ? (
+              <SecuritySettings />
+            ) : (
+              <div className="p-4 rounded-xl border border-primary/20 bg-primary/5">
+                <h4 className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+                  <Briefcase className="h-3.5 w-3.5" />
+                  Account
+                </h4>
+                <a
+                  href="/auth/signin"
+                  className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+                >
+                  Sign In / Sign Up
+                </a>
+                <p className="text-[10px] text-muted-foreground text-center mt-1.5">
+                  Connect your broker accounts after signing in
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </SheetContent>
@@ -1129,6 +1349,7 @@ export default function TradingDashboard() {
   const {
     activeTab, setActiveTab, setAccounts, setPortfolio, setAllSymbols, setLivePrices, setWsConnected,
     accounts, livePrices, allSymbols, selectedSymbol, setSelectedSymbol, alerts,
+    isAuthenticated, authUser, clearAuth,
   } = useTradingStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -1137,9 +1358,20 @@ export default function TradingDashboard() {
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
-  // Hydrate alerts & accounts from localStorage on first mount (instant, no API wait)
+  // Hydrate alerts, accounts & auth from localStorage on first mount
   useEffect(() => {
     hydrateAlertsFromStorage();
+    // Restore auth state from localStorage
+    try {
+      const token = localStorage.getItem('fovi_token');
+      const userStr = localStorage.getItem('fovi_user');
+      if (token && userStr) {
+        const user = JSON.parse(userStr);
+        if (user?.id && user?.email) {
+          useTradingStore.getState().setAuth(user, token);
+        }
+      }
+    } catch { /* ignore */ }
     // If no accounts loaded yet, seed from localStorage
     const { accounts: currentAccounts } = useTradingStore.getState();
     if (currentAccounts.length === 0) {
@@ -1245,10 +1477,32 @@ export default function TradingDashboard() {
                 <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[10px] text-white flex items-center justify-center font-bold">{alerts.length}</span>
               )}
             </Button>
-            <a href="/auth/signin" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer hover:bg-primary/90 transition-colors">
-              <Briefcase className="h-3.5 w-3.5" />
-              <span>Account</span>
-            </a>
+            {isAuthenticated && authUser ? (
+              <div className="relative group">
+                <button className="hidden sm:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer hover:bg-primary/90 transition-colors">
+                  <User className="h-3.5 w-3.5" />
+                  <span>{authUser.name || authUser.email.split('@')[0]}</span>
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+                <div className="absolute right-0 top-full mt-1 w-52 rounded-xl border border-border bg-card shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <div className="px-3 py-2.5 border-b border-border">
+                    <p className="text-sm font-medium truncate">{authUser.name || 'User'}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{authUser.email}</p>
+                  </div>
+                  <div className="p-1.5">
+                    <button onClick={() => { clearAuth(); window.location.href = '/'; }}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer">
+                      <LogOut className="h-4 w-4" /> Sign Out
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <a href="/auth/signin" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold cursor-pointer hover:bg-primary/90 transition-colors">
+                <Briefcase className="h-3.5 w-3.5" />
+                <span>Sign In</span>
+              </a>
+            )}
             <Button variant="ghost" size="icon" className="h-9 w-9 cursor-pointer" onClick={() => setSettingsOpen(true)}>
               <Settings className="h-4 w-4" />
             </Button>
