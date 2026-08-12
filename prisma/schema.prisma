@@ -386,6 +386,26 @@ model Subscription {
   updatedAt       DateTime @updatedAt
 }
 
+model BrokerProvider {
+  id              String   @id @default(cuid())
+  code            String   @unique  // internal code: 'binance', 'okx', 'bybit', 'bitget', 'alpaca', 'mt5', 'demo', or custom like 'kucoin'
+  displayName     String              // 'Binance', 'OKX', etc.
+  description     String   @default("")
+  brokerType      String   @default("crypto")  // crypto, stocks, forex, cfd, demo
+  isActive        Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  iconColor       String   @default("#F0B90B")  // hex color for the icon
+  requiresApiKey  Boolean  @default(true)
+  requiresSecret  Boolean  @default(true)
+  requiresPassphrase Boolean @default(false)
+  liveBaseUrl     String   @default("")   // optional override for custom brokers
+  testnetBaseUrl  String   @default("")   // optional override for demo URLs
+  assetTypes      String   @default("[]")  // JSON array: ["crypto","forex"]
+  supportedFeatures String @default("[]")  // JSON array: ["spot","futures","options"]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 model SubscriptionPlan {
   id          String   @id @default(cuid())
   name        String   @unique

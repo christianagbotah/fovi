@@ -17,6 +17,7 @@ const DEFAULT_INTERVALS: Record<string, number> = {
   alpaca: 250,   // Alpaca: 200 req/min → ~300ms
   bybit: 200,    // Bybit: 20 req/s → 200ms
   bitget: 200,   // Bitget: 20 req/s → 200ms
+  mt5: 250,      // MetaAPI: ~4 req/s → 250ms
 };
 
 /**

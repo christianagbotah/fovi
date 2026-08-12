@@ -1,6 +1,6 @@
 // ============================================================
 // Broker Factory - Creates broker instances based on config
-// Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget
+// Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MT5
 // ============================================================
 
 import type { BrokerConfig } from '../types';
@@ -10,6 +10,7 @@ import { BinanceBroker } from './binance';
 import { OkxBroker } from './okx';
 import { BybitBroker } from './bybit';
 import { BitgetBroker } from './bitget';
+import { MT5Broker } from './mt5';
 import { decrypt } from '@/lib/encryption';
 
 // Broker interface that all providers implement
@@ -82,6 +83,8 @@ export function createBroker(config: BrokerConfig): IBroker {
       return new BybitBroker(config);
     case 'bitget':
       return new BitgetBroker(config);
+    case 'mt5':
+      return new MT5Broker(config);
     case 'demo':
     default:
       return new DemoBroker(config);

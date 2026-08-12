@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Trash2, ChevronDown, Check, Wallet,
@@ -63,6 +63,19 @@ function sortAccounts(accounts: TradingAccount[], activeId: string | null): Trad
   });
 }
 
+interface ApiBroker {
+  code: string;
+  displayName: string;
+  description: string;
+  brokerType: string;
+  iconColor: string;
+  requiresApiKey: boolean;
+  requiresSecret: boolean;
+  requiresPassphrase: boolean;
+  assetTypes: string;
+  supportedFeatures: string;
+}
+
 export function AccountSwitcher() {
   const {
     accounts, activeAccountId, setActiveAccount, setAccounts,
@@ -71,7 +84,23 @@ export function AccountSwitcher() {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [brokerType, setBrokerType] = useState<string>('demo');
+  const [apiBrokers, setApiBrokers] = useState<ApiBroker[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Fetch available brokers from API (or fallback to defaults)
+  useEffect(() => {
+    fetch('/api/trading/brokers')
+      .then(r => r.ok ? r.json() : [])
+      .then((data: ApiBroker[]) => {
+        if (data.length > 0) setApiBrokers(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  const selectedBroker = useMemo(
+    () => apiBrokers.find(b => b.code === brokerType),
+    [apiBrokers, brokerType],
+  );
 
   const activeAccount = accounts.find(a => a.id === activeAccountId);
   const normActive = activeAccount ? normalizeAccount(activeAccount) : null;
@@ -363,24 +392,15 @@ export function AccountSwitcher() {
               <Select name="broker" defaultValue="demo" onValueChange={(val) => setBrokerType(val)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="demo">
-                    <span className="flex items-center gap-2"><Zap className="h-4 w-4" /> Demo (Simulated)</span>
-                  </SelectItem>
-                  <SelectItem value="alpaca">
-                    <span className="flex items-center gap-2"><Briefcase className="h-4 w-4" /> Alpaca (Stocks)</span>
-                  </SelectItem>
-                  <SelectItem value="binance">
-                    <span className="flex items-center gap-2"><Wallet className="h-4 w-4" /> Binance (Crypto)</span>
-                  </SelectItem>
-                  <SelectItem value="okx">
-                    <span className="flex items-center gap-2"><Landmark className="h-4 w-4" /> OKX (Crypto)</span>
-                  </SelectItem>
-                  <SelectItem value="bybit">
-                    <span className="flex items-center gap-2"><Zap className="h-4 w-4" /> Bybit (Crypto)</span>
-                  </SelectItem>
-                  <SelectItem value="bitget">
-                    <span className="flex items-center gap-2"><Shield className="h-4 w-4" /> Bitget (Crypto)</span>
-                  </SelectItem>
+                  {apiBrokers.map(b => (
+                    <SelectItem key={b.code} value={b.code}>
+                      <span className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: b.iconColor || '#6366F1' }} />
+                        {b.displayName}
+                        {b.description && <span className="text-muted-foreground text-[10px] ml-1">{b.description}</span>}
+                      </span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -416,7 +436,7 @@ export function AccountSwitcher() {
             )}
 
             <AnimatePresence mode="wait">
-              {brokerType !== 'demo' && brokerType !== '' && (
+              {selectedBroker && selectedBroker.requiresApiKey && brokerType !== 'demo' && (
                 <motion.div
                   key="apiKey"
                   initial={{ opacity: 0, height: 0 }}
@@ -441,7 +461,7 @@ export function AccountSwitcher() {
             </AnimatePresence>
 
             <AnimatePresence mode="wait">
-              {(brokerType === 'alpaca' || brokerType === 'binance' || brokerType === 'okx' || brokerType === 'bybit' || brokerType === 'bitget') && (
+              {selectedBroker && selectedBroker.requiresSecret && (
                 <motion.div
                   key="apiSecret"
                   initial={{ opacity: 0, height: 0 }}
@@ -462,7 +482,7 @@ export function AccountSwitcher() {
             </AnimatePresence>
 
             <AnimatePresence mode="wait">
-              {(brokerType === 'okx' || brokerType === 'bitget') && (
+              {selectedBroker && selectedBroker.requiresPassphrase && (
                 <motion.div
                   key="passphrase"
                   initial={{ opacity: 0, height: 0 }}

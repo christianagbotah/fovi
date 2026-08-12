@@ -710,3 +710,31 @@ Stage Summary:
 - VPS deploy script ready at deploy.sh with PM2 ecosystem for all 4 services
 - Lint passes clean
 
+
+---
+Task ID: admin-broker-management-mt5
+Agent: main
+Task: Dynamic admin broker management UI + MetaTrader 5 broker
+
+Work Log:
+- Added BrokerProvider Prisma model (code, displayName, brokerType, iconColor, requiresApiKey/Secret/Passphrase, assetTypes, supportedFeatures, sortOrder, isActive)
+- Created src/lib/broker/mt5.ts — Full MetaTrader 5 broker via MetaAPI.cloud REST bridge (positions, orders, klines, prices, cancel)
+- Created src/app/api/admin/brokers/route.ts — GET (list all), POST (create broker)
+- Created src/app/api/admin/brokers/[id]/route.ts — PUT (update), DELETE (remove broker)
+- Created src/app/api/admin/brokers/seed/route.ts — POST to seed 7 default brokers (idempotent, skips existing)
+- Created src/app/api/trading/brokers/route.ts — GET active brokers for user account linking (with hardcoded fallback for demo mode)
+- Created src/components/trading/admin-brokers-panel.tsx — Full admin UI: list, add form, edit, toggle active/inactive, delete, seed defaults button, color picker, asset type/feature toggles
+- Updated src/lib/types.ts — Added mt5 to BrokerProvider union type
+- Updated src/lib/broker/factory.ts — Added MT5Broker import + case in createBroker switch
+- Updated src/lib/broker-rate-limit.ts — Added mt5: 250ms
+- Updated src/components/trading/account-switcher.tsx — Now fetches brokers dynamically from /api/trading/brokers API, shows broker color dot + description, conditionally shows API Key/Secret/Passphrase based on broker config
+- Updated src/app/page.tsx — Added AdminBrokersPanel import, admin-brokers SettingsTab, and admin-brokers section
+- Lint passes clean, dev server compiles
+
+Stage Summary:
+- Admin can now add unlimited broker providers via Settings > Brokers
+- 7 built-in brokers seeded: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MetaTrader 5
+- MT5 connects via MetaAPI.cloud REST API (admin sets META_API_KEY, users provide MetaAPI account ID)
+- User-facing broker selector reads from DB dynamically — any broker admin adds appears automatically
+- Custom brokers without code implementation fall back to Demo mode for trading
+

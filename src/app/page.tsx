@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
+import { AdminBrokersPanel } from '@/components/trading/admin-brokers-panel';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
 import { PriceChart } from '@/components/trading/price-chart';
 import { PositionsPanel } from '@/components/trading/positions-panel';
@@ -1275,6 +1276,7 @@ function SecuritySettings() {
         {isAdmin && <SettingsTab id="admin-platform" label="Branding" icon={Globe} active={activeSection === 'admin-platform'} onClick={setActiveSection} />}
         {isAdmin && <SettingsTab id="admin-users" label="Users" icon={User} active={activeSection === 'admin-users'} onClick={() => { setActiveSection('admin-users'); loadAdminSubData(); }} />}
         {isAdmin && <SettingsTab id="admin-subs" label="Subs Mgmt" icon={Crown} active={activeSection === 'admin-subs'} onClick={() => { setActiveSection('admin-subs'); loadAdminSubData(); }} />}
+        {isAdmin && <SettingsTab id="admin-brokers" label="Brokers" icon={Link2} active={activeSection === 'admin-brokers'} onClick={setActiveSection} />}
       </div>
 
       {/* ====== SECURITY TAB ====== */}
@@ -1809,6 +1811,9 @@ function SecuritySettings() {
             )}
           </div>
         </div>
+      )}
+      {activeSection === 'admin-brokers' && isAdmin && (
+        <AdminBrokersPanel />
       )}
     </div>
   );

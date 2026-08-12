@@ -2,7 +2,7 @@
 // Fovi AI Trading Platform - Shared Type Definitions
 // ============================================================
 
-export type BrokerProvider = 'alpaca' | 'binance' | 'okx' | 'bybit' | 'bitget' | 'demo';
+export type BrokerProvider = 'alpaca' | 'binance' | 'okx' | 'bybit' | 'bitget' | 'mt5' | 'demo';
 export type AccountType = 'live' | 'demo';
 export type AssetType = 'stock' | 'crypto' | 'forex' | 'commodity' | 'index' | 'synthetic';
 export type Side = 'long' | 'short';
