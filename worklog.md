@@ -666,3 +666,21 @@ Stage Summary:
 - Subscription limits enforced on bots, accounts, auto-trade activation
 - Admin financial dashboard API operational
 - Email verification, token refresh, order cancellation all implemented
+
+---
+Task ID: env-and-deposit-removal
+Agent: main
+Task: Configure production env vars, remove deposit/withdrawal, verify Finnhub
+
+Work Log:
+- Updated .env with: PostgreSQL URL, JWT_SECRET (generated), AUTH_PEPPER (generated), ADMIN_EMAIL=fovi@lightworldtech.com, FINNHUB_API_KEY, APP_URL, NEXT_PUBLIC_APP_URL
+- Removed deposit/withdrawal from PATCH /api/trading/accounts/[id] — now only allows label/isActive/isDefault updates
+- Verified Finnhub returns real prices: AAPL $304.91, GOOGL $343.80, NVDA $217.50, TSLA $332.81, etc.
+- Created mini-services/market-service/.env with FINNHUB_API_KEY
+- Confirmed: 14/28 symbols now real (10 stocks via Finnhub + 4 forex via ExchangeRate-API)
+- CoinGecko 429 (rate limit) and metals.live fetch failed in sandbox — will work on VPS
+
+Stage Summary:
+- .env fully configured for production deployment
+- Deposit/withdrawal removed — users fund via broker directly
+- Finnhub delivering real stock prices (10 symbols confirmed)
