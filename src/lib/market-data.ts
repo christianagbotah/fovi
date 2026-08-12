@@ -59,24 +59,39 @@ function setCache(key: string, data: unknown) {
 const COINGECKO_IDS: Record<string, string> = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
   XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
-  DOT: 'polkadot', LINK: 'chainlink',
+  DOT: 'polkadot', LINK: 'chainlink', MATIC: 'matic-network',
+  UNI: 'uniswap', ATOM: 'cosmos', NEAR: 'near', APT: 'aptos',
+  ARB: 'arbitrum', OP: 'optimism', PEPE: 'pepe', SHIB: 'shiba-inu',
+  TON: 'the-open-network',
 };
 
 // Forex: internal symbol -> currency code to look up
 const FOREX_MAP: Record<string, { base: string; quote: string; invert?: boolean }> = {
   EURUSD: { base: 'EUR', quote: 'USD' },
   GBPUSD: { base: 'GBP', quote: 'USD' },
-  USDJPY: { base: 'JPY', quote: 'USD', invert: true },  // API gives USD/JPY, we want JPY/USD... no
+  USDJPY: { base: 'JPY', quote: 'USD', invert: true },
   AUDUSD: { base: 'AUD', quote: 'USD' },
+  USDCAD: { base: 'CAD', quote: 'USD', invert: true },
+  NZDUSD: { base: 'NZD', quote: 'USD' },
+  USDCHF: { base: 'CHF', quote: 'USD', invert: true },
+  EURGBP: { base: 'GBP', quote: 'EUR', invert: true },
+  EURJPY: { base: 'JPY', quote: 'EUR', invert: true },
+  GBPJPY: { base: 'JPY', quote: 'GBP', invert: true },
 };
 
-const STOCK_SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC'];
-const INDEX_SYMBOLS = ['US30', 'NAS100'];
+const STOCK_SYMBOLS = [
+  'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC',
+  'CRM', 'ORCL', 'JPM', 'V', 'WMT', 'DIS', 'BA', 'PYPL', 'UBER', 'COIN',
+];
+const INDEX_SYMBOLS = ['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40'];
 
 // Finnhub uses different ticker formats
 const FINNHUB_MAP: Record<string, string> = {
   US30: '.DJI',
   NAS100: '.NDX',
+  SPX500: '.INX',
+  FTSE100: '.FTSE',
+  DAX40: '.GDAXI',
 };
 
 // ============================================================
@@ -103,7 +118,7 @@ export async function fetchCryptoPrices(): Promise<Map<string, MarketPrice>> {
   try {
     const url =
       'https://api.coingecko.com/api/v3/coins/markets' +
-      '?vs_currency=usd&order=market_cap_desc&per_page=20&page=1' +
+      '?vs_currency=usd&order=market_cap_desc&per_page=30&page=1' +
       '&sparkline=false&price_change_percentage=24h';
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },

@@ -20,46 +20,79 @@ import { Server } from 'socket.io'
 const COINGECKO_IDS: Record<string, string> = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
   XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
-  DOT: 'polkadot', LINK: 'chainlink',
+  DOT: 'polkadot', LINK: 'chainlink', MATIC: 'matic-network',
+  UNI: 'uniswap', ATOM: 'cosmos', NEAR: 'near', APT: 'aptos',
+  ARB: 'arbitrum', OP: 'optimism', PEPE: 'pepe', SHIB: 'shiba-inu',
+  TON: 'the-open-network',
 }
 const CRYPTO_SYMBOLS = Object.keys(COINGECKO_IDS)
 
-const FOREX_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']
-const METAL_SYMBOLS = ['XAUUSD', 'XAGUSD']
-const STOCK_SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC']
-const INDEX_SYMBOLS = ['US30', 'NAS100']
+const FOREX_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY']
+const COMMODITY_SYMBOLS = ['XAUUSD', 'XAGUSD', 'USOIL', 'NATGAS', 'XPTUSD']
+const STOCK_SYMBOLS = [
+  'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC',
+  'CRM', 'ORCL', 'JPM', 'V', 'WMT', 'DIS', 'BA', 'PYPL', 'UBER', 'COIN',
+]
+const INDEX_SYMBOLS = ['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40']
 
 const FOREX_MAP: Record<string, { base: string; quote: string; invert?: boolean }> = {
   EURUSD: { base: 'EUR', quote: 'USD' },
   GBPUSD: { base: 'GBP', quote: 'USD' },
   USDJPY: { base: 'JPY', quote: 'USD', invert: true },
   AUDUSD: { base: 'AUD', quote: 'USD' },
+  USDCAD: { base: 'CAD', quote: 'USD', invert: true },
+  NZDUSD: { base: 'NZD', quote: 'USD' },
+  USDCHF: { base: 'CHF', quote: 'USD', invert: true },
+  EURGBP: { base: 'GBP', quote: 'EUR', invert: true },
+  EURJPY: { base: 'JPY', quote: 'EUR', invert: true },
+  GBPJPY: { base: 'JPY', quote: 'GBP', invert: true },
 }
 
 const FINNHUB_MAP: Record<string, string> = {
   US30: '.DJI',
   NAS100: '.NDX',
+  SPX500: '.INX',
+  FTSE100: '.FTSE',
+  DAX40: '.GDAXI',
 }
 
 const SYMBOL_NAMES: Record<string, string> = {
   AAPL: 'Apple Inc.', GOOGL: 'Alphabet Inc.', MSFT: 'Microsoft Corp.',
   AMZN: 'Amazon.com Inc.', NVDA: 'NVIDIA Corp.', TSLA: 'Tesla Inc.',
   META: 'Meta Platforms', NFLX: 'Netflix Inc.', AMD: 'Advanced Micro Devices',
-  INTC: 'Intel Corp.', BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
+  INTC: 'Intel Corp.', CRM: 'Salesforce Inc.', ORCL: 'Oracle Corp.',
+  JPM: 'JPMorgan Chase', V: 'Visa Inc.', WMT: 'Walmart Inc.',
+  DIS: 'Walt Disney Co.', BA: 'Boeing Co.', PYPL: 'PayPal Holdings',
+  UBER: 'Uber Technologies', COIN: 'Coinbase Global',
+  BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
   BNB: 'BNB', XRP: 'XRP', DOGE: 'Dogecoin', ADA: 'Cardano',
   AVAX: 'Avalanche', DOT: 'Polkadot', LINK: 'Chainlink',
+  MATIC: 'Polygon', UNI: 'Uniswap', ATOM: 'Cosmos',
+  NEAR: 'NEAR Protocol', APT: 'Aptos', ARB: 'Arbitrum',
+  OP: 'Optimism', PEPE: 'Pepe', SHIB: 'Shiba Inu', TON: 'Toncoin',
   EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY',
-  AUDUSD: 'AUD/USD', XAUUSD: 'Gold', XAGUSD: 'Silver',
-  US30: 'US 30 Index', NAS100: 'NASDAQ 100',
+  AUDUSD: 'AUD/USD', USDCAD: 'USD/CAD', NZDUSD: 'NZD/USD',
+  USDCHF: 'USD/CHF', EURGBP: 'EUR/GBP', EURJPY: 'EUR/JPY', GBPJPY: 'GBP/JPY',
+  XAUUSD: 'Gold', XAGUSD: 'Silver', USOIL: 'US Crude Oil',
+  NATGAS: 'Natural Gas', XPTUSD: 'Platinum',
+  US30: 'US 30 (Dow Jones)', NAS100: 'NASDAQ 100',
+  SPX500: 'S&P 500', FTSE100: 'FTSE 100', DAX40: 'DAX 40',
 }
 
 const DEMO_BASE_PRICES: Record<string, number> = {
   AAPL: 195.5, GOOGL: 178.2, MSFT: 445.8, AMZN: 198.3, NVDA: 920.5,
   TSLA: 245.6, META: 530.2, NFLX: 720.1, AMD: 178.5, INTC: 32.4,
+  CRM: 272.0, ORCL: 145.0, JPM: 205.0, V: 285.0, WMT: 168.0,
+  DIS: 112.0, BA: 178.0, PYPL: 65.0, UBER: 78.0, COIN: 225.0,
   BTC: 67500, ETH: 3520, SOL: 172.5, BNB: 595, XRP: 0.58,
   DOGE: 0.165, ADA: 0.48, AVAX: 38.2, DOT: 7.35, LINK: 17.8,
+  MATIC: 0.72, UNI: 11.5, ATOM: 9.2, NEAR: 7.8, APT: 9.5,
+  ARB: 1.15, OP: 2.45, PEPE: 0.000012, SHIB: 0.000025, TON: 6.8,
   EURUSD: 1.085, GBPUSD: 1.272, USDJPY: 154.5, AUDUSD: 0.665,
-  XAUUSD: 2385, XAGUSD: 28.5, US30: 39500, NAS100: 18350,
+  USDCAD: 1.365, NZDUSD: 0.615, USDCHF: 0.875, EURGBP: 0.853,
+  EURJPY: 167.8, GBPJPY: 196.5,
+  XAUUSD: 2385, XAGUSD: 28.5, USOIL: 78.5, NATGAS: 2.85, XPTUSD: 980,
+  US30: 39500, NAS100: 18350, SPX500: 5350, FTSE100: 8200, DAX40: 18400,
 }
 
 const ALL_SYMBOLS = Object.keys(DEMO_BASE_PRICES)
@@ -68,7 +101,7 @@ function getAssetType(symbol: string): string {
   if (FOREX_PAIRS.includes(symbol)) return 'forex'
   if (CRYPTO_SYMBOLS.includes(symbol)) return 'crypto'
   if (INDEX_SYMBOLS.includes(symbol)) return 'index'
-  if (METAL_SYMBOLS.includes(symbol)) return 'commodity'
+  if (COMMODITY_SYMBOLS.includes(symbol)) return 'commodity'
   return 'stock'
 }
 
@@ -106,7 +139,7 @@ async function fetchCryptoPrices() {
   try {
     const url =
       'https://api.coingecko.com/api/v3/coins/markets' +
-      '?vs_currency=usd&order=market_cap_desc&per_page=20&page=1' +
+      '?vs_currency=usd&order=market_cap_desc&per_page=30&page=1' +
       '&sparkline=false&price_change_percentage=24h'
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },

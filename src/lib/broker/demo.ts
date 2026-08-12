@@ -40,26 +40,73 @@ function getAccount(accountId: string) {
   return demoAccounts.get(accountId)!;
 }
 
-// Simulated current prices with realistic base values
+// ============================================================
+// Master Symbol Registry
+// ============================================================
+// These are the DEFAULT demo/base prices. Real prices from
+// CoinGecko, Finnhub, ExchangeRate-API, and metals.live override
+// these at runtime. Add any symbol here and it will appear in
+// the demo market overview and be tradeable in demo mode.
+// For real brokers, ANY symbol the broker supports is tradeable
+// — this list only controls the demo experience.
+// ============================================================
+
 const BASE_PRICES: Record<string, number> = {
+  // ── US Stocks (20) ──
   AAPL: 195.5, GOOGL: 178.2, MSFT: 445.8, AMZN: 198.3, NVDA: 920.5,
   TSLA: 245.6, META: 530.2, NFLX: 720.1, AMD: 178.5, INTC: 32.4,
+  CRM: 272.0, ORCL: 145.0, JPM: 205.0, V: 285.0, WMT: 168.0,
+  DIS: 112.0, BA: 178.0, PYPL: 65.0, UBER: 78.0, COIN: 225.0,
+
+  // ── Crypto (20) ──
   BTC: 67500, ETH: 3520, SOL: 172.5, BNB: 595, XRP: 0.58,
   DOGE: 0.165, ADA: 0.48, AVAX: 38.2, DOT: 7.35, LINK: 17.8,
+  MATIC: 0.72, UNI: 11.5, ATOM: 9.2, NEAR: 7.8, APT: 9.5,
+  ARB: 1.15, OP: 2.45, PEPE: 0.000012, SHIB: 0.000025, TON: 6.8,
+
+  // ── Forex (10) ──
   EURUSD: 1.085, GBPUSD: 1.272, USDJPY: 154.5, AUDUSD: 0.665,
-  XAUUSD: 2385, XAGUSD: 28.5, US30: 39500, NAS100: 18350,
+  USDCAD: 1.365, NZDUSD: 0.615, USDCHF: 0.875, EURGBP: 0.853,
+  EURJPY: 167.8, GBPJPY: 196.5,
+
+  // ── Commodities (5) ──
+  XAUUSD: 2385, XAGUSD: 28.5, USOIL: 78.5, NATGAS: 2.85, XPTUSD: 980,
+
+  // ── Indices (5) ──
+  US30: 39500, NAS100: 18350, SPX500: 5350, FTSE100: 8200, DAX40: 18400,
 };
 
 const SYMBOL_NAMES: Record<string, string> = {
+  // ── US Stocks ──
   AAPL: 'Apple Inc.', GOOGL: 'Alphabet Inc.', MSFT: 'Microsoft Corp.',
   AMZN: 'Amazon.com Inc.', NVDA: 'NVIDIA Corp.', TSLA: 'Tesla Inc.',
   META: 'Meta Platforms', NFLX: 'Netflix Inc.', AMD: 'Advanced Micro Devices',
-  INTC: 'Intel Corp.', BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
+  INTC: 'Intel Corp.', CRM: 'Salesforce Inc.', ORCL: 'Oracle Corp.',
+  JPM: 'JPMorgan Chase', V: 'Visa Inc.', WMT: 'Walmart Inc.',
+  DIS: 'Walt Disney Co.', BA: 'Boeing Co.', PYPL: 'PayPal Holdings',
+  UBER: 'Uber Technologies', COIN: 'Coinbase Global',
+
+  // ── Crypto ──
+  BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
   BNB: 'BNB', XRP: 'XRP', DOGE: 'Dogecoin', ADA: 'Cardano',
   AVAX: 'Avalanche', DOT: 'Polkadot', LINK: 'Chainlink',
+  MATIC: 'Polygon', UNI: 'Uniswap', ATOM: 'Cosmos',
+  NEAR: 'NEAR Protocol', APT: 'Aptos', ARB: 'Arbitrum',
+  OP: 'Optimism', PEPE: 'Pepe', SHIB: 'Shiba Inu', TON: 'Toncoin',
+
+  // ── Forex ──
   EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY',
-  AUDUSD: 'AUD/USD', XAUUSD: 'Gold', XAGUSD: 'Silver',
-  US30: 'US 30 Index', NAS100: 'NASDAQ 100',
+  AUDUSD: 'AUD/USD', USDCAD: 'USD/CAD', NZDUSD: 'NZD/USD',
+  USDCHF: 'USD/CHF', EURGBP: 'EUR/GBP', EURJPY: 'EUR/JPY',
+  GBPJPY: 'GBP/JPY',
+
+  // ── Commodities ──
+  XAUUSD: 'Gold', XAGUSD: 'Silver', USOIL: 'US Crude Oil',
+  NATGAS: 'Natural Gas', XPTUSD: 'Platinum',
+
+  // ── Indices ──
+  US30: 'US 30 (Dow Jones)', NAS100: 'NASDAQ 100',
+  SPX500: 'S&P 500', FTSE100: 'FTSE 100', DAX40: 'DAX 40',
 };
 
 export function getDemoPrice(symbol: string): number {
@@ -90,18 +137,22 @@ export function getAllDemoSymbols() {
   });
 }
 
-function getAssetType(symbol: string): string {
-  const forexPairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD'];
-  const crypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'LINK'];
-  const indices = ['US30', 'NAS100'];
-  const commodities = ['XAUUSD', 'XAGUSD'];
+// Asset type classification — used for UI filtering and display
+const FOREX_PAIRS = new Set(['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY']);
+const CRYPTO_SET = new Set(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'LINK', 'MATIC', 'UNI', 'ATOM', 'NEAR', 'APT', 'ARB', 'OP', 'PEPE', 'SHIB', 'TON']);
+const INDEX_SET = new Set(['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40']);
+const COMMODITY_SET = new Set(['XAUUSD', 'XAGUSD', 'USOIL', 'NATGAS', 'XPTUSD']);
 
-  if (forexPairs.includes(symbol)) return 'forex';
-  if (crypto.includes(symbol)) return 'crypto';
-  if (indices.includes(symbol)) return 'synthetic';
-  if (commodities.includes(symbol)) return 'synthetic';
+function getAssetType(symbol: string): string {
+  if (FOREX_PAIRS.has(symbol)) return 'forex';
+  if (CRYPTO_SET.has(symbol)) return 'crypto';
+  if (INDEX_SET.has(symbol)) return 'index';
+  if (COMMODITY_SET.has(symbol)) return 'commodity';
   return 'stock';
 }
+
+// Public getters for market-data.ts to use
+export { FOREX_PAIRS as FOREX_SYMBOLS, CRYPTO_SET as CRYPTO_SYMBOL_SET, COMMODITY_SET as COMMODITY_SYMBOLS, INDEX_SET as INDEX_SYMBOLS };
 
 export function getDemoCandles(symbol: string, timeframe: string, limit: number = 100): CandleData[] {
   const base = BASE_PRICES[symbol] || 100;
