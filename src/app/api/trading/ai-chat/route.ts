@@ -120,17 +120,24 @@ function generateFallbackResponse(message: string, marketContext: string, symbol
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get('sessionId') || 'default';
+  const userId = getUserIdSync(req);
 
-  // Try DB first
-  if (db && hasModel('aiConversation') && hasModel('aiMessage')) {
+  // Try DB first (only if authenticated — don't leak other users' conversations)
+  if (db && hasModel('aiConversation') && hasModel('aiMessage') && userId) {
     try {
-      const messages = await db.aiMessage.findMany({
-        where: { conversationId: sessionId },
-        orderBy: { createdAt: 'asc' },
-        take: 50,
+      // Verify the conversation belongs to the authenticated user
+      const conversation = await db.aiConversation.findFirst({
+        where: { id: sessionId, userId },
       });
-      if (messages.length > 0) {
-        return NextResponse.json({ messages, source: 'db' });
+      if (conversation) {
+        const messages = await db.aiMessage.findMany({
+          where: { conversationId: sessionId },
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        });
+        if (messages.length > 0) {
+          return NextResponse.json({ messages, source: 'db' });
+        }
       }
     } catch {
       // fall through to in-memory
@@ -143,10 +150,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       messages: history.slice(1).map(m => ({ role: m.role, content: m.content })),
       source: 'memory',
+      _demo: !userId,
     });
   }
 
-  return NextResponse.json({ messages: [], source: 'empty' });
+  return NextResponse.json({ messages: [], source: 'empty', _demo: !userId });
 }
 
 // ============================================================
@@ -202,29 +210,33 @@ export async function POST(req: NextRequest) {
       aiResponse = generateFallbackResponse(message, marketContext, symbolContext);
     }
 
-    // Persist to DB
+    // Persist to DB (only if we have a real authenticated user)
+    let persisted = false;
     if (db && hasModel('aiConversation') && hasModel('aiMessage')) {
       try {
-        const userId = getUserIdSync(req) || 'usr_demo_1';
-        let conversation = await db.aiConversation.findFirst({ where: { userId, id: sessionId } });
-        if (!conversation) {
-          conversation = await db.aiConversation.create({ data: { id: sessionId, userId, title: message.slice(0, 50) } });
+        const userId = getUserIdSync(req);
+        if (userId) {
+          let conversation = await db.aiConversation.findFirst({ where: { userId, id: sessionId } });
+          if (!conversation) {
+            conversation = await db.aiConversation.create({ data: { id: sessionId, userId, title: message.slice(0, 50) } });
+          }
+          await db.aiMessage.createMany({
+            data: [
+              { conversationId: conversation.id, role: 'user', content: message },
+              { conversationId: conversation.id, role: 'assistant', content: aiResponse },
+            ],
+          });
+          persisted = true;
         }
-        await db.aiMessage.createMany({
-          data: [
-            { conversationId: conversation.id, role: 'user', content: message },
-            { conversationId: conversation.id, role: 'assistant', content: aiResponse },
-          ],
-        });
       } catch {
-        // non-critical
+        // non-critical: in-memory fallback still works
       }
     }
 
     history.push({ role: 'assistant', content: aiResponse });
     conversations.set(sessionId, trimConversation(history));
 
-    return NextResponse.json({ success: true, response: aiResponse, offline: !zai, messageCount: history.length - 1 });
+    return NextResponse.json({ success: true, response: aiResponse, offline: !zai, messageCount: history.length - 1, _demo: !getUserIdSync(req) });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'AI chat failed';
     console.error('[AI Chat Error]', msg);
@@ -253,3 +265,4 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ success: true });
 }
+

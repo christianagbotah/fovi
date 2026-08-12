@@ -428,6 +428,8 @@ model BrokerProvider {
   customEndpoints String   @default("{}")  // JSON: endpoint paths for generic REST broker
   assetTypes      String   @default("[]")  // JSON array: ["crypto","forex"]
   supportedFeatures String @default("[]")  // JSON array: ["spot","futures","options"]
+  deleted        Boolean  @default(false)   // soft-delete flag
+  deletedAt      DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

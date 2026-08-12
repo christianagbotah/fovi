@@ -70,20 +70,20 @@ export function validateProductionEnv(): void {
     console.error('');
     console.error('   Set the correct values in your environment (.env file, secrets manager, or CI/CD config) and restart.');
     console.error('');
-    process.exit(1);
-    return; // unreachable, but satisfies TypeScript control-flow
+    // Only process.exit in Node.js runtime — not available in Edge
+    if (typeof process !== 'undefined' && typeof process.exit === 'function') {
+      try { process.exit(1); } catch { /* ignore in Edge runtime */ }
+    }
+    return;
   }
 
   // --- Non-critical warnings (do NOT block) ---
 
-  // Keep the original warning loop for any future non-critical DEFAULTS entries
-  for (const [key, defaultValue] of Object.entries(INSECURE_DEFAULTS)) {
-    // These are already covered by the fatal checks above, but we keep the
-    // loop structure so additional non-critical warnings can be added here.
-    // No-op in current configuration since all DEFAULTS entries are fatal.
-    if (process.env[key] === defaultValue || !process.env[key]) {
-      warnings.push(`  - ${key} is using the default value. Set a strong random value in production.`);
-    }
+  // INTERNAL_SERVICE_SECRET: recommended but not fatal
+  // Mini-services will work without it but internal API calls won't be authenticated
+  const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+  if (!internalSecret || internalSecret.startsWith('change-me')) {
+    warnings.push('  - INTERNAL_SERVICE_SECRET is not set or uses the default value. Mini-services will not be authenticated. Generate with: openssl rand -hex 32');
   }
 
   if (warnings.length > 0) {

@@ -4,7 +4,7 @@ import { getUserId } from '@/lib/get-user-id';
 
 export async function POST(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
   try {
     const { accountId } = await req.json();
@@ -26,6 +26,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[accounts/switch POST] DB error, using fallback:', error);
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
 }

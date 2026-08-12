@@ -96,6 +96,11 @@ export async function POST() {
     for (const broker of DEFAULT_BROKERS) {
       const existing = await db.brokerProvider.findUnique({ where: { code: broker.code } });
       if (existing) {
+        // Don't resurrect soft-deleted brokers — only update active ones
+        if (existing.deleted) {
+          skipped++;
+          continue;
+        }
         // Update existing brokers with new fields
         await db.brokerProvider.update({
           where: { code: broker.code },

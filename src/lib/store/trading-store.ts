@@ -207,6 +207,10 @@ interface TradingState {
   removeAlert: (id: string) => void;
   setAlerts: (alerts: PriceAlert[]) => void;
   alertCount: () => number;  // untriggered count for badges
+
+  // Demo mode detection (set when API returns x-demo header)
+  demoMode: boolean;
+  setDemoMode: (demo: boolean) => void;
 }
 
 export const useTradingStore = create<TradingState>((set, get) => ({
@@ -359,6 +363,8 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     saveToLS('fovi_price_alerts', alerts);
   },
   alertCount: () => get().alerts.filter(a => !a.triggered).length,
+  demoMode: false,
+  setDemoMode: (demo) => set({ demoMode: demo }),
 }));
 
 // ============================================================

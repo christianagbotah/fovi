@@ -26,7 +26,7 @@ type OrderInput = z.infer<typeof OrderSchema>;
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json([]);
+    return NextResponse.json([], { headers: { 'x-demo': 'true' } });
   }
   try {
     const { searchParams } = new URL(req.url);
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
-    if (!account) return NextResponse.json([]);
+    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'true' } });
 
     const orders = await db.order.findMany({
       where: { accountId: account.id },
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(orders);
   } catch (error) {
     console.warn('[orders GET] DB error, using fallback:', error);
-    return NextResponse.json([]);
+    return NextResponse.json([], { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       });
 
       if (result.status === 'rejected') {
-        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400, headers: { 'x-demo': 'true' } });
       }
 
       // Persist SL/TP for demo positions
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(order);
     } catch (error) {
       console.warn('[orders POST] Demo broker error:', error);
-      return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
+      return NextResponse.json({ error: 'Order processing failed' }, { status: 500, headers: { 'x-demo': 'true' } });
     }
   }
 
@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
 
     const whereClause = accountId ? { id: accountId, userId } : { userId, isDefault: true };
     const account = await db.tradingAccount.findFirst({ where: whereClause });
-    if (!account) return NextResponse.json({ error: 'No account found' }, { status: 400 });
+    if (!account) return NextResponse.json({ error: 'No account found' }, { status: 400, headers: { 'x-demo': 'true' } });
 
     const broker = createBrokerFromAccount(account);
     const result = await broker.placeOrder({
@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
         symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
       });
       if (result.status === 'rejected') {
-        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400 });
+        return NextResponse.json({ error: 'Order rejected — insufficient balance' }, { status: 400, headers: { 'x-demo': 'true' } });
       }
       return NextResponse.json({
         id: result.orderId, symbol, side, type, qty,
@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
         status: result.status, createdAt: new Date().toISOString(),
       });
     } catch {
-      return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
+      return NextResponse.json({ error: 'Order processing failed' }, { status: 500, headers: { 'x-demo': 'true' } });
     }
   }
 }

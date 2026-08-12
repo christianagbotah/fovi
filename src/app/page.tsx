@@ -42,6 +42,7 @@ import { formatPnl, formatPrice, formatVolume } from '@/lib/market-sim';
 import { useMarketSocket } from '@/hooks/use-market-socket';
 import { useTradeNotifications } from '@/hooks/use-trade-notifications';
 import { PagePreloader } from '@/components/page-preloader';
+import { DemoBanner } from '@/components/trading/demo-banner';
 
 
 // ============================================================
@@ -2267,6 +2268,16 @@ export default function TradingDashboard() {
           fetch('/api/trading/portfolio'),
           fetch('/api/trading/market/symbols'),
         ]);
+        // Detect demo mode from response headers
+        if (accRes.headers.get('x-demo') === 'true') {
+          useTradingStore.getState().setDemoMode(true);
+        }
+        if (portRes.headers.get('x-demo') === 'true') {
+          useTradingStore.getState().setDemoMode(true);
+        }
+        if (symRes.headers.get('x-demo') === 'true') {
+          useTradingStore.getState().setDemoMode(true);
+        }
         if (accRes.ok) {
           const accData = await accRes.json();
           if (Array.isArray(accData) && accData.length > 0) {
@@ -2301,6 +2312,9 @@ export default function TradingDashboard() {
 
       {/* ====== APP CONTENT ====== */}
       <div className={`flex flex-col flex-1 min-h-0 transition-opacity duration-500 ${pageLoaded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+      {/* ====== DEMO MODE BANNER ====== */}
+      <DemoBanner />
+
       {/* ====== TOP BAR ====== */}
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-xl border-b border-border/50">
         <div className="flex items-center justify-between h-14 px-4">

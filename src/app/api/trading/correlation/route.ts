@@ -31,7 +31,7 @@ function buildDemoResponse() {
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json(buildDemoResponse());
+    return NextResponse.json(buildDemoResponse(), { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!account) {
-      return NextResponse.json(buildDemoResponse());
+      return NextResponse.json(buildDemoResponse(), { headers: { 'x-demo': 'true' } });
     }
 
     const positions = await db.position.findMany({
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
 
     const symbols = Array.from(new Set(positions.map((p) => p.symbol))).slice(0, 12);
     if (symbols.length === 0) {
-      return NextResponse.json(buildDemoResponse());
+      return NextResponse.json(buildDemoResponse(), { headers: { 'x-demo': 'true' } });
     }
 
     // Fetch recent daily market data per symbol for correlation calculation
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     const validSymbols = symbols.filter((s) => (seriesMap[s]?.length ?? 0) >= 10);
     if (validSymbols.length === 0) {
       // Fallback when no market data is available — return demo matrix scaled to requested symbols
-      return NextResponse.json(buildDemoResponse());
+      return NextResponse.json(buildDemoResponse(), { headers: { 'x-demo': 'true' } });
     }
 
     // Compute daily returns and Pearson correlation
@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[correlation GET] DB error, using fallback:', error);
-    return NextResponse.json(buildDemoResponse());
+    return NextResponse.json(buildDemoResponse(), { headers: { 'x-demo': 'true' } });
   }
 }
 

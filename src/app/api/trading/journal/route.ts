@@ -119,7 +119,7 @@ const DB_MODEL = 'tradeJournal';
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel(DB_MODEL)) {
-    return NextResponse.json(DEMO_ENTRIES);
+    return NextResponse.json(DEMO_ENTRIES, { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[journal GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_ENTRIES);
+    return NextResponse.json(DEMO_ENTRIES, { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    return NextResponse.json(created);
+    return NextResponse.json(created, { headers: { 'x-demo': 'true' } });
   }
   try {
     await ensureDemoUser();
@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      return NextResponse.json(fallback);
+      return NextResponse.json(fallback, { headers: { 'x-demo': 'true' } });
     }
     const created = await db.tradeJournal.create({
       data: {
@@ -228,6 +228,6 @@ export async function POST(req: NextRequest) {
       entryPrice: body.entryPrice ?? 0,
       createdAt: new Date().toISOString(),
     };
-    return NextResponse.json(fallback);
+    return NextResponse.json(fallback, { headers: { 'x-demo': 'true' } });
   }
 }

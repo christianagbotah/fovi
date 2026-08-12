@@ -18,14 +18,14 @@ export async function GET(req: NextRequest) {
     const globalLevy = await getGlobalAdminLevy();
 
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy });
+      return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy }, { headers: { 'x-demo': 'true' } });
     }
     await ensureDemoUser();
     const userId = await getUserId(req);
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
     });
-    if (!defaultAccount) return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy });
+    if (!defaultAccount) return NextResponse.json({ ...DEFAULT_CONFIG, adminLevyPercent: globalLevy }, { headers: { 'x-demo': 'true' } });
 
     let config = await db.botConfig.findFirst({
       where: { accountId: defaultAccount.id },
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.warn('[auto-trade GET] DB error, using fallback:', error);
-    return NextResponse.json(DEFAULT_CONFIG);
+    return NextResponse.json(DEFAULT_CONFIG, { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -87,7 +87,7 @@ export async function PUT(request: Request) {
       adminLevyPercent: globalLevy,
       status: newStatus,
       enabled: enabled ?? false,
-    });
+    }, { headers: { 'x-demo': 'true' } });
   }
 
   try {

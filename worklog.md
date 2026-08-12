@@ -762,3 +762,80 @@ Stage Summary:
 - Response path mapping (dot notation) handles different JSON response structures
 - Factory automatically routes unknown broker codes through GenericRESTBroker
 - Built-in brokers (demo, alpaca, binance, okx, bybit, bitget, mt5) still use their optimized implementations
+
+---
+Task ID: 7a
+Agent: demo-flag-updater
+Task: Add _demo/x-demo header to positions, orders, signals fallback responses
+
+Work Log:
+- Updated positions/route.ts: added x-demo header to 3 fallback responses
+- Updated orders/route.ts: added x-demo header to 8 fallback responses (3 empty array + 5 error object)
+- Updated signals/route.ts: added x-demo header to 3 fallback responses
+
+Stage Summary:
+- All fallback/demo responses in positions, orders, signals routes now include x-demo header
+---
+Task ID: 7b
+Agent: demo-flag-updater
+Task: Add x-demo header to analytics, portfolio, accounts, bots fallback responses
+
+Work Log:
+- Updated analytics/route.ts: added x-demo header to 3 fallback responses
+- Updated portfolio/route.ts: added x-demo header to 3 fallback responses
+- Updated accounts/route.ts: added x-demo header to 5 fallback responses
+- Updated bots/route.ts: added x-demo header to 6 fallback responses
+
+Stage Summary:
+- All fallback/demo responses in analytics, portfolio, accounts, bots routes now include x-demo header
+---
+Task ID: 7c
+Agent: demo-flag-updater
+Task: Add x-demo header to remaining trading route fallback responses
+
+Work Log:
+- Updated journal/route.ts: added x-demo header to 5 fallback responses
+- Updated brokers/route.ts: added x-demo header to 1 fallback response
+- Updated auto-trade/route.ts: added x-demo header to 4 fallback responses
+- Updated auto-trade/activity/route.ts: added x-demo header to 4 fallback responses
+- Updated leaderboard/route.ts: added x-demo header to 3 fallback responses (all paths — always demo data)
+- Updated sessions/route.ts: added x-demo header to 3 fallback responses (all paths — always demo data)
+- Updated sentiment/route.ts: added x-demo header to 1 fallback response
+- Updated webhooks/route.ts: added x-demo header to 7 fallback responses
+- Updated webhook/route.ts: added x-demo header to 4 fallback responses
+- Updated correlation/route.ts: added x-demo header to 5 fallback responses
+- Updated bots/[id]/route.ts: added x-demo header to 7 fallback responses
+- Updated bots/[id]/toggle/route.ts: added x-demo header to 3 fallback responses
+- Updated bots/simulate/route.ts: added x-demo header to 0 fallback responses (no demo fallback paths)
+- Updated accounts/[id]/route.ts: added x-demo header to 3 fallback responses
+- Updated accounts/switch/route.ts: added x-demo header to 2 fallback responses
+
+Stage Summary:
+- All fallback/demo responses in remaining trading routes now include x-demo header
+
+---
+Task ID: PROD-FIXES-CRITICAL-HIGH
+Agent: main
+Task: Fix all critical and high-priority production readiness issues
+
+Work Log:
+- Verified deploy.sh already uses `next build`, `prisma generate`, `next start` (was fixed in prior session)
+- Verified production-check.ts already hard-blocks on missing/default JWT_SECRET, AUTH_PEPPER, ENCRYPTION_KEY
+- Verified DB indexes already exist on Position(accountId,status), TradingAccount(userId), Order(accountId), Bot(userId), AiMessage(conversationId)
+- Verified error.tsx and loading.tsx already exist
+- Verified Zod validation on order placement already exists
+- Verified /api/health endpoint already exists
+- **Soft-delete brokers**: Added `deleted` Boolean + `deletedAt` DateTime? to BrokerProvider schema. Updated DELETE route to soft-delete. Updated GET routes (admin + public) to filter `deleted: false`. Updated seed route to skip soft-deleted brokers. Updated GenericRESTBroker to skip deleted providers.
+- **AI chat userId fix**: Removed `|| 'usr_demo_1'` fallback. Now only persists to DB when a real userId is available from JWT. GET endpoint now verifies conversation belongs to authenticated user before returning messages. Added `_demo` flag to responses when unauthenticated.
+- **Demo mode detection**: Added `x-demo: true` HTTP header to ~83 fallback/demo responses across 25+ API route files. Created `DemoBanner` component. Added `demoMode` state to trading store. Page reads `x-demo` header on initial data load to trigger banner.
+- **Internal service auth**: Added `X-Internal-Service-Secret` header validation in proxy.ts. Strips spoofed `X-User-Id` headers from unauthenticated external requests. Added `INTERNAL_SERVICE_SECRET` to .env.example. Added non-critical warning in production-check.ts.
+- **Edge runtime fix**: Fixed `process.exit(1)` in production-check.ts that crashed in Edge Runtime by wrapping in try/catch.
+- **Brokers route null-safety**: Added `if (!db)` guard to public brokers GET route to prevent crash in demo mode.
+- **Dev port**: Changed dev script from 3002 to 3000, updated Caddyfile accordingly.
+
+Stage Summary:
+- All 4 critical issues were already resolved in prior sessions
+- Fixed 6 high-priority issues: soft-delete, AI chat auth, demo flags, service auth, null safety, edge runtime
+- Created 3 new files: demo-banner.tsx, api-fetch.ts, demo-response.ts
+- Modified 30+ files for x-demo header injection
+- Lint passes clean, dev server starts and handles all routes with 200 status

@@ -8,13 +8,13 @@ export async function GET(
 ) {
   const { id } = await params;
   if (!db || !hasModel('bot')) {
-    return NextResponse.json({ success: true, id, message: 'demo mode' });
+    return NextResponse.json({ success: true, id, message: 'demo mode' }, { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
     const bot = await db.bot.findUnique({ where: { id } });
     if (!bot) {
-      return NextResponse.json({ success: true, id, message: 'not found (demo)' });
+      return NextResponse.json({ success: true, id, message: 'not found (demo)' }, { headers: { 'x-demo': 'true' } });
     }
     if (bot.userId !== userId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -23,7 +23,7 @@ export async function GET(
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[bots/[id] GET] DB error, using fallback:', error);
-    return NextResponse.json({ success: true, id, message: 'demo mode' });
+    return NextResponse.json({ success: true, id, message: 'demo mode' }, { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -34,7 +34,7 @@ export async function PUT(
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   if (!db || !hasModel('bot')) {
-    return NextResponse.json({ success: true, id, updated: body });
+    return NextResponse.json({ success: true, id, updated: body }, { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
@@ -56,7 +56,7 @@ export async function PUT(
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[bots/[id] PUT] DB error, using fallback:', error);
-    return NextResponse.json({ success: true, id, updated: body });
+    return NextResponse.json({ success: true, id, updated: body }, { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -66,7 +66,7 @@ export async function DELETE(
 ) {
   const { id } = await params;
   if (!db || !hasModel('bot')) {
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
@@ -79,6 +79,6 @@ export async function DELETE(
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[bots/[id] DELETE] DB error, using fallback:', error);
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
 }

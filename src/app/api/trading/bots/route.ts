@@ -107,7 +107,7 @@ const DEMO_BOTS = [
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('bot')) {
-    return NextResponse.json(DEMO_BOTS);
+    return NextResponse.json(DEMO_BOTS, { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[bots GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_BOTS);
+    return NextResponse.json(DEMO_BOTS, { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -159,14 +159,14 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    return NextResponse.json(created);
+    return NextResponse.json(created, { headers: { 'x-demo': 'true' } });
   }
   try {
     await ensureDemoUser();
     const userId = await getUserId(req);
     if (!userId) {
       // Fallback to demo response if DB or user unavailable
-      const fallback = {
+      const fallback1 = {
         id: `bot_demo_${Date.now()}`,
         userId: DEMO_USER_ID,
         accountId: 'acc_demo_1',
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      return NextResponse.json(fallback);
+      return NextResponse.json(fallback1, { headers: { 'x-demo': 'true' } });
     }
 
     // --- Subscription limit check ---
@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
     }
     if (!account) {
       // Fallback to demo response if no account exists
-      const fallback = {
+      const fallback2 = {
         id: `bot_demo_${Date.now()}`,
         userId,
         accountId: 'acc_demo_1',
@@ -217,7 +217,7 @@ export async function POST(req: NextRequest) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      return NextResponse.json(fallback);
+      return NextResponse.json(fallback2, { headers: { 'x-demo': 'true' } });
     }
 
     const created = await db.bot.create({
@@ -247,7 +247,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[bots POST] DB error, using fallback:', error);
-    const fallback = {
+    const fallback3 = {
       id: `bot_demo_${Date.now()}`,
       userId: 'usr_demo_1',
       accountId: body.accountId || 'acc_demo_1',
@@ -256,6 +256,6 @@ export async function POST(req: NextRequest) {
       symbols: body.symbols || 'BTC',
       createdAt: new Date().toISOString(),
     };
-    return NextResponse.json(fallback);
+    return NextResponse.json(fallback3, { headers: { 'x-demo': 'true' } });
   }
 }

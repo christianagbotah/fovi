@@ -71,13 +71,13 @@ export async function GET() {
   // We still touch db to honor the project's import convention and to allow
   // future persistence of custom session overrides.
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json(buildSessionStatus());
+    return NextResponse.json(buildSessionStatus(), { headers: { 'x-demo': 'true' } });
   }
   try {
-    return NextResponse.json(buildSessionStatus());
+    return NextResponse.json(buildSessionStatus(), { headers: { 'x-demo': 'true' } });
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[sessions GET] DB error, using fallback:', error);
-    return NextResponse.json(buildSessionStatus());
+    return NextResponse.json(buildSessionStatus(), { headers: { 'x-demo': 'true' } });
   }
 }

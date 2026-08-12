@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 export async function GET() {
   try {
     const providers = await db.brokerProvider.findMany({
+      where: { deleted: false },
       orderBy: { sortOrder: 'asc' },
     });
     return NextResponse.json(providers);

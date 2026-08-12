@@ -9,13 +9,13 @@ export async function POST(
   const { id } = await params;
   if (!db || !hasModel('bot')) {
     // Toggle demo state deterministically: default to enabling
-    return NextResponse.json({ success: true, enabled: true, status: 'running' });
+    return NextResponse.json({ success: true, enabled: true, status: 'running' }, { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
     const bot = await db.bot.findUnique({ where: { id } });
     if (!bot) {
-      return NextResponse.json({ success: true, enabled: true, status: 'running' });
+      return NextResponse.json({ success: true, enabled: true, status: 'running' }, { headers: { 'x-demo': 'true' } });
     }
     if (bot.userId !== userId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -34,6 +34,6 @@ export async function POST(
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[bots/[id]/toggle POST] DB error, using fallback:', error);
-    return NextResponse.json({ success: true, enabled: true, status: 'running' });
+    return NextResponse.json({ success: true, enabled: true, status: 'running' }, { headers: { 'x-demo': 'true' } });
   }
 }

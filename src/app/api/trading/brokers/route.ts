@@ -6,9 +6,12 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
 export async function GET() {
+  if (!db) {
+    return NextResponse.json(DEFAULT_BROKERS, { headers: { 'x-demo': 'true' } });
+  }
   try {
     const providers = await db.brokerProvider.findMany({
-      where: { isActive: true },
+      where: { isActive: true, deleted: false },
       orderBy: { sortOrder: 'asc' },
       select: {
         code: true,
@@ -27,7 +30,7 @@ export async function GET() {
   } catch (err) {
     console.error('[brokers] GET error:', err);
     // Fallback: return hardcoded defaults so the app works even without DB
-    return NextResponse.json(DEFAULT_BROKERS);
+    return NextResponse.json(DEFAULT_BROKERS, { headers: { 'x-demo': 'true' } });
   }
 }
 

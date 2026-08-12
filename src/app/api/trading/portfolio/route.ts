@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
         totalBalance: 100000, totalPnl: 0, totalPnlPercent: 0,
         dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
         activeSignals: 0, winRate: 0, totalTrades: 0,
-      });
+      }, { headers: { 'x-demo': 'true' } });
     }
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
         totalBalance: 0, totalPnl: 0, totalPnlPercent: 0,
         dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
         activeSignals: 0, winRate: 0, totalTrades: 0,
-      });
+      }, { headers: { 'x-demo': 'true' } });
     }
 
     const broker = createBrokerFromAccount(account);
@@ -69,6 +69,6 @@ export async function GET(req: NextRequest) {
       totalBalance: 100000, totalPnl: 0, totalPnlPercent: 0,
       dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
       activeSignals: 0, winRate: 0, totalTrades: 0,
-    });
+    }, { headers: { 'x-demo': 'true' } });
   }
 }

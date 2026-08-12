@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
       });
       return NextResponse.json(positions);
     } catch {
-      return NextResponse.json([]);
+      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
     }
   }
 
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({
       where: accountId ? { id: accountId, userId } : { userId, isDefault: true },
     });
-    if (!account) return NextResponse.json([]);
+    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'true' } });
 
     const isDemo = account.broker === 'demo' || account.accountType === 'demo';
     const broker = createBrokerFromAccount(account);
@@ -145,7 +145,7 @@ export async function GET(req: NextRequest) {
       });
       return NextResponse.json(positions);
     } catch {
-      return NextResponse.json([]);
+      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
     }
   }
 }

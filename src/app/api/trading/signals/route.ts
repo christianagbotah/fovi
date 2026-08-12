@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   try {
     // Require database for reading stored signals
     if (!db || !hasModel('tradingAccount') || !hasModel('tradingSignal')) {
-      return NextResponse.json([]);
+      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
     }
 
     const { searchParams } = new URL(req.url);
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
-    if (!account) return NextResponse.json([]);
+    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'true' } });
 
     const signals = await db.tradingSignal.findMany({
       where: { accountId: account.id, status: 'active' },
@@ -36,6 +36,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(normalized);
   } catch (error) {
     console.warn('[signals GET] Error:', error);
-    return NextResponse.json([]);
+    return NextResponse.json([], { headers: { 'x-demo': 'true' } });
   }
 }

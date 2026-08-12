@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
       processed: true,
       signal: signalPayload,
       persisted: false,
-    });
+    }, { headers: { 'x-demo': 'true' } });
   }
   try {
     // Find the default account to attach the signal to
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
         processed: true,
         signal: signalPayload,
         persisted: false,
-      });
+      }, { headers: { 'x-demo': 'true' } });
     }
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
         processed: true,
         signal: signalPayload,
         persisted: false,
-      });
+      }, { headers: { 'x-demo': 'true' } });
     }
 
     const created = await db.tradingSignal.create({
@@ -157,6 +157,6 @@ export async function POST(req: NextRequest) {
       processed: true,
       signal: signalPayload,
       persisted: false,
-    });
+    }, { headers: { 'x-demo': 'true' } });
   }
 }

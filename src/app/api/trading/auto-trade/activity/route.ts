@@ -12,7 +12,7 @@ const DEMO_ACTIVITY = [
 
 export async function GET() {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json(DEMO_ACTIVITY);
+    return NextResponse.json(DEMO_ACTIVITY, { headers: { 'x-demo': 'true' } });
   }
   try {
     const defaultAccount = await db.tradingAccount.findFirst({
@@ -20,7 +20,7 @@ export async function GET() {
     });
 
     if (!defaultAccount) {
-      return NextResponse.json([]);
+      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
     }
 
     const recentOrders = await db.order.findMany({
@@ -49,13 +49,13 @@ export async function GET() {
 
     // If no real AI orders yet, return simulated activity for demo
     if (activity.length === 0) {
-      return NextResponse.json(DEMO_ACTIVITY);
+      return NextResponse.json(DEMO_ACTIVITY, { headers: { 'x-demo': 'true' } });
     }
 
     return NextResponse.json(activity);
   } catch (error) {
     // ANY error falls back to demo activity
     console.warn('[auto-trade/activity GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_ACTIVITY);
+    return NextResponse.json(DEMO_ACTIVITY, { headers: { 'x-demo': 'true' } });
   }
 }

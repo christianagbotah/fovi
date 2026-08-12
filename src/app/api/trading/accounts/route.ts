@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     // Demo path: no validation or encryption needed
     if (broker === 'demo') {
       if (!db || !hasModel('tradingAccount')) {
-        return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 100000, linkedBalance: 100000 }));
+        return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 100000, linkedBalance: 100000 }), { headers: { 'x-demo': 'true' } });
       }
       const userId = await getUserId(req);
 
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     const encryptedPassphrase = body.passphrase ? encrypt(body.passphrase) : null;
 
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 0, linkedBalance: 0 }));
+      return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 0, linkedBalance: 0 }), { headers: { 'x-demo': 'true' } });
     }
 
     const userId = await getUserId(req);
@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (error) {
     console.warn('[accounts POST] DB error, using fallback:', error);
-    return NextResponse.json(makeDemoAccount({ id: uuidv4() }));
+    return NextResponse.json(makeDemoAccount({ id: uuidv4() }), { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
       // Enrich demo accounts with live broker balance
       const broker = new DemoBroker({ provider: 'demo', isDemo: true });
       const info = await broker.getAccountInfo();
-      return NextResponse.json([makeDemoAccount({ balance: info.balance, linkedBalance: info.balance })]);
+      return NextResponse.json([makeDemoAccount({ balance: info.balance, linkedBalance: info.balance })], { headers: { 'x-demo': 'true' } });
     }
 
     const userId = await getUserId(req);
@@ -175,6 +175,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(accounts);
   } catch (error) {
     console.warn('[accounts GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_ACCOUNTS);
+    return NextResponse.json(DEMO_ACCOUNTS, { headers: { 'x-demo': 'true' } });
   }
 }

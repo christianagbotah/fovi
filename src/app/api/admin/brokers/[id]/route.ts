@@ -61,7 +61,10 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await db.brokerProvider.delete({ where: { id } });
+    await db.brokerProvider.update({
+      where: { id },
+      data: { deleted: true, deletedAt: new Date() },
+    });
     return NextResponse.json({ success: true });
   } catch (err: any) {
     if (err?.code === 'P2025') {

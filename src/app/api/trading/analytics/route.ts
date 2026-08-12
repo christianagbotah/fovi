@@ -73,7 +73,7 @@ function buildDemoAnalytics() {
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json(buildDemoAnalytics());
+    return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
   }
   try {
     const userId = getUserIdSync(req);
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
       where: { userId, isDefault: true },
     });
     if (!account) {
-      return NextResponse.json(buildDemoAnalytics());
+      return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
     }
 
     // Fetch recent orders (last 6 months)
@@ -257,6 +257,6 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[analytics GET] DB error, using fallback:', error);
-    return NextResponse.json(buildDemoAnalytics());
+    return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
   }
 }

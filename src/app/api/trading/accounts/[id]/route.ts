@@ -28,7 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
     }
 
     const userId = await getUserId(req);
@@ -51,7 +51,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
   try {
     const { id } = await params;
@@ -60,6 +60,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return NextResponse.json({ success: true });
   } catch (error) {
     console.warn('[accounts/[id] DELETE] error:', error);
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
 }

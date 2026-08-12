@@ -149,7 +149,7 @@ async function getProviderConfig(code: string): Promise<GenericBrokerProviderCon
     // Dynamic import to avoid circular dependency and keep it server-only
     const { db } = await import('@/lib/db');
     const provider = await db.brokerProvider.findUnique({ where: { code } });
-    if (!provider) return null;
+    if (!provider || provider.deleted) return null;
 
     const config: GenericBrokerProviderConfig = {
       code: provider.code,
@@ -653,7 +653,7 @@ export async function isGenericRESTProvider(code: string): Promise<boolean> {
   try {
     const { db } = await import('@/lib/db');
     const p = await db.brokerProvider.findUnique({ where: { code } });
-    return !!(p && p.liveBaseUrl && p.authType && p.authType !== 'none');
+    return !!(p && !p.deleted && p.liveBaseUrl && p.authType && p.authType !== 'none');
   } catch {
     return false;
   }

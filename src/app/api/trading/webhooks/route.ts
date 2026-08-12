@@ -54,7 +54,7 @@ function randomId(len = 12): string {
 // GET: list all webhook configs + recent calls
 export async function GET() {
   if (!db || !hasModel('webhookConfig')) {
-    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls });
+    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls }, { headers: { 'x-demo': 'true' } });
   }
 
   try {
@@ -76,7 +76,7 @@ export async function GET() {
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[webhooks GET] DB error, using fallback:', error);
-    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls });
+    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls }, { headers: { 'x-demo': 'true' } });
   }
 }
 
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
         createdAt: new Date().toISOString(),
       };
       demoWebhooks.unshift(item);
-      return NextResponse.json(item, { status: 201 });
+      return NextResponse.json(item, { status: 201, headers: { 'x-demo': 'true' } });
     }
 
     try {
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
       if (!userId) {
         const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
         demoWebhooks.unshift(item);
-        return NextResponse.json(item, { status: 201 });
+        return NextResponse.json(item, { status: 201, headers: { 'x-demo': 'true' } });
       }
       const created = await db.webhookConfig.create({
         data: {
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
       console.warn('[webhooks POST] DB error, using fallback:', error);
       const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
       demoWebhooks.unshift(item);
-      return NextResponse.json(item, { status: 201 });
+      return NextResponse.json(item, { status: 201, headers: { 'x-demo': 'true' } });
     }
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
@@ -158,7 +158,7 @@ export async function DELETE(req: NextRequest) {
   if (!db || !hasModel('webhookConfig')) {
     const idx = demoWebhooks.findIndex((w) => w.id === id);
     if (idx >= 0) demoWebhooks.splice(idx, 1);
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
 
   try {
@@ -169,6 +169,6 @@ export async function DELETE(req: NextRequest) {
     console.warn('[webhooks DELETE] DB error, using fallback:', error);
     const idx = demoWebhooks.findIndex((w) => w.id === id);
     if (idx >= 0) demoWebhooks.splice(idx, 1);
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
   }
 }

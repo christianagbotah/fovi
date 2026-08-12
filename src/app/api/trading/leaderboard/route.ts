@@ -162,13 +162,13 @@ export async function GET(): Promise<NextResponse<LeaderboardResponse | { error:
   // convention and DB-resilience pattern so this route degrades the
   // same way every other trading route does.
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json(buildLeaderboard());
+    return NextResponse.json(buildLeaderboard(), { headers: { 'x-demo': 'true' } });
   }
   try {
-    return NextResponse.json(buildLeaderboard());
+    return NextResponse.json(buildLeaderboard(), { headers: { 'x-demo': 'true' } });
   } catch (error) {
     // ANY database error falls back to demo
     console.warn('[leaderboard GET] DB error, using fallback:', error);
-    return NextResponse.json(buildLeaderboard());
+    return NextResponse.json(buildLeaderboard(), { headers: { 'x-demo': 'true' } });
   }
 }

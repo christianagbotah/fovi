@@ -255,7 +255,7 @@ export async function GET() {
   } catch (error) {
     // ANY error falls back to demo sentiment data
     console.warn('[sentiment GET] DB error, using fallback:', error);
-    return NextResponse.json(buildDemoResponse());
+    return NextResponse.json(buildDemoResponse(), { headers: { 'x-demo': 'true' } });
   }
 }
 

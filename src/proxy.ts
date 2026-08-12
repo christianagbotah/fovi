@@ -123,6 +123,32 @@ export async function proxy(request: NextRequest) {
     });
   }
 
+  // Internal service auth: mini-services (balance-sync, auto-trade-engine)
+  // pass X-Internal-Service-Secret to bypass JWT. They also pass X-User-Id.
+  // We validate the secret and inject a trusted marker.
+  const internalSecret = request.headers.get('x-internal-service-secret');
+  const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
+  if (internalSecret && INTERNAL_SECRET && internalSecret === INTERNAL_SECRET) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('X-Internal-Service', 'true');
+    // Preserve the X-User-Id that the mini-service set
+    if (requestHeaders.get('X-User-Id')) {
+      return NextResponse.next({ request: { headers: requestHeaders } });
+    }
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
   // No valid token — allow through for optional-auth routes (demo mode)
+  // For routes that received X-User-Id without JWT, strip it to prevent spoofing
+  const userIdHeader = request.headers.get('x-user-id');
+  if (userIdHeader && matchesAny(pathname, OPTIONAL_AUTH_PREFIXES)) {
+    // Strip the spoofed X-User-Id header
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.delete('X-User-Id');
+    requestHeaders.delete('X-User-Email');
+    requestHeaders.delete('X-User-Role');
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
   return NextResponse.next();
 }
