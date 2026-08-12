@@ -35,6 +35,21 @@ export async function GET(req: NextRequest) {
         data: { userId: defaultAccount.userId, accountId: defaultAccount.id },
       });
     }
+
+    // --- Cleanup: if old bug created duplicate BotConfigs, delete extras ---
+    try {
+      const allConfigs = await db.botConfig.findMany({
+        where: { accountId: defaultAccount.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (allConfigs.length > 1) {
+        console.warn(`[auto-trade] Found ${allConfigs.length} BotConfigs for account ${defaultAccount.id}, cleaning up`);
+        for (let i = 1; i < allConfigs.length; i++) {
+          try { await db.botConfig.delete({ where: { id: allConfigs[i].id } }); } catch { /* */ }
+        }
+      }
+    } catch { /* non-critical cleanup */ }
+
     const winRate = config.totalTrades > 0
       ? Math.round((config.winTrades / config.totalTrades) * 100)
       : 0;
@@ -43,7 +58,6 @@ export async function GET(req: NextRequest) {
       winRate,
       accountBalance: defaultAccount.balance,
       adminLevyPercent: globalLevy,
-      adminLevyCollected: 0,
     });
   } catch (error) {
     console.warn('[auto-trade GET] DB error, using fallback:', error);
@@ -65,7 +79,7 @@ export async function PUT(request: Request) {
     enabled, allocationAmount, riskTolerance, maxPositions,
     maxPositionSize, stopLossPercent, takeProfitPercent,
     strategy, status, totalTrades, winTrades, totalPnl,
-    adminLevyPercent, adminLevyCollected,
+    adminLevyCollected,
   } = body;
 
   // Always use the global admin levy — users cannot set their own
@@ -123,27 +137,45 @@ export async function PUT(request: Request) {
     if (totalTrades !== undefined) updateData.totalTrades = totalTrades;
     if (winTrades !== undefined) updateData.winTrades = winTrades;
     if (totalPnl !== undefined) updateData.totalPnl = totalPnl;
+    if (adminLevyCollected !== undefined) updateData.adminLevyCollected = adminLevyCollected;
 
-    const config = await db.botConfig.upsert({
-      where: { id: body.id || 'nonexistent' },
-      create: {
-        userId: defaultAccount.userId,
-        accountId: defaultAccount.id,
-        enabled: enabled ?? false,
-        allocationAmount: allocationAmount ?? 0,
-        riskTolerance: riskTolerance ?? 'medium',
-        maxPositions: maxPositions ?? 5,
-        maxPositionSize: maxPositionSize ?? 0,
-        stopLossPercent: stopLossPercent ?? 2.0,
-        takeProfitPercent: takeProfitPercent ?? 4.0,
-        strategy: strategy ?? 'balanced',
-        status: newStatus,
-        totalTrades: totalTrades ?? 0,
-        winTrades: winTrades ?? 0,
-        totalPnl: totalPnl ?? 0,
-      },
-      update: updateData,
+    // --- CRITICAL FIX: Always find by accountId, NOT by client-provided body.id ---
+    // Previously, upsert used body.id which could be stale/null/wrong, causing
+    // writes to go to the wrong record or creating duplicates. GET uses accountId
+    // so PUT must use the same lookup to stay consistent.
+    const existingConfig = await db.botConfig.findFirst({
+      where: { accountId: defaultAccount.id },
     });
+
+    let config;
+    if (existingConfig) {
+      // Update the existing record for this account
+      config = await db.botConfig.update({
+        where: { id: existingConfig.id },
+        data: updateData,
+      });
+    } else {
+      // First time — create with the provided values
+      config = await db.botConfig.create({
+        data: {
+          userId: defaultAccount.userId,
+          accountId: defaultAccount.id,
+          enabled: enabled ?? false,
+          allocationAmount: allocationAmount ?? 0,
+          riskTolerance: riskTolerance ?? 'medium',
+          maxPositions: maxPositions ?? 5,
+          maxPositionSize: maxPositionSize ?? 0,
+          stopLossPercent: stopLossPercent ?? 2.0,
+          takeProfitPercent: takeProfitPercent ?? 4.0,
+          strategy: strategy ?? 'balanced',
+          status: newStatus,
+          totalTrades: totalTrades ?? 0,
+          winTrades: winTrades ?? 0,
+          totalPnl: totalPnl ?? 0,
+          adminLevyCollected: adminLevyCollected ?? 0,
+        },
+      });
+    }
 
     // Sync UserSettings (non-critical)
     try {
@@ -165,7 +197,6 @@ export async function PUT(request: Request) {
       winRate,
       accountBalance: defaultAccount.balance,
       adminLevyPercent: globalLevy,
-      adminLevyCollected: 0,
     });
   } catch (error) {
     console.warn('[auto-trade PUT] DB error:', error);
