@@ -128,6 +128,14 @@ export function AccountSwitcher() {
     setActiveAccount(id);
     setDropdownOpen(false);
     setMobileSheetOpen(false);
+    // Persist switch to DB so it survives page refresh (skip for local-only accounts)
+    if (!id.startsWith('local_')) {
+      fetch('/api/trading/accounts/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: id }),
+      }).catch(() => {});
+    }
   };
 
   const handleAddAccount = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -142,36 +150,58 @@ export function AccountSwitcher() {
 
     const isDemo = broker === 'demo';
     const balance = isDemo ? 100000 : 0;
-    const newAccount: TradingAccount = {
-      id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      userId: 'usr_demo_1',
-      broker, accountType, accountId: null,
-      isDefault: accounts.length === 0,
-      balance, linkedBalance: balance,
-      totalAllocated: 0, totalRealizedProfit: 0,
-      currency: 'USD',
-      apiKey: apiKey || undefined,
-      apiSecret: apiSecret || undefined,
-      passphrase: passphrase || undefined,
-      isActive: true,
-      lastSyncedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
 
-    fetch('/api/trading/accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ broker, accountType, apiKey: apiKey || undefined, apiSecret: apiSecret || undefined, passphrase: passphrase || undefined }),
-    }).catch(() => {});
+    try {
+      // Create account in DB and get the real account with DB-generated ID
+      const res = await fetch('/api/trading/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ broker, accountType, apiKey: apiKey || undefined, apiSecret: apiSecret || undefined, passphrase: passphrase || undefined }),
+      });
 
-    const updated = [...accounts, newAccount];
-    setAccounts(updated);
-    saveAccountsLS(updated);
-    setActiveAccount(newAccount.id);
+      if (res.ok) {
+        const dbAccount = await res.json();
+        // Use the DB account (has real ID, validated fields)
+        const updated = [...accounts, dbAccount];
+        setAccounts(updated);
+        setActiveAccount(dbAccount.id);
+        // Persist as default in DB so it survives refresh
+        fetch('/api/trading/accounts/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: dbAccount.id }),
+        }).catch(() => {});
+        toast.success(isDemo ? 'Demo account created' : 'Broker account linked successfully');
+      } else {
+        // Fallback: create local-only account
+        const newAccount: TradingAccount = {
+          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          userId: 'usr_demo_1',
+          broker, accountType, accountId: null,
+          isDefault: accounts.length === 0,
+          balance, linkedBalance: balance,
+          totalAllocated: 0, totalRealizedProfit: 0,
+          currency: 'USD',
+          apiKey: apiKey || undefined,
+          apiSecret: apiSecret || undefined,
+          passphrase: passphrase || undefined,
+          isActive: true,
+          lastSyncedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const updated = [...accounts, newAccount];
+        setAccounts(updated);
+        saveAccountsLS(updated);
+        setActiveAccount(newAccount.id);
+        toast.success(isDemo ? 'Demo account created (local)' : 'Broker linked (local mode — may not persist)');
+      }
+    } catch {
+      toast.error('Failed to create account. Check your connection.');
+    }
+
     setShowAddDialog(false);
     setBrokerType('demo');
-    toast.success(isDemo ? 'Demo account created' : 'Broker account linked successfully');
   };
 
   const handleDelete = async (id: string) => {
