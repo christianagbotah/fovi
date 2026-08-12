@@ -1,6 +1,7 @@
 // ============================================================
 // Broker Factory - Creates broker instances based on config
 // Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MT5
+// Falls back to GenericRESTBroker for admin-added custom brokers
 // ============================================================
 
 import type { BrokerConfig } from '../types';
@@ -11,6 +12,7 @@ import { OkxBroker } from './okx';
 import { BybitBroker } from './bybit';
 import { BitgetBroker } from './bitget';
 import { MT5Broker } from './mt5';
+import { GenericRESTBroker } from './generic-rest';
 import { decrypt } from '@/lib/encryption';
 
 // Broker interface that all providers implement
@@ -71,7 +73,17 @@ export interface IBroker {
   cancelOrder(symbol: string, orderId: string): Promise<void>;
 }
 
+/**
+ * Built-in provider codes that have dedicated broker implementations.
+ * Anything not in this list goes through GenericRESTBroker (if configured)
+ * or falls back to DemoBroker.
+ */
+const BUILTIN_CODES = new Set([
+  'demo', 'alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5',
+]);
+
 export function createBroker(config: BrokerConfig): IBroker {
+  // Built-in implementations
   switch (config.provider) {
     case 'alpaca':
       return new AlpacaBroker(config);
@@ -87,8 +99,18 @@ export function createBroker(config: BrokerConfig): IBroker {
       return new MT5Broker(config);
     case 'demo':
     default:
-      return new DemoBroker(config);
+      break;
   }
+
+  // For non-built-in providers, try GenericRESTBroker
+  // This reads config from DB and connects to any REST API broker
+  // that admin configured from the UI.
+  if (!BUILTIN_CODES.has(config.provider)) {
+    return new GenericRESTBroker(config);
+  }
+
+  // Final fallback to Demo
+  return new DemoBroker(config);
 }
 
 export function createBrokerFromAccount(account: {

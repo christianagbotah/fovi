@@ -20,9 +20,13 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { code, displayName, description, brokerType, iconColor,
-            requiresApiKey, requiresSecret, requiresPassphrase,
-            liveBaseUrl, testnetBaseUrl, assetTypes, supportedFeatures, sortOrder } = body;
+    const {
+      code, displayName, description, brokerType, iconColor,
+      requiresApiKey, requiresSecret, requiresPassphrase,
+      liveBaseUrl, testnetBaseUrl,
+      authType, apiKeyHeader, symbolFormat, customEndpoints,
+      assetTypes, supportedFeatures, sortOrder,
+    } = body;
 
     if (!code || !displayName) {
       return NextResponse.json({ error: 'code and displayName are required' }, { status: 400 });
@@ -40,6 +44,12 @@ export async function POST(req: NextRequest) {
         requiresPassphrase: requiresPassphrase === true,
         liveBaseUrl: liveBaseUrl || '',
         testnetBaseUrl: testnetBaseUrl || '',
+        authType: authType || 'none',
+        apiKeyHeader: apiKeyHeader || '',
+        symbolFormat: symbolFormat || 'pair',
+        customEndpoints: typeof customEndpoints === 'object'
+          ? JSON.stringify(customEndpoints)
+          : (customEndpoints || '{}'),
         assetTypes: JSON.stringify(assetTypes || []),
         supportedFeatures: JSON.stringify(supportedFeatures || []),
         sortOrder: sortOrder ?? 0,

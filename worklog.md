@@ -738,3 +738,27 @@ Stage Summary:
 - User-facing broker selector reads from DB dynamically — any broker admin adds appears automatically
 - Custom brokers without code implementation fall back to Demo mode for trading
 
+
+---
+Task ID: 2-generic-rest-broker
+Agent: main
+Task: No-code GenericREST broker + enhanced admin UI for dynamic broker management
+
+Work Log:
+- Updated prisma/schema.prisma BrokerProvider model: added authType, apiKeyHeader, symbolFormat, customEndpoints fields
+- Created src/lib/broker/generic-rest.ts — Full GenericRESTBroker implementing IBroker interface: reads config from DB, supports 6 auth types (none, api_key_header, api_key_query, bearer, hmac_sha256, hmac_sha256_base64), configurable symbol formats (pair/slash/dash/dot/underscore), dot-notation response path mapping, endpoint templates, cached DB lookups
+- Updated src/lib/broker/factory.ts — Non-builtin provider codes now route through GenericRESTBroker instead of falling back to DemoBroker
+- Updated src/lib/types.ts — BrokerProvider type now accepts arbitrary strings via (string & {}) pattern
+- Updated src/app/api/admin/brokers/route.ts — POST now handles authType, apiKeyHeader, symbolFormat, customEndpoints fields
+- Updated src/app/api/admin/brokers/[id]/route.ts — PUT handles new fields, customEndpoints parsed from object or string
+- Updated src/app/api/admin/brokers/seed/route.ts — Seed now sets liveBaseUrl, testnetBaseUrl, authType, apiKeyHeader, symbolFormat for all 7 built-in brokers, and updates existing brokers with new fields
+- Rewrote src/components/trading/admin-brokers-panel.tsx — Full enhanced UI: collapsible REST API Configuration section (only shows for non-builtin brokers), auth type dropdown with descriptions, API key header field, symbol format picker, quick endpoint templates (Binance-style, OKX-style), raw JSON endpoint editor, duplicate broker button, BUILT-IN/REST API/NEEDS CONFIG badges, active/total counter, base URL display in broker list
+- Lint passes clean, dev server compiles with no errors
+
+Stage Summary:
+- Admin can add ANY REST API broker from UI without writing code
+- 6 auth methods supported: API key in header, API key in query, Bearer token, HMAC-SHA256 (hex), HMAC-SHA256 (base64), None
+- Quick endpoint templates let admin pre-fill common exchange patterns
+- Response path mapping (dot notation) handles different JSON response structures
+- Factory automatically routes unknown broker codes through GenericRESTBroker
+- Built-in brokers (demo, alpaca, binance, okx, bybit, bitget, mt5) still use their optimized implementations

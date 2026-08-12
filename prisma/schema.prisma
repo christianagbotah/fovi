@@ -398,8 +398,13 @@ model BrokerProvider {
   requiresApiKey  Boolean  @default(true)
   requiresSecret  Boolean  @default(true)
   requiresPassphrase Boolean @default(false)
-  liveBaseUrl     String   @default("")   // optional override for custom brokers
-  testnetBaseUrl  String   @default("")   // optional override for demo URLs
+  liveBaseUrl     String   @default("")   // REST API base URL for live trading
+  testnetBaseUrl  String   @default("")   // REST API base URL for demo/testnet
+  // --- Generic REST broker configuration ---
+  authType        String   @default("none")  // none, api_key_header, api_key_query, hmac_sha256, hmac_sha256_base64, bearer
+  apiKeyHeader    String   @default("")   // header name for API key, e.g. 'X-MBX-APIKEY'
+  symbolFormat    String   @default("pair")  // pair (BTCUSDT), slash (BTC/USDT), dot (BTC.USDT), underscore (BTC_USDT)
+  customEndpoints String   @default("{}")  // JSON: endpoint paths for generic REST broker
   assetTypes      String   @default("[]")  // JSON array: ["crypto","forex"]
   supportedFeatures String @default("[]")  // JSON array: ["spot","futures","options"]
   createdAt       DateTime @default(now())
