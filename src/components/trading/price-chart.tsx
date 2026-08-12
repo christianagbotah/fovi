@@ -321,10 +321,10 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+              <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
               <YAxis
                 domain={['auto', 'auto']}
-                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
+                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--muted-foreground))" tickLine={false}
                 tickFormatter={(v: number) => formatPrice(v, effectiveSymbol)}
               />
               <Tooltip
@@ -348,10 +348,10 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
           <ResponsiveContainer width="100%" height={chartHeight}>
             <ComposedChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+              <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
               <YAxis
                 domain={candleDomain}
-                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
+                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--muted-foreground))" tickLine={false}
                 tickFormatter={(v: number) => formatPrice(v, effectiveSymbol)}
               />
               <Tooltip content={<CandleTooltipContent />} />
@@ -369,10 +369,10 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
           <ResponsiveContainer width="100%" height={chartHeight}>
             <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+              <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
               <YAxis
                 domain={['auto', 'auto']}
-                tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false}
+                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--muted-foreground))" tickLine={false}
                 tickFormatter={(v: number) => formatPrice(v, effectiveSymbol)}
               />
               <Tooltip
@@ -495,8 +495,8 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
                 {chartData.slice(-30).map((entry, idx) => {
                   const fill = chartType === 'candle'
                     ? (entry.close >= entry.open ? '#10b981' : '#ef4444')
-                    : 'hsl(var(--muted-foreground))';
-                  const opacity = chartType === 'candle' ? 0.5 : 0.3;
+                    : 'hsl(var(--primary))';
+                  const opacity = chartType === 'candle' ? 0.5 : 0.25;
                   return <Cell key={idx} fill={fill} opacity={opacity} />;
                 })}
               </Bar>

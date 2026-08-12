@@ -15,6 +15,7 @@ import {
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
 import { AdminBrokersPanel } from '@/components/trading/admin-brokers-panel';
+import { AdminFinancePanel } from '@/components/trading/admin-finance-panel';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
 import { PriceChart } from '@/components/trading/price-chart';
 import { PositionsPanel } from '@/components/trading/positions-panel';
@@ -1278,6 +1279,7 @@ function SecuritySettings() {
         {isAdmin && <SettingsTab id="admin-users" label="Users" icon={User} active={activeSection === 'admin-users'} onClick={() => { setActiveSection('admin-users'); loadAdminSubData(); }} />}
         {isAdmin && <SettingsTab id="admin-subs" label="Subs Mgmt" icon={Crown} active={activeSection === 'admin-subs'} onClick={() => { setActiveSection('admin-subs'); loadAdminSubData(); }} />}
         {isAdmin && <SettingsTab id="admin-brokers" label="Brokers" icon={Link2} active={activeSection === 'admin-brokers'} onClick={setActiveSection} />}
+        {isAdmin && <SettingsTab id="admin-finance" label="Revenue" icon={Wallet} active={activeSection === 'admin-finance'} onClick={setActiveSection} />}
       </div>
 
       {/* ====== SECURITY TAB ====== */}
@@ -1815,6 +1817,9 @@ function SecuritySettings() {
       )}
       {activeSection === 'admin-brokers' && isAdmin && (
         <AdminBrokersPanel />
+      )}
+      {activeSection === 'admin-finance' && isAdmin && (
+        <AdminFinancePanel />
       )}
     </div>
   );
@@ -2510,8 +2515,8 @@ export default function TradingDashboard() {
             {/* ====== SIGNALS TAB ====== */}
             {activeTab === 'signals' && (
               <motion.div key="signals" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full">
-                <div className="p-4" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
+                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full flex flex-col min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 p-4" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
               </motion.div>
             )}
 
