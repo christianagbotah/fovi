@@ -52,32 +52,42 @@ function getAccount(accountId: string) {
 // ============================================================
 
 const BASE_PRICES: Record<string, number> = {
-  // ── US Stocks (20) ──
+  // ── US Stocks (30) ──
   AAPL: 195.5, GOOGL: 178.2, MSFT: 445.8, AMZN: 198.3, NVDA: 920.5,
   TSLA: 245.6, META: 530.2, NFLX: 720.1, AMD: 178.5, INTC: 32.4,
   CRM: 272.0, ORCL: 145.0, JPM: 205.0, V: 285.0, WMT: 168.0,
   DIS: 112.0, BA: 178.0, PYPL: 65.0, UBER: 78.0, COIN: 225.0,
+  QCOM: 175.0, COST: 825.0, AVGO: 1650.0, IBM: 195.0, SQ: 78.0, ADBE: 485.0, SBUX: 82.0, TMO: 575.0, LMT: 460.0,
 
-  // ── Crypto (20) ──
+  // ── Crypto (40) ──
   BTC: 67500, ETH: 3520, SOL: 172.5, BNB: 595, XRP: 0.58,
   DOGE: 0.165, ADA: 0.48, AVAX: 38.2, DOT: 7.35, LINK: 17.8,
   MATIC: 0.72, UNI: 11.5, ATOM: 9.2, NEAR: 7.8, APT: 9.5,
   ARB: 1.15, OP: 2.45, PEPE: 0.000012, SHIB: 0.000025, TON: 6.8,
+  SUI: 1.85, SEI: 0.52, INJ: 28.5, TIA: 9.2, STRK: 1.05,
+  FIL: 6.2, RENDER: 10.8, FET: 2.35, JUP: 1.25, WIF: 2.8,
+  FTM: 0.78, AAVE: 105.0, MKR: 2850.0, GRT: 0.28, SNX: 3.25,
+  DYDX: 2.15, IMX: 2.35, RONIN: 0.22, PIXEL: 0.45, GALA: 0.028,
 
-  // ── Forex (10) ──
+  // ── Forex (20) ──
   EURUSD: 1.085, GBPUSD: 1.272, USDJPY: 154.5, AUDUSD: 0.665,
   USDCAD: 1.365, NZDUSD: 0.615, USDCHF: 0.875, EURGBP: 0.853,
-  EURJPY: 167.8, GBPJPY: 196.5,
+  EURJPY: 167.8, GBPJPY: 196.5, AUDJPY: 102.8, NZDJPY: 95.0,
+  EURAUD: 1.632, GBPAUD: 1.913, EURCHF: 0.950, GBPCHF: 1.113,
+  CADJPY: 113.2, CHFJPY: 176.5, AUDCAD: 0.908, NZDCAD: 0.840,
+  USDTRY: 32.5,
 
-  // ── Commodities (5) ──
+  // ── Commodities (10) ──
   XAUUSD: 2385, XAGUSD: 28.5, USOIL: 78.5, NATGAS: 2.85, XPTUSD: 980,
+  XPDUSD: 1020, COPPER: 4.35, ALUMINUM: 2380, WHEAT: 568, CORN: 445,
 
-  // ── Indices (5) ──
+  // ── Indices (10) ──
   US30: 39500, NAS100: 18350, SPX500: 5350, FTSE100: 8200, DAX40: 18400,
+  NKY225: 38900, HSI: 17800, ASX200: 7650, EURX50: 4950, VIX: 14.5,
 };
 
 const SYMBOL_NAMES: Record<string, string> = {
-  // ── US Stocks ──
+  // ── US Stocks (30) ──
   AAPL: 'Apple Inc.', GOOGL: 'Alphabet Inc.', MSFT: 'Microsoft Corp.',
   AMZN: 'Amazon.com Inc.', NVDA: 'NVIDIA Corp.', TSLA: 'Tesla Inc.',
   META: 'Meta Platforms', NFLX: 'Netflix Inc.', AMD: 'Advanced Micro Devices',
@@ -85,28 +95,43 @@ const SYMBOL_NAMES: Record<string, string> = {
   JPM: 'JPMorgan Chase', V: 'Visa Inc.', WMT: 'Walmart Inc.',
   DIS: 'Walt Disney Co.', BA: 'Boeing Co.', PYPL: 'PayPal Holdings',
   UBER: 'Uber Technologies', COIN: 'Coinbase Global',
+  QCOM: 'Qualcomm Inc.', COST: 'Costco Wholesale', AVGO: 'Broadcom Inc.',
+  IBM: 'IBM Corp.', SQ: 'Block Inc.', ADBE: 'Adobe Inc.',
+  SBUX: 'Starbucks Corp.', TMO: 'Thermo Fisher', LMT: 'Lockheed Martin',
 
-  // ── Crypto ──
+  // ── Crypto (40) ──
   BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
   BNB: 'BNB', XRP: 'XRP', DOGE: 'Dogecoin', ADA: 'Cardano',
   AVAX: 'Avalanche', DOT: 'Polkadot', LINK: 'Chainlink',
   MATIC: 'Polygon', UNI: 'Uniswap', ATOM: 'Cosmos',
   NEAR: 'NEAR Protocol', APT: 'Aptos', ARB: 'Arbitrum',
   OP: 'Optimism', PEPE: 'Pepe', SHIB: 'Shiba Inu', TON: 'Toncoin',
+  SUI: 'Sui', SEI: 'Sei Network', INJ: 'Injective', TIA: 'Celestia',
+  STRK: 'Starknet', FIL: 'Filecoin', RENDER: 'Render', FET: 'Fetch.ai',
+  JUP: 'Jupiter', WIF: 'dogwifhat', FTM: 'Fantom',
+  AAVE: 'Aave', MKR: 'Maker', GRT: 'The Graph', SNX: 'Synthetix',
+  DYDX: 'dYdX', IMX: 'Immutable X', RONIN: 'Ronin',
+  PIXEL: 'Pixels', GALA: 'Gala Games',
 
-  // ── Forex ──
+  // ── Forex (20) ──
   EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY',
   AUDUSD: 'AUD/USD', USDCAD: 'USD/CAD', NZDUSD: 'NZD/USD',
   USDCHF: 'USD/CHF', EURGBP: 'EUR/GBP', EURJPY: 'EUR/JPY',
-  GBPJPY: 'GBP/JPY',
+  GBPJPY: 'GBP/JPY', AUDJPY: 'AUD/JPY', NZDJPY: 'NZD/JPY',
+  EURAUD: 'EUR/AUD', GBPAUD: 'GBP/AUD', EURCHF: 'EUR/CHF',
+  GBPCHF: 'GBP/CHF', CADJPY: 'CAD/JPY', CHFJPY: 'CHF/JPY',
+  AUDCAD: 'AUD/CAD', NZDCAD: 'NZD/CAD', USDTRY: 'USD/TRY',
 
-  // ── Commodities ──
+  // ── Commodities (10) ──
   XAUUSD: 'Gold', XAGUSD: 'Silver', USOIL: 'US Crude Oil',
-  NATGAS: 'Natural Gas', XPTUSD: 'Platinum',
+  NATGAS: 'Natural Gas', XPTUSD: 'Platinum', XPDUSD: 'Palladium',
+  COPPER: 'Copper', ALUMINUM: 'Aluminum', WHEAT: 'Wheat', CORN: 'Corn',
 
-  // ── Indices ──
+  // ── Indices (10) ──
   US30: 'US 30 (Dow Jones)', NAS100: 'NASDAQ 100',
   SPX500: 'S&P 500', FTSE100: 'FTSE 100', DAX40: 'DAX 40',
+  NKY225: 'Nikkei 225', HSI: 'Hang Seng', ASX200: 'ASX 200',
+  EURX50: 'Euro Stoxx 50', VIX: 'VIX (Fear Index)',
 };
 
 export function getDemoPrice(symbol: string): number {
@@ -138,10 +163,18 @@ export function getAllDemoSymbols() {
 }
 
 // Asset type classification — used for UI filtering and display
-const FOREX_PAIRS = new Set(['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY']);
-const CRYPTO_SET = new Set(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'LINK', 'MATIC', 'UNI', 'ATOM', 'NEAR', 'APT', 'ARB', 'OP', 'PEPE', 'SHIB', 'TON']);
-const INDEX_SET = new Set(['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40']);
-const COMMODITY_SET = new Set(['XAUUSD', 'XAGUSD', 'USOIL', 'NATGAS', 'XPTUSD']);
+const FOREX_PAIRS = new Set([
+  'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY',
+  'AUDJPY', 'NZDJPY', 'EURAUD', 'GBPAUD', 'EURCHF', 'GBPCHF', 'CADJPY', 'CHFJPY', 'AUDCAD', 'NZDCAD', 'USDTRY',
+]);
+const CRYPTO_SET = new Set([
+  'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'LINK',
+  'MATIC', 'UNI', 'ATOM', 'NEAR', 'APT', 'ARB', 'OP', 'PEPE', 'SHIB', 'TON',
+  'SUI', 'SEI', 'INJ', 'TIA', 'STRK', 'FIL', 'RENDER', 'FET', 'JUP', 'WIF',
+  'FTM', 'AAVE', 'MKR', 'GRT', 'SNX', 'DYDX', 'IMX', 'RONIN', 'PIXEL', 'GALA',
+]);
+const INDEX_SET = new Set(['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40', 'NKY225', 'HSI', 'ASX200', 'EURX50', 'VIX']);
+const COMMODITY_SET = new Set(['XAUUSD', 'XAGUSD', 'USOIL', 'NATGAS', 'XPTUSD', 'XPDUSD', 'COPPER', 'ALUMINUM', 'WHEAT', 'CORN']);
 
 function getAssetType(symbol: string): string {
   if (FOREX_PAIRS.has(symbol)) return 'forex';

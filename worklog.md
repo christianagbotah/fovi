@@ -684,3 +684,29 @@ Stage Summary:
 - .env fully configured for production deployment
 - Deposit/withdrawal removed — users fund via broker directly
 - Finnhub delivering real stock prices (10 symbols confirmed)
+
+---
+Task ID: deploy-brokers-symbols-expansion
+Agent: main
+Task: VPS deploy script + expand from 60 symbols/4 brokers to 110 symbols/6 brokers
+
+Work Log:
+- Created deploy.sh for VPS at /home/lightworld/webapps/fovi (first_deploy + update_deploy, PM2 ecosystem, .env protection)
+- Created src/lib/broker/bybit.ts — Full Bybit V5 API broker (spot trading, HMAC-SHA256, positions, orders, klines, cancel)
+- Created src/lib/broker/bitget.ts — Full Bitget V2 API broker (spot trading, HMAC-SHA256+base64, positions, orders, klines, cancel)
+- Updated src/lib/types.ts — BrokerProvider type: added bitget (bybit was already there)
+- Updated src/lib/broker/factory.ts — Added Bybit/Bitget imports + switch cases
+- Updated src/lib/broker-rate-limit.ts — Added bybit: 200ms, bitget: 200ms
+- Updated src/components/trading/account-switcher.tsx — Added Bybit/Bitget to broker dropdown, passphrase for Bitget, Shield import
+- Expanded src/lib/broker/demo.ts — 30 stocks, 40 crypto, 21 forex, 10 commodities, 10 indices = 110 total symbols (up from 60)
+- Updated src/lib/market-data.ts — 40 CoinGecko IDs, 21 forex mappings, 29 stock symbols, 10 index symbols, 10 Finnhub mappings, metals.live now maps gold/silver/platinum/palladium/copper, CoinGecko fetches top 50
+- Fixed duplicate NVDA key in BASE_PRICES
+- Fixed Uint8Array spread in bitget.ts for TS compatibility
+- Deploy script: deploy.sh (chmod +x)
+
+Stage Summary:
+- 110 tradeable symbols across 5 asset classes (was 60)
+- 6 broker integrations: Demo, Alpaca, Binance, OKX, Bybit, Bitget (was 4)
+- VPS deploy script ready at deploy.sh with PM2 ecosystem for all 4 services
+- Lint passes clean
+

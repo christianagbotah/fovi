@@ -63,6 +63,13 @@ const COINGECKO_IDS: Record<string, string> = {
   UNI: 'uniswap', ATOM: 'cosmos', NEAR: 'near', APT: 'aptos',
   ARB: 'arbitrum', OP: 'optimism', PEPE: 'pepe', SHIB: 'shiba-inu',
   TON: 'the-open-network',
+  SUI: 'sui', SEI: 'sei-network', INJ: 'injective-protocol',
+  TIA: 'celestia', STRK: 'starknet', FIL: 'filecoin',
+  RENDER: 'render-token', FET: 'fetch-ai', JUP: 'jupiter-exchange-solana',
+  WIF: 'dogwifcoin', FTM: 'fantom',
+  AAVE: 'aave', MKR: 'maker', GRT: 'the-graph', SNX: 'havven',
+  DYDX: 'dydx', IMX: 'immutable-x', RONIN: 'ronin-network',
+  PIXEL: 'pixels', GALA: 'gala',
 };
 
 // Forex: internal symbol -> currency code to look up
@@ -77,13 +84,25 @@ const FOREX_MAP: Record<string, { base: string; quote: string; invert?: boolean 
   EURGBP: { base: 'GBP', quote: 'EUR', invert: true },
   EURJPY: { base: 'JPY', quote: 'EUR', invert: true },
   GBPJPY: { base: 'JPY', quote: 'GBP', invert: true },
+  AUDJPY: { base: 'JPY', quote: 'AUD', invert: true },
+  NZDJPY: { base: 'JPY', quote: 'NZD', invert: true },
+  EURAUD: { base: 'AUD', quote: 'EUR', invert: true },
+  GBPAUD: { base: 'AUD', quote: 'GBP', invert: true },
+  EURCHF: { base: 'CHF', quote: 'EUR', invert: true },
+  GBPCHF: { base: 'CHF', quote: 'GBP', invert: true },
+  CADJPY: { base: 'JPY', quote: 'CAD', invert: true },
+  CHFJPY: { base: 'JPY', quote: 'CHF', invert: true },
+  AUDCAD: { base: 'CAD', quote: 'AUD', invert: true },
+  NZDCAD: { base: 'CAD', quote: 'NZD', invert: true },
+  USDTRY: { base: 'TRY', quote: 'USD', invert: true },
 };
 
 const STOCK_SYMBOLS = [
   'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC',
   'CRM', 'ORCL', 'JPM', 'V', 'WMT', 'DIS', 'BA', 'PYPL', 'UBER', 'COIN',
+  'QCOM', 'COST', 'AVGO', 'IBM', 'SQ', 'ADBE', 'SBUX', 'TMO', 'LMT',
 ];
-const INDEX_SYMBOLS = ['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40'];
+const INDEX_SYMBOLS = ['US30', 'NAS100', 'SPX500', 'FTSE100', 'DAX40', 'NKY225', 'HSI', 'ASX200', 'EURX50', 'VIX'];
 
 // Finnhub uses different ticker formats
 const FINNHUB_MAP: Record<string, string> = {
@@ -92,6 +111,11 @@ const FINNHUB_MAP: Record<string, string> = {
   SPX500: '.INX',
   FTSE100: '.FTSE',
   DAX40: '.GDAXI',
+  NKY225: '.N225',
+  HSI: '.HSI',
+  ASX200: '.AXJO',
+  EURX50: '.STOXX50E',
+  VIX: '.VIX',
 };
 
 // ============================================================
@@ -118,7 +142,7 @@ export async function fetchCryptoPrices(): Promise<Map<string, MarketPrice>> {
   try {
     const url =
       'https://api.coingecko.com/api/v3/coins/markets' +
-      '?vs_currency=usd&order=market_cap_desc&per_page=30&page=1' +
+      '?vs_currency=usd&order=market_cap_desc&per_page=50&page=1' +
       '&sparkline=false&price_change_percentage=24h';
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
@@ -216,6 +240,15 @@ export async function fetchForexPrices(): Promise<Map<string, MarketPrice>> {
   return result;
 }
 
+// metals.live metal name -> our symbol mapping
+const METAL_MAP: Record<string, { symbol: string; name: string }> = {
+  gold: { symbol: 'XAUUSD', name: 'Gold' },
+  silver: { symbol: 'XAGUSD', name: 'Silver' },
+  platinum: { symbol: 'XPTUSD', name: 'Platinum' },
+  palladium: { symbol: 'XPDUSD', name: 'Palladium' },
+  copper: { symbol: 'COPPER', name: 'Copper' },
+};
+
 // ============================================================
 // 3. Metals/Commodities — metals.live API (free, no key)
 // ============================================================
@@ -247,26 +280,14 @@ export async function fetchMetalPrices(): Promise<Map<string, MarketPrice>> {
 
     if (!Array.isArray(data)) throw new Error('Invalid response format');
 
-    // metals.live returns prices per troy ounce for gold, per troy ounce for silver
+    // metals.live returns prices per troy ounce
     for (const item of data) {
       const metal = item.metal?.toLowerCase();
-      if (metal === 'gold') {
-        result.set('XAUUSD', {
-          symbol: 'XAUUSD',
-          name: 'Gold',
-          assetType: 'commodity',
-          price: item.price,
-          change: item.change ?? 0,
-          changePercent: item.change_percent ?? 0,
-          volume: 0,
-          high24h: item.price * 1.01,
-          low24h: item.price * 0.99,
-          _realData: true,
-        });
-      } else if (metal === 'silver') {
-        result.set('XAGUSD', {
-          symbol: 'XAGUSD',
-          name: 'Silver',
+      const mapped = METAL_MAP[metal];
+      if (mapped) {
+        result.set(mapped.symbol, {
+          symbol: mapped.symbol,
+          name: mapped.name,
           assetType: 'commodity',
           price: item.price,
           change: item.change ?? 0,
@@ -414,7 +435,7 @@ export async function getSinglePrice(symbol: string): Promise<MarketPrice> {
     if (real) return real;
   }
 
-  if (['XAUUSD', 'XAGUSD'].includes(symbol)) {
+  if (['XAUUSD', 'XAGUSD', 'XPTUSD', 'XPDUSD'].includes(symbol)) {
     const metals = await fetchMetalPrices();
     const real = metals.get(symbol);
     if (real) return real;

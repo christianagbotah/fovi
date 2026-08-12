@@ -15,6 +15,8 @@ const DEFAULT_INTERVALS: Record<string, number> = {
   binance: 500,  // Binance: 1200 req/min weight → ~500ms between calls to be safe
   okx: 200,      // OKX: 20 req/2s → 200ms
   alpaca: 250,   // Alpaca: 200 req/min → ~300ms
+  bybit: 200,    // Bybit: 20 req/s → 200ms
+  bitget: 200,   // Bitget: 20 req/s → 200ms
 };
 
 /**

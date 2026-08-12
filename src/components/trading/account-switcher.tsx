@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Trash2, ChevronDown, Check, Wallet,
-  Briefcase, Zap, Landmark, ShieldCheck, KeyRound, Link2,
+  Briefcase, Zap, Landmark, ShieldCheck, Shield, KeyRound, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -375,6 +375,12 @@ export function AccountSwitcher() {
                   <SelectItem value="okx">
                     <span className="flex items-center gap-2"><Landmark className="h-4 w-4" /> OKX (Crypto)</span>
                   </SelectItem>
+                  <SelectItem value="bybit">
+                    <span className="flex items-center gap-2"><Zap className="h-4 w-4" /> Bybit (Crypto)</span>
+                  </SelectItem>
+                  <SelectItem value="bitget">
+                    <span className="flex items-center gap-2"><Shield className="h-4 w-4" /> Bitget (Crypto)</span>
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -435,7 +441,7 @@ export function AccountSwitcher() {
             </AnimatePresence>
 
             <AnimatePresence mode="wait">
-              {(brokerType === 'alpaca' || brokerType === 'binance' || brokerType === 'okx') && (
+              {(brokerType === 'alpaca' || brokerType === 'binance' || brokerType === 'okx' || brokerType === 'bybit' || brokerType === 'bitget') && (
                 <motion.div
                   key="apiSecret"
                   initial={{ opacity: 0, height: 0 }}
@@ -456,7 +462,7 @@ export function AccountSwitcher() {
             </AnimatePresence>
 
             <AnimatePresence mode="wait">
-              {brokerType === 'okx' && (
+              {(brokerType === 'okx' || brokerType === 'bitget') && (
                 <motion.div
                   key="passphrase"
                   initial={{ opacity: 0, height: 0 }}
