@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserId, getUserIdSync } from '@/lib/get-user-id';
 import { getAllDemoSymbols } from '@/lib/broker/demo';
 import { generateAnalysisSummary } from '@/lib/ai/signals';
 import { getDemoCandles } from '@/lib/broker/demo';
@@ -204,7 +205,7 @@ export async function POST(req: NextRequest) {
     // Persist to DB
     if (db && hasModel('aiConversation') && hasModel('aiMessage')) {
       try {
-        const userId = 'usr_demo_1';
+        const userId = getUserIdSync(req) || 'usr_demo_1';
         let conversation = await db.aiConversation.findFirst({ where: { userId, id: sessionId } });
         if (!conversation) {
           conversation = await db.aiConversation.create({ data: { id: sessionId, userId, title: message.slice(0, 50) } });

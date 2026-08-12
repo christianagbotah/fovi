@@ -1,10 +1,11 @@
 // ============================================================
 // Production Environment Validation
-// Logs warnings on startup if critical secrets are using defaults.
-// Does NOT block the app — just warns.
+// Logs warnings on startup if non-critical issues are found.
+// HARD-BLOCKS startup (process.exit(1)) if critical secrets are
+// missing or still using insecure default values.
 // ============================================================
 
-const DEFAULTS: Record<string, string> = {
+const INSECURE_DEFAULTS: Record<string, string> = {
   JWT_SECRET: 'fovi-dev-jwt-secret-change-in-production',
   AUTH_PEPPER: 'fovi-ai-pepper-2024',
 };
@@ -13,16 +14,76 @@ export function validateProductionEnv(): void {
   if (process.env.NODE_ENV !== 'production') return;
 
   const warnings: string[] = [];
+  const fatals: string[] = [];
 
-  for (const [key, defaultValue] of Object.entries(DEFAULTS)) {
+  // --- Critical secret checks (FATAL) ---
+
+  // JWT_SECRET: must exist, must not be empty, must not be the default
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret || jwtSecret === INSECURE_DEFAULTS.JWT_SECRET) {
+    fatals.push(
+      `JWT_SECRET is ${!jwtSecret ? 'not set' : 'using the insecure default value'}. ` +
+      'Generate a strong random secret (e.g. `openssl rand -hex 32`) and set it as an environment variable.'
+    );
+  }
+
+  // AUTH_PEPPER: must exist, must not be empty, must not be the default
+  const authPepper = process.env.AUTH_PEPPER;
+  if (!authPepper || authPepper === INSECURE_DEFAULTS.AUTH_PEPPER) {
+    fatals.push(
+      `AUTH_PEPPER is ${!authPepper ? 'not set' : 'using the insecure default value'}. ` +
+      'Generate a strong random pepper (e.g. `openssl rand -hex 32`) and set it as an environment variable.'
+    );
+  }
+
+  // ENCRYPTION_KEY: must exist and be at least 32 characters
+  const encryptionKey = process.env.ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    fatals.push(
+      'ENCRYPTION_KEY is not set. ' +
+      'Generate a cryptographically random key of at least 32 characters ' +
+      '(e.g. `openssl rand -base64 32`) and set it as an environment variable.'
+    );
+  } else if (encryptionKey.length < 32) {
+    fatals.push(
+      `ENCRYPTION_KEY is too short (${encryptionKey.length} chars). It must be at least 32 characters. ` +
+      'Regenerate it with a longer value (e.g. `openssl rand -base64 32`).'   );
+  }
+
+  // DATABASE_URL: must be a PostgreSQL connection string
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl || (!databaseUrl.startsWith('postgresql://') && !databaseUrl.startsWith('postgres://'))) {
+    fatals.push(
+      `DATABASE_URL is ${!databaseUrl ? 'not set' : 'not a PostgreSQL connection string'}. ` +
+      'Set it to a valid postgresql:// or postgres:// connection string.'
+    );
+  }
+
+  // --- Hard-block on fatal errors ---
+
+  if (fatals.length > 0) {
+    console.error('');
+    console.error('██  FATAL: Production secrets are missing or insecure. The application cannot start.');
+    console.error('');
+    console.error('   Fix the following before deploying:');
+    fatals.forEach(f => console.error(`   ✖  ${f}`));
+    console.error('');
+    console.error('   Set the correct values in your environment (.env file, secrets manager, or CI/CD config) and restart.');
+    console.error('');
+    process.exit(1);
+    return; // unreachable, but satisfies TypeScript control-flow
+  }
+
+  // --- Non-critical warnings (do NOT block) ---
+
+  // Keep the original warning loop for any future non-critical DEFAULTS entries
+  for (const [key, defaultValue] of Object.entries(INSECURE_DEFAULTS)) {
+    // These are already covered by the fatal checks above, but we keep the
+    // loop structure so additional non-critical warnings can be added here.
+    // No-op in current configuration since all DEFAULTS entries are fatal.
     if (process.env[key] === defaultValue || !process.env[key]) {
       warnings.push(`  - ${key} is using the default value. Set a strong random value in production.`);
     }
-  }
-
-  if (!process.env.DATABASE_URL?.startsWith('postgresql://') &&
-      !process.env.DATABASE_URL?.startsWith('postgres://')) {
-    warnings.push('  - DATABASE_URL is not a PostgreSQL connection string. The app will run in demo-only mode.');
   }
 
   if (warnings.length > 0) {

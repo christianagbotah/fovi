@@ -75,6 +75,8 @@ model TradingAccount {
   signals         TradingSignal[]
   botConfigs      BotConfig[]
   bots            Bot[]
+
+  @@index([userId])
 }
 
 model Position {
@@ -102,6 +104,9 @@ model Position {
   updatedAt       DateTime @updatedAt
 
   bot             Bot?       @relation(fields: [botId], references: [id])
+
+  @@index([accountId, status])
+  @@index([botId])
 }
 
 model Order {
@@ -128,6 +133,9 @@ model Order {
 
   signal          TradingSignal? @relation(fields: [signalId], references: [id])
   bot             Bot?       @relation(fields: [botId], references: [id])
+
+  @@index([accountId])
+  @@index([botId])
 }
 
 model TradingSignal {
@@ -154,6 +162,8 @@ model TradingSignal {
 
   orders          Order[]
   bot             Bot?       @relation(fields: [botId], references: [id])
+
+  @@index([accountId])
 }
 
 model BotConfig {
@@ -180,6 +190,8 @@ model BotConfig {
   lastError         String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([accountId])
 }
 
 // Multiple Bots - each with its own strategy, allocation, and stats
@@ -225,6 +237,9 @@ model Bot {
   positions         Position[]
   orders            Order[]
   signals           TradingSignal[]
+
+  @@index([userId])
+  @@index([accountId])
 }
 
 // Backtest results
@@ -328,6 +343,8 @@ model AiConversation {
   messages        AiMessage[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model AiMessage {
@@ -338,6 +355,8 @@ model AiMessage {
   content         String
   metadata        String?
   createdAt       DateTime @default(now())
+
+  @@index([conversationId])
 }
 
 model SystemConfig {
@@ -384,6 +403,8 @@ model Subscription {
   expiresAt       DateTime
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model BrokerProvider {

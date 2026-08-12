@@ -53,8 +53,9 @@ module.exports = {
     {
       name: 'fovi-next',
       script: 'node_modules/.bin/next',
-      args: 'dev --port 3002',
+      args: 'start --port 3002',
       cwd: '/home/lightworld/webapps/fovi',
+      env_file: '/home/lightworld/webapps/fovi/.env',
       instances: 1,
       autorestart: true,
       max_memory_restart: '1G',
@@ -67,6 +68,7 @@ module.exports = {
       name: 'fovi-market-service',
       script: 'index.ts',
       cwd: '/home/lightworld/webapps/fovi/mini-services/market-service',
+      env_file: '/home/lightworld/webapps/fovi/.env',
       interpreter: 'bun',
       instances: 1,
       autorestart: true,
@@ -78,6 +80,7 @@ module.exports = {
       name: 'fovi-auto-trade',
       script: 'index.ts',
       cwd: '/home/lightworld/webapps/fovi/mini-services/auto-trade-engine',
+      env_file: '/home/lightworld/webapps/fovi/.env',
       interpreter: 'bun',
       instances: 1,
       autorestart: true,
@@ -89,6 +92,7 @@ module.exports = {
       name: 'fovi-balance-sync',
       script: 'index.ts',
       cwd: '/home/lightworld/webapps/fovi/mini-services/balance-sync',
+      env_file: '/home/lightworld/webapps/fovi/.env',
       interpreter: 'bun',
       instances: 1,
       autorestart: true,
@@ -139,13 +143,31 @@ install_deps() {
   cd "${DEPLOY_PATH}"
 }
 
+# ----------------------------- Build application -------------------------------
+
+build_app() {
+  info "Generating Prisma client and building Next.js..."
+  cd "${DEPLOY_PATH}"
+  bunx prisma generate
+  bun run build
+  ok "Application built successfully"
+}
+
 # ----------------------------- Database ---------------------------------------
 
 db_push() {
-  info "Pushing Prisma schema to database..."
+  info "Applying Prisma schema to database..."
   cd "${DEPLOY_PATH}"
-  bunx prisma db push
-  ok "Database schema pushed"
+
+  if [ -d "${DEPLOY_PATH}/prisma/migrations" ]; then
+    info "Migrations directory found — running prisma migrate deploy..."
+    bunx prisma migrate deploy
+    ok "Database migrations applied"
+  else
+    warn "No migrations directory found — falling back to prisma db push..."
+    bunx prisma db push
+    ok "Database schema pushed (via db push fallback)"
+  fi
 }
 
 # ----------------------------- First-time deploy ------------------------------
@@ -168,6 +190,9 @@ first_deploy() {
 
   # Install dependencies
   install_deps
+
+  # Build application (prisma generate + next build)
+  build_app
 
   # Push database schema
   db_push
@@ -212,6 +237,9 @@ update_deploy() {
   # Install dependencies
   install_deps
 
+  # Build application (prisma generate + next build)
+  build_app
+
   # Push database schema
   db_push
 
@@ -222,6 +250,7 @@ update_deploy() {
   info "Restarting all PM2 processes..."
   cd "${DEPLOY_PATH}"
   pm2 restart ecosystem.config.cjs
+  sleep 2
   pm2 save
   ok "All services restarted"
 
@@ -236,8 +265,8 @@ usage() {
 Usage: $(basename "$0") [command]
 
 Commands:
-  (none)|init    First-time deploy: clone, install, setup .env, db push, PM2 start
-  update         Update deploy: pull, install, db push, PM2 restart
+  (none)|init    First-time deploy: clone, install, setup .env, build, db push, PM2 start
+  update         Update deploy: pull, install, build, db push, PM2 restart
 
 VPS path:  ${DEPLOY_PATH}
 Services:

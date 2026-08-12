@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { db, hasModel } from '@/lib/db';
 import { getUserId, getUserIdSync } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
@@ -6,6 +7,22 @@ import { DemoBroker } from '@/lib/broker/demo';
 import { getAssetType } from '@/lib/broker/demo';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
 import { v4 as uuidv4 } from 'uuid';
+
+const OrderSchema = z.object({
+  symbol: z.string().min(1).max(30).regex(/^[A-Za-z0-9/_.-]+$/),
+  side: z.enum(['buy', 'sell']),
+  type: z.enum(['market', 'limit', 'stop', 'stop_limit']).optional().default('market'),
+  qty: z.number().positive().max(1_000_000_000),
+  limitPrice: z.number().positive().optional(),
+  stopLoss: z.number().positive().optional(),
+  takeProfit: z.number().positive().optional(),
+  assetType: z.string().optional(),
+  accountId: z.string().optional(),
+  aiGenerated: z.boolean().optional(),
+  signalId: z.string().optional(),
+});
+
+type OrderInput = z.infer<typeof OrderSchema>;
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
@@ -34,8 +51,16 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { symbol, side, type, qty, limitPrice, stopLoss, takeProfit, assetType } = body;
+  const raw = await req.json();
+  const parsed = OrderSchema.safeParse(raw);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return NextResponse.json(
+      { error: `Invalid input: ${first?.path.join('.') || 'field'} — ${first?.message}` },
+      { status: 400 },
+    );
+  }
+  const { symbol, side, type, qty, limitPrice, stopLoss, takeProfit, assetType, accountId, aiGenerated, signalId } = parsed.data;
 
   // ── No DB available: use in-memory demo broker ──
   if (!db || !hasModel('tradingAccount')) {
@@ -91,7 +116,7 @@ export async function POST(req: NextRequest) {
   try {
     const userId = await getUserId(req);
 
-    const whereClause = body.accountId ? { id: body.accountId, userId } : { userId, isDefault: true };
+    const whereClause = accountId ? { id: accountId, userId } : { userId, isDefault: true };
     const account = await db.tradingAccount.findFirst({ where: whereClause });
     if (!account) return NextResponse.json({ error: 'No account found' }, { status: 400 });
 
@@ -119,9 +144,9 @@ export async function POST(req: NextRequest) {
         filledQty: result.filledQty,
         filledPrice: result.filledPrice,
         status: result.status,
-        aiGenerated: body.aiGenerated || false,
-        signalId: body.signalId,
-        reason: body.signalId ? 'Signal-based entry' : 'Manual trade',
+        aiGenerated: aiGenerated || false,
+        signalId,
+        reason: signalId ? 'Signal-based entry' : 'Manual trade',
       },
     });
 
