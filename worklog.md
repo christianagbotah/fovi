@@ -839,3 +839,29 @@ Stage Summary:
 - Created 3 new files: demo-banner.tsx, api-fetch.ts, demo-response.ts
 - Modified 30+ files for x-demo header injection
 - Lint passes clean, dev server starts and handles all routes with 200 status
+---
+Task ID: fix-ai-restart-on-refresh
+Agent: main
+Task: Fix AI trading bot restarting after page refresh when it was paused or stopped
+
+Work Log:
+- Identified root cause: race condition on page load
+  - Zustand hydrates botConfig from localStorage (potentially stale status:'running')
+  - Simulation useEffect fires immediately with stale status before DB fetch completes
+  - DB fetch eventually overrides, but simulation already generated trades during the gap
+- Added `dbLoadedRef = useRef<boolean>(false)` guard to simulation useEffect
+  - Simulation now checks `if (!dbLoadedRef.current) return` before starting
+  - Ref is set to `true` only after the DB config fetch completes
+  - This ensures the authoritative DB state always controls whether simulation starts
+- Added optimistic local state updates in `handleToggle` (pause/resume)
+  - Now calls `setBotConfig(updated)` immediately BEFORE the API call
+  - If user refreshes before API responds, localStorage already has correct status
+  - Previously, state was only updated after successful API response
+- Added optimistic local state updates in `confirmCloseAllAndStop` (both no-positions and with-positions paths)
+  - Same pattern: update localStorage immediately, then sync to DB
+- Verified compilation succeeds (GET / 200 in 13.6s in dev)
+
+Stage Summary:
+- Fixed in `src/components/trading/ai-trading-dashboard.tsx`
+- Two-layer fix: (1) DB-load guard prevents race condition, (2) optimistic updates protect against API-failure + refresh
+- No new dependencies required

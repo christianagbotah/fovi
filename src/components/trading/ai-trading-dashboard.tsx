@@ -69,6 +69,10 @@ export function AITradingDashboard() {
   const simPricesRef = useRef<Record<string, number>>({});
   // Track previous allocation to compute deltas for main account balance sync
   const prevAllocationRef = useRef<number>(0);
+  // Guard: simulation must NOT start until DB config has been loaded.
+  // This prevents a race where stale localStorage (status:'running')
+  // fires the simulation before the authoritative DB state arrives.
+  const dbLoadedRef = useRef<boolean>(false);
 
   // Initialize sim prices
   useEffect(() => {
@@ -234,6 +238,8 @@ export function AITradingDashboard() {
       } catch (err) {
         console.warn('[AI Trade] Failed to load config from API, using defaults:', err);
       }
+      // Mark DB as loaded — now the simulation may start if status is 'running'
+      dbLoadedRef.current = true;
       setLoading(false);
     }
     loadFromDB();
@@ -262,6 +268,10 @@ export function AITradingDashboard() {
 
   // ---- Main trading simulation ----
   useEffect(() => {
+    // NEVER start the simulation until the DB config has been loaded.
+    // This prevents the race where stale localStorage ('running')
+    // starts the simulation before the authoritative DB state arrives.
+    if (!dbLoadedRef.current) return;
     if (botConfig.status !== 'running') return;
     if (allocation <= 0) return;
 
@@ -559,7 +569,7 @@ export function AITradingDashboard() {
       activeTimers.forEach(t => clearTimeout(t));
       activeIntervals.forEach(i => clearInterval(i));
     };
-  }, [botConfig.status, botConfig.allocationAmount, botConfig.maxPositions, botConfig.stopLossPercent, botConfig.takeProfitPercent, levyPercent, allocation, setAutoTradeActivity, setBotConfig, setAIOpenPositions, setAIClosedTrades]);
+  }, [botConfig.status, botConfig.allocationAmount, botConfig.maxPositions, botConfig.stopLossPercent, botConfig.takeProfitPercent, levyPercent, allocation, setAutoTradeActivity, setBotConfig, setAIOpenPositions, setAIClosedTrades, dbLoadedRef]);
 
   // ---- Handlers ----
   const handleAllocationChange = async (newVal: number) => {
@@ -601,6 +611,10 @@ export function AITradingDashboard() {
     const newEnabled = !botConfig.enabled;
     const newStatus = newEnabled ? 'running' : 'paused';
     const updated = { ...botConfig, enabled: newEnabled, status: newStatus };
+
+    // Optimistic local update — immediately save to localStorage so that
+    // a page refresh BEFORE the API responds won't restart the bot.
+    setBotConfig(updated);
 
     try {
       const res = await fetch('/api/trading/auto-trade', {
@@ -719,7 +733,10 @@ export function AITradingDashboard() {
       }
       prevAllocationRef.current = 0;
 
-      // Persist stopped state to DB FIRST (await — don't fire-and-forget)
+      // Optimistic local update — immediately save stopped state to localStorage
+      setBotConfig(stopBase);
+
+      // Persist stopped state to DB
       try {
         const res = await fetch('/api/trading/auto-trade', {
           method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stopBase),
@@ -728,13 +745,11 @@ export function AITradingDashboard() {
           const dbConfig = await res.json();
           setBotConfig(dbConfig);
         } else {
-          // API failed — still update locally so user sees stopped state
-          setBotConfig(stopBase);
+          // API failed — local state already updated optimistically
           toast.error('Failed to sync stop state to server. Bot may restart on reload.');
           return;
         }
       } catch {
-        setBotConfig(stopBase);
         toast.error('Network error. Bot may restart on reload.');
         return;
       }
@@ -784,7 +799,10 @@ export function AITradingDashboard() {
     };
     setAIClosedTrades(allClosed);
 
-    // 3. Return equity to main account
+    // 3. Optimistic local update — immediately save stopped state to localStorage
+    setBotConfig(updated);
+
+    // 4. Return equity to main account
     const returnedEquity = Math.max(0, prevAllocationRef.current + totalNet);
     if (activeAccountId) {
       const acc = accounts.find(a => a.id === activeAccountId);
@@ -794,7 +812,7 @@ export function AITradingDashboard() {
     }
     prevAllocationRef.current = 0;
 
-    // 4. Persist stopped state to DB (AWAIT — this is critical)
+    // 5. Persist stopped state to DB (AWAIT — this is critical)
     try {
       const res = await fetch('/api/trading/auto-trade', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated),
