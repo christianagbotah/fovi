@@ -9,6 +9,12 @@
 // expandable advanced-settings panel. Demo bots returned by the API
 // (in environments without a live DB) are rendered with a "Demo"
 // marker so users always see a fully populated experience.
+//
+// Engine Integration:
+//   - Shows auto-trade engine status (connected/disconnected)
+//   - Displays engine cycle count, last cycle time, and activity log
+//   - Supports triggering manual engine cycles
+//   - Engine executes trades for running bots via technical analysis
 // ============================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -33,6 +39,10 @@ import {
   CheckCircle2,
   XCircle,
   DollarSign,
+  Activity,
+  RefreshCw,
+  Radio,
+  WifiOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,6 +58,37 @@ import {
 } from '@/components/ui/select';
 import { useTradingStore } from '@/lib/store/trading-store';
 import type { BrokerProvider } from '@/lib/types';
+
+// ------------------------------------------------------------
+// Engine types
+// ------------------------------------------------------------
+interface EngineStatus {
+  status: string;
+  service: string;
+  port: number;
+  uptime: number;
+  dbAvailable: boolean;
+  cycleCount: number;
+  lastCycleTime: string | null;
+  lastCycleError: string | null;
+  pollIntervalMs: number;
+}
+
+interface EngineActivityEntry {
+  id: string;
+  timestamp: string;
+  type: 'trade_opened' | 'trade_closed' | 'signal_generated' | 'cycle_start' | 'cycle_end' | 'error' | 'sl_hit' | 'tp_hit';
+  botId: string;
+  botName: string;
+  symbol: string;
+  side?: string;
+  qty?: number;
+  price?: number;
+  pnl?: number;
+  reason?: string;
+  confidence?: number;
+  error?: string;
+}
 
 // ------------------------------------------------------------
 // Types
@@ -290,6 +331,14 @@ function isDemoBot(bot: TradingBot): boolean {
   return typeof bot.id === 'string' && bot.id.startsWith('bot_demo_');
 }
 
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m ${seconds % 60}s`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+
 function parseSymbols(symbols: string | undefined | null): string[] {
   if (!symbols) return [];
   return symbols
@@ -324,6 +373,62 @@ export function BotsPanel() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // ---- Engine state ----
+  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null);
+  const [engineLoading, setEngineLoading] = useState(true);
+  const [triggering, setTriggering] = useState(false);
+  const [engineActivity, setEngineActivity] = useState<EngineActivityEntry[]>([]);
+  const [showEngineLog, setShowEngineLog] = useState(false);
+
+  // ---- Fetch engine status ----
+  const fetchEngineStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/trading/bots/engine/status');
+      if (res.ok) {
+        const data = await res.json();
+        setEngineStatus(data);
+      } else {
+        setEngineStatus(null);
+      }
+    } catch {
+      setEngineStatus(null);
+    } finally {
+      setEngineLoading(false);
+    }
+  }, []);
+
+  const fetchEngineActivity = useCallback(async () => {
+    try {
+      const res = await fetch('/api/trading/bots/engine/activity');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setEngineActivity(data);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // ---- Trigger manual cycle ----
+  const handleTriggerCycle = async () => {
+    setTriggering(true);
+    try {
+      const res = await fetch('/api/trading/bots/engine/trigger', { method: 'POST' });
+      if (res.ok) {
+        setNotice('Engine cycle triggered successfully.');
+        // Refresh after a short delay to see results
+        setTimeout(() => {
+          fetchEngineStatus();
+          fetchEngineActivity();
+        }, 3000);
+      } else {
+        setError('Failed to trigger engine cycle.');
+      }
+    } catch {
+      setError('Engine unreachable — cannot trigger cycle.');
+    } finally {
+      setTriggering(false);
+    }
+  };
+
   // ---- Fetch bots on mount ----
   const fetchBots = useCallback(async () => {
     setLoading(true);
@@ -352,7 +457,18 @@ export function BotsPanel() {
 
   useEffect(() => {
     fetchBots();
-  }, [fetchBots]);
+    fetchEngineStatus();
+    fetchEngineActivity();
+  }, [fetchBots, fetchEngineStatus, fetchEngineActivity]);
+
+  // Refresh engine status periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchEngineStatus();
+      fetchEngineActivity();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [fetchEngineStatus, fetchEngineActivity]);
 
   // ---- Create bot ----
   const handleCreate = async () => {
@@ -442,8 +558,10 @@ export function BotsPanel() {
         setError(body?.error || `Failed to ${newEnabled ? 'start' : 'stop'} bot`);
       } else {
         setNotice(
-          `"${bot.name}" ${newEnabled ? 'started' : 'stopped'}.`,
+          `"${bot.name}" ${newEnabled ? 'started — engine will pick it up on next cycle' : 'stopped'}.`,
         );
+        // Refresh engine activity after toggle
+        setTimeout(() => { fetchEngineActivity(); fetchEngineStatus(); }, 2000);
       }
     } catch {
       setBots((prev) =>
@@ -580,6 +698,218 @@ export function BotsPanel() {
         </CardContent>
       </Card>
 
+      {/* === Engine Status Card === */}
+      <Card className="border-border/40 overflow-hidden shadow-sm">
+        <div className="px-4 lg:px-5 py-3.5 bg-gradient-to-r from-emerald-500/[0.04] via-transparent to-transparent border-b border-border/40">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500/90 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                {engineStatus ? (
+                  <Radio className="h-5 w-5 text-white" />
+                ) : (
+                  <WifiOff className="h-5 w-5 text-white/80" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold tracking-tight">Trade Engine</h2>
+                  {engineLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  ) : engineStatus ? (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] h-5 border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    >
+                      <motion.span
+                        animate={{ opacity: [1, 0.3, 1] }}
+                        transition={{ duration: 1.6, repeat: Infinity }}
+                        className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1"
+                      />
+                      Connected
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] h-5 border-red-500/40 bg-red-500/10 text-red-500"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 mr-1" />
+                      Offline
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {engineStatus
+                    ? `Uptime ${formatUptime(engineStatus.uptime)} · ${engineStatus.cycleCount} cycles completed · polls every ${(engineStatus.pollIntervalMs / 1000).toFixed(0)}s`
+                    : 'Auto-trade engine is not reachable. Trades won\'t execute.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowEngineLog((v) => !v)}
+                className="cursor-pointer text-xs"
+              >
+                <Activity className="h-3.5 w-3.5 mr-1.5" />
+                {showEngineLog ? 'Hide Log' : 'Activity Log'}
+                {engineActivity.length > 0 && (
+                  <Badge variant="secondary" className="ml-1.5 h-4 px-1.5 text-[9px] tabular-nums">
+                    {engineActivity.length}
+                  </Badge>
+                )}
+              </Button>
+              <Button
+                onClick={handleTriggerCycle}
+                disabled={triggering || !engineStatus}
+                size="sm"
+                className="cursor-pointer shadow-sm text-xs"
+              >
+                {triggering ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Trigger Cycle
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Engine stats strip */}
+        <CardContent className="p-3 lg:p-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-muted/40 border border-border/40">
+              <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center shrink-0 shadow-sm">
+                <Activity className="h-4 w-4 text-emerald-500" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold tabular-nums truncate text-emerald-500">
+                  {engineStatus?.cycleCount ?? '—'}
+                </p>
+                <p className="text-[10px] text-muted-foreground leading-tight">Cycles Run</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-muted/40 border border-border/40">
+              <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center shrink-0 shadow-sm">
+                <Bot className="h-4 w-4 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold tabular-nums truncate text-primary">{runningCount}</p>
+                <p className="text-[10px] text-muted-foreground leading-tight">Active Bots</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-muted/40 border border-border/40">
+              <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center shrink-0 shadow-sm">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold tabular-nums truncate">
+                  {engineStatus?.lastCycleTime
+                    ? timeAgo(engineStatus.lastCycleTime)
+                    : '—'}
+                </p>
+                <p className="text-[10px] text-muted-foreground leading-tight">Last Cycle</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-muted/40 border border-border/40">
+              <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center shrink-0 shadow-sm">
+                {engineStatus?.lastCycleError ? (
+                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className={`text-sm font-bold tabular-nums truncate ${engineStatus?.lastCycleError ? 'text-red-500' : 'text-emerald-500'}`}>
+                  {engineStatus?.lastCycleError ? 'Error' : 'Healthy'}
+                </p>
+                <p className="text-[10px] text-muted-foreground leading-tight">Engine Health</p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+
+        {/* Activity Log (expandable) */}
+        <AnimatePresence>
+          {showEngineLog && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="overflow-hidden"
+            >
+              <div className="border-t border-border/40 p-3 lg:p-4">
+                <div className="flex items-center gap-1.5 mb-3">
+                  <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Engine Activity Log
+                  </span>
+                </div>
+                {engineActivity.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-4">
+                    No activity yet. Trigger a cycle or wait for the next auto-cycle.
+                  </p>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
+                    {engineActivity.slice(0, 50).map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="flex items-start gap-2.5 p-2 rounded-lg bg-muted/30 border border-border/20 text-[11px]"
+                      >
+                        <div className="shrink-0 mt-0.5">
+                          {entry.type === 'error' ? (
+                            <XCircle className="h-3.5 w-3.5 text-red-500" />
+                          ) : entry.type === 'trade_opened' || entry.type === 'tp_hit' ? (
+                            <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : entry.type === 'trade_closed' || entry.type === 'sl_hit' ? (
+                            <TrendingDown className="h-3.5 w-3.5 text-red-500" />
+                          ) : entry.type === 'signal_generated' ? (
+                            <Target className="h-3.5 w-3.5 text-amber-500" />
+                          ) : (
+                            <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-foreground">{entry.botName}</span>
+                            <Badge
+                              variant="secondary"
+                              className="h-4 px-1.5 text-[9px] font-semibold"
+                            >
+                              {entry.symbol}
+                            </Badge>
+                            {entry.side && (
+                              <span className={entry.side === 'buy' ? 'text-emerald-500' : 'text-red-500'}>
+                                {entry.side.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-muted-foreground mt-0.5">
+                            {entry.type === 'trade_opened' && `Opened position @ $${(entry.price ?? 0).toFixed(2)} qty=${(entry.qty ?? 0).toFixed(4)}`}
+                            {entry.type === 'trade_closed' && `Closed position PnL: $${(entry.pnl ?? 0).toFixed(2)}`}
+                            {entry.type === 'sl_hit' && `Stop Loss hit @ $${(entry.price ?? 0).toFixed(2)} — PnL: $${(entry.pnl ?? 0).toFixed(2)}`}
+                            {entry.type === 'tp_hit' && `Take Profit hit @ $${(entry.price ?? 0).toFixed(2)} — PnL: $${(entry.pnl ?? 0).toFixed(2)}`}
+                            {entry.type === 'signal_generated' && `Signal: ${(entry.confidence ?? 0).toFixed(0)}% confidence — ${entry.reason ?? ''}`}
+                            {entry.type === 'cycle_start' && 'Cycle started'}
+                            {entry.type === 'cycle_end' && 'Cycle completed'}
+                            {entry.type === 'error' && (entry.error ?? 'Unknown error')}
+                          </p>
+                          <span className="text-[9px] text-muted-foreground/60 tabular-nums">
+                            {timeAgo(entry.timestamp)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Card>
+
       {/* === Inline notices / errors === */}
       <AnimatePresence>
         {error && (
@@ -703,10 +1033,11 @@ export function BotsPanel() {
       {!loading && bots.length > 0 && (
         <p className="text-[11px] text-muted-foreground/80 text-center pt-1">
           {activeAccount
-            ? `Bots trade against your "${activeAccount.broker}" ${activeAccount.accountType} account.`
-            : 'Connect a broker account to enable live trading.'}
-          {' · '}
-          Supported brokers: {SUPPORTED_BROKERS.join(', ')}.
+            ? `Bots trade against your "${activeAccount.broker}" ${activeAccount.accountType} account. `
+            : 'Connect a broker account to enable live trading. '}
+          {engineStatus
+            ? 'The trade engine is executing strategies automatically.'
+            : 'Start the trade engine to execute bot strategies automatically.'}
         </p>
       )}
     </div>

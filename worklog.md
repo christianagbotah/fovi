@@ -903,3 +903,59 @@ Stage Summary:
 - Broker connection flow can now save accounts to database (was silently failing before)
 - Signal scroll confirmed working (height: 491px, scrollHeight: 1040px)
 - Chart axis text confirmed visible via VLM analysis
+---
+Task ID: wire-bot-manager-engine
+Agent: full-stack-developer
+Task: Wire Bot Manager bots to auto-trade engine
+
+Work Log:
+- Read and analyzed existing auto-trade engine (`mini-services/auto-trade-engine/index.ts`, 776 lines originally)
+- Read Bot table schema (model Bot at prisma/schema.prisma lines 198-243) and TradingAccount model (lines 51-80)
+- Installed `postgres` package in the auto-trade-engine mini-service (`bun add postgres`)
+- Added PostgreSQL connection setup (same pattern as balance-sync service):
+  - Reads `DATABASE_URL` env var, connects if postgresql:// prefix, sets `pgReady` flag
+  - Logs warning when DB is unavailable (graceful skip)
+- Added `BotTableBot` interface matching all Bot table columns + joined TradingAccount fields
+- Added `fetchBotTableBots()` — raw SQL query joining `"Bot"` + `"TradingAccount"` where `enabled=true AND status='running' AND isActive=true`
+- Added `updateBotStats()` — raw SQL UPDATE on `"Bot"` for totalTrades, winTrades, lossTrades, totalPnl, bestTrade, worstTrade, lastTradeAt
+- Added `updateBotLastError()` — raw SQL UPDATE on `"Bot"` for lastError column
+- Modified `runCycle()` to add Phase 2 after existing BotConfig (Phase 1) processing:
+  - Queries Bot table for running bots
+  - For each bot, maps BotTableBot → BotRow and calls existing `processBot()`
+  - Tracks activity log length before/after processing
+  - Scans new activity entries (trade_opened, sl_hit, tp_hit) to derive stat deltas
+  - Updates Bot table stats via direct SQL when trades occur
+  - Clears lastError on successful processing
+  - Persists errors to Bot.lastError on failure
+- Updated `/status` endpoint to include `dbReady` flag
+- Updated architecture header comment to reflect dual-source (API + Bot table)
+- Added graceful SQL shutdown in SIGTERM/SIGINT handlers
+
+Stage Summary:
+- Bot Manager bots (from the `Bot` table) are now processed by the auto-trade engine alongside BotConfig bots
+- Each Bot table bot uses ITS own symbols (comma-separated), strategy, allocationAmount, maxPositions, etc.
+- Bot stats (totalTrades, winTrades, totalPnl, bestTrade, worstTrade, lastTradeAt) are updated directly in the Bot table after each cycle
+- Existing BotConfig flow is completely unchanged — this is purely additive
+- When DATABASE_URL is not PostgreSQL, Bot table processing is silently skipped
+
+---
+Task ID: wire-bot-manager-engine
+Agent: full-stack-developer
+Task: Wire Bot Manager bots to auto-trade engine for real trade execution
+
+Work Log:
+- Updated auto-trade engine (mini-services/auto-trade-engine/index.ts) to also process Bot table entries
+- Added BotTableBot interface matching the Bot table schema
+- Added fetchBotTableBots() SQL query joining Bot + TradingAccount
+- Added updateBotStats() and updateBotLastError() SQL helpers
+- Added Phase 2 in runCycle() that queries running Bot Manager bots after BotConfig processing
+- processBot() now uses config.symbols (bot-specific) instead of hardcoded DEMO_SYMBOLS
+- Bot stats (totalTrades, winTrades, totalPnl, etc.) are updated directly in Bot table after each cycle
+- Reverted Prisma schema to postgresql provider for production VPS
+- Updated db.ts with clean demo mode fallback message for non-postgresql environments
+
+Stage Summary:
+- Bot Manager bots now execute real trades through the auto-trade engine
+- Each bot uses its own symbols, strategy, risk settings, and allocation
+- Engine processes both BotConfig (AI Auto-Trade tab) AND Bot table (Bot Manager) entries
+- Production schema is postgresql — sandbox gracefully falls back to demo mode

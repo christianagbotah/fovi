@@ -5,7 +5,7 @@
     "": {
       "name": "fovi-auto-trade-engine",
       "dependencies": {
-        "postgres": "^3.4.0",
+        "postgres": "^3.4.9",
       },
       "devDependencies": {
         "typescript": "^5",

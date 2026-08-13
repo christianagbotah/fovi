@@ -1,14 +1,14 @@
 {
   "name": "fovi-auto-trade-engine",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "scripts": {
     "dev": "bun --hot index.ts",
     "start": "bun index.ts"
   },
-  "dependencies": {
-    "postgres": "^3.4.0"
-  },
   "devDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9"
   }
 }
