@@ -173,28 +173,9 @@ export function AccountSwitcher() {
         }).catch(() => {});
         toast.success(isDemo ? 'Demo account created' : 'Broker account linked successfully');
       } else {
-        // Fallback: create local-only account
-        const newAccount: TradingAccount = {
-          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          userId: 'usr_demo_1',
-          broker, accountType, accountId: null,
-          isDefault: accounts.length === 0,
-          balance, linkedBalance: balance,
-          totalAllocated: 0, totalRealizedProfit: 0,
-          currency: 'USD',
-          apiKey: apiKey || undefined,
-          apiSecret: apiSecret || undefined,
-          passphrase: passphrase || undefined,
-          isActive: true,
-          lastSyncedAt: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        const updated = [...accounts, newAccount];
-        setAccounts(updated);
-        saveAccountsLS(updated);
-        setActiveAccount(newAccount.id);
-        toast.success(isDemo ? 'Demo account created (local)' : 'Broker linked (local mode — may not persist)');
+        // API returned an error — show the real error message
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData?.error || `Failed to link ${broker} account`);
       }
     } catch {
       toast.error('Failed to create account. Check your connection.');

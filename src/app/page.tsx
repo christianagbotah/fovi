@@ -2406,7 +2406,7 @@ export default function TradingDashboard() {
                   <Card className="flex-1 h-[500px] overflow-hidden flex flex-col">
                     <PriceChart autoTick />
                   </Card>
-                  <Card className="hidden lg:block w-80 overflow-hidden">
+                  <Card className="hidden lg:block w-80 h-[500px] overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Sparkles className="h-4 w-4 text-amber-500" />
@@ -2416,7 +2416,7 @@ export default function TradingDashboard() {
                         AI Powered
                       </Badge>
                     </div>
-                    <div className="h-[calc(100%-49px)] overflow-y-auto">
+                    <div className="flex-1 min-h-0 overflow-hidden">
                       <SignalsPanel />
                     </div>
                   </Card>

@@ -24,32 +24,35 @@ function getKey(): Uint8Array {
 }
 
 /**
- * Encrypt a plaintext string. Returns base64-encoded string:
- *   base64(iv + authTag + ciphertext)
+ * Encrypt a plaintext string (synchronous).
+ * Returns base64-encoded string: base64(iv + authTag + ciphertext)
  */
 export function encrypt(plaintext: string): string {
   if (!plaintext) return '';
-  const key = getKey();
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-  // Import key for AES-GCM
-  const cryptoKey = crypto.subtle.importKey(
-    'raw', key, { name: ALGORITHM }, false, ['encrypt']
-  );
-  const encoded = new TextEncoder().encode(plaintext);
-  const encrypted = crypto.subtle.encrypt(
-    { name: ALGORITHM, iv },
-    cryptoKey,
-    encoded
-  );
-  // encrypted is ArrayBuffer: iv (12) + ciphertext + authTag (16)
-  const result = new Uint8Array(iv.length + encrypted.byteLength);
-  result.set(iv, 0);
-  result.set(new Uint8Array(encrypted), iv.length);
-  return Buffer.from(result).toString('base64');
+  try {
+    const key = getKey();
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    const cryptoKey = crypto.subtle.importKeySync(
+      'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+    );
+    const encoded = new TextEncoder().encode(plaintext);
+    const encrypted = crypto.subtle.encryptSync(
+      { name: ALGORITHM, iv },
+      cryptoKey,
+      encoded
+    );
+    const result = new Uint8Array(iv.length + encrypted.byteLength);
+    result.set(iv, 0);
+    result.set(new Uint8Array(encrypted), iv.length);
+    return Buffer.from(result).toString('base64');
+  } catch (e) {
+    console.error('[encryption] Encrypt failed:', e);
+    return '';
+  }
 }
 
 /**
- * Decrypt a base64-encoded encrypted string.
+ * Decrypt a base64-encoded encrypted string (synchronous).
  */
 export function decrypt(encryptedBase64: string): string {
   if (!encryptedBase64) return '';
@@ -58,10 +61,10 @@ export function decrypt(encryptedBase64: string): string {
     const data = Buffer.from(encryptedBase64, 'base64');
     const iv = data.subarray(0, IV_LENGTH);
     const ciphertext = data.subarray(IV_LENGTH);
-    const cryptoKey = crypto.subtle.importKey(
-      'raw', key, { name: ALGORITHM }, false, ['decrypt']
+    const cryptoKey = crypto.subtle.importKeySync(
+      'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
     );
-    const decrypted = crypto.subtle.decrypt(
+    const decrypted = crypto.subtle.decryptSync(
       { name: ALGORITHM, iv },
       cryptoKey,
       ciphertext

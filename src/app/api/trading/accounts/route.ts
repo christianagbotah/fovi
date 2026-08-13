@@ -135,9 +135,16 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-  } catch (error) {
-    console.warn('[accounts POST] DB error, using fallback:', error);
-    return NextResponse.json(makeDemoAccount({ id: uuidv4() }), { headers: { 'x-demo': 'true' } });
+  } catch (error: any) {
+    console.error('[accounts POST] Error:', error);
+    // Only fall back to demo for demo broker type
+    if (broker === 'demo') {
+      return NextResponse.json(makeDemoAccount({ id: uuidv4() }), { headers: { 'x-demo': 'true' } });
+    }
+    return NextResponse.json(
+      { error: `Failed to create account: ${error?.message || 'Unknown error'}` },
+      { status: 500 }
+    );
   }
 }
 
