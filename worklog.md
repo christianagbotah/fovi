@@ -865,3 +865,18 @@ Stage Summary:
 - Fixed in `src/components/trading/ai-trading-dashboard.tsx`
 - Two-layer fix: (1) DB-load guard prevents race condition, (2) optimistic updates protect against API-failure + refresh
 - No new dependencies required
+---
+Task ID: 1
+Agent: main
+Task: Resize buy/sell modal sheets on desktop
+
+Work Log:
+- Found 4 bottom sheets without proper desktop width
+- signal-detail-sheet: no max-w -> max-w-lg (512px)
+- order-form: max-w-2xl -> max-w-xl (576px)
+- position-detail-sheet: max-w-2xl -> max-w-xl (576px)
+- account-switcher: no max-w -> max-w-lg (512px)
+- All centered with mx-auto
+
+Stage Summary:
+- All bottom sheets now properly sized on desktop

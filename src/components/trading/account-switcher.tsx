@@ -383,7 +383,7 @@ export function AccountSwitcher() {
 
       {/* Mobile Sheet */}
       <Sheet open={mobileSheetOpen} onOpenChange={setMobileSheetOpen}>
-        <SheetContent side="bottom" className="max-h-[70vh] rounded-t-2xl">
+        <SheetContent side="bottom" className="max-h-[70vh] rounded-t-2xl max-w-lg mx-auto">
           <SheetHeader className="pb-3">
             <SheetTitle className="flex items-center justify-between">
               <div className="flex items-center gap-2">

@@ -30,7 +30,7 @@ export function SignalDetailSheet() {
 
   return (
     <Sheet open={!!signalDetailId} onOpenChange={() => setSignalDetailId(null)}>
-      <SheetContent side="bottom" className="h-auto max-h-[75vh] rounded-t-2xl">
+      <SheetContent side="bottom" className="h-auto max-h-[75vh] rounded-t-2xl max-w-lg mx-auto">
         <div className="flex justify-center pt-2 pb-1">
           <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
         </div>

@@ -104,7 +104,7 @@ export function PositionDetailSheet() {
 
   return (
     <Sheet open={!!positionDetailId} onOpenChange={() => setPositionDetailId(null)}>
-      <SheetContent side="bottom" className="h-auto max-h-[85vh] rounded-t-2xl max-w-2xl mx-auto flex flex-col">
+      <SheetContent side="bottom" className="h-auto max-h-[85vh] rounded-t-2xl max-w-xl mx-auto flex flex-col">
         {/* Drag Handle */}
         <div className="flex justify-center pt-2 pb-1 shrink-0">
           <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
