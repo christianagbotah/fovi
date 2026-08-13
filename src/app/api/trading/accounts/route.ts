@@ -32,10 +32,11 @@ const makeDemoAccount = (overrides: Record<string, any> = {}) => ({
 const DEMO_ACCOUNTS = [makeDemoAccount()];
 
 export async function POST(req: NextRequest) {
+  let broker = 'demo';
   try {
     const body = await req.json();
     const id = uuidv4();
-    const broker = body.broker || 'demo';
+    broker = body.broker || 'demo';
     const accountType = body.accountType || 'demo';
     const isLinked = broker !== 'demo';
 

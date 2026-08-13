@@ -4,21 +4,10 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-/**
- * Validate that DATABASE_URL matches the Prisma schema provider.
- * Schema uses provider="postgresql", so only postgres URLs are valid.
- * On the VPS the env will have postgresql://... — here in sandbox it has file:...
- * so we detect the mismatch early and skip creating the client.
- */
-function isDatabaseUrlValid(): boolean {
-  const url = process.env.DATABASE_URL || '';
-  return url.startsWith('postgresql://') || url.startsWith('postgres://');
-}
-
 let _dbFailed = false;
 let _db: PrismaClient | null = null;
 
-if (!_dbFailed && isDatabaseUrlValid()) {
+if (!_dbFailed) {
   try {
     _db = new PrismaClient({
       log: process.env.NODE_ENV === 'development' ? ['error'] : [],
@@ -28,9 +17,6 @@ if (!_dbFailed && isDatabaseUrlValid()) {
     _db = null;
     console.warn('[DB] PrismaClient init failed — demo mode:', e instanceof Error ? e.message : e);
   }
-} else if (!isDatabaseUrlValid()) {
-  _dbFailed = true;
-  console.warn('[DB] DATABASE_URL does not match schema provider (postgresql) — running in demo mode');
 }
 
 export const db = _db;
@@ -50,11 +36,8 @@ export function isDbAvailable(): boolean {
 
 /**
  * Run a DB query with automatic fallback to demo mode.
- * If the query throws (e.g. PostgreSQL unreachable in sandbox),
- * the error is logged and `undefined` is returned so the caller
- * can fall back to in-memory demo logic.
- *
- * Usage: await safeDbQuery(() => db.user.findFirst(...))
+ * If the query throws, the error is logged and `undefined` is returned
+ * so the caller can fall back to in-memory demo logic.
  */
 export async function safeDbQuery<T>(fn: () => Promise<T>): Promise<T | undefined> {
   if (!db) return undefined;
@@ -77,7 +60,6 @@ let _demoUserEnsured = false;
 /**
  * Ensure the demo user AND a default trading account exist.
  * Returns the userId on success, null if DB is unavailable.
- * Only runs the upsert once per process lifecycle.
  */
 export async function ensureDemoUser(): Promise<string | null> {
   if (_demoUserEnsured) return DEMO_USER_ID;
@@ -89,7 +71,6 @@ export async function ensureDemoUser(): Promise<string | null> {
       update: {},
     });
 
-    // Also ensure a default trading account exists for FK constraints
     if (hasModel('tradingAccount')) {
       await db.tradingAccount.upsert({
         where: { id: DEMO_ACCOUNT_ID },

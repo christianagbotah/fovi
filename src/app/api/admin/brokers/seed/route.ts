@@ -43,7 +43,7 @@ const DEFAULT_BROKERS = [
   },
   {
     code: 'okx', displayName: 'OKX', description: 'Crypto spot, futures & options',
-    brokerType: 'crypto', iconColor: '#FFFFFF',
+    brokerType: 'crypto', iconColor: '#000000',
     requiresApiKey: true, requiresSecret: true, requiresPassphrase: true,
     liveBaseUrl: 'https://www.okx.com', testnetBaseUrl: 'https://www.okx.com',
     authType: 'hmac_sha256_base64', apiKeyHeader: 'OK-ACCESS-KEY', symbolFormat: 'dash',
