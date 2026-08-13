@@ -393,11 +393,18 @@ export class OkxBroker implements IBroker {
 
     const json = (await res.json()) as OkxResponse<unknown>;
     if (json.code !== '0') {
-      throw new OkxError(
-        res.status,
-        `OKX API error: ${json.msg} (code ${json.code})`,
-        path,
-      );
+      // Provide user-friendly messages for common OKX error codes
+      let userMsg = `OKX API error: ${json.msg} (code ${json.code})`;
+      if (json.code === '50101') {
+        userMsg = 'API key does not match environment. If using a live API key, make sure "Live Trading" is selected (not "Demo / Paper"). If using a demo key, select "Demo / Paper".';
+      } else if (json.code === '50113') {
+        userMsg = 'Invalid API signature. Please double-check your API Secret and Passphrase are correct.';
+      } else if (json.code === '50111') {
+        userMsg = 'Invalid API key. Please check your API Key is correct.';
+      } else if (json.code === '50102') {
+        userMsg = 'API key passphrase is incorrect. Please verify your Passphrase.';
+      }
+      throw new OkxError(res.status, userMsg, path);
     }
     return json as T;
   }

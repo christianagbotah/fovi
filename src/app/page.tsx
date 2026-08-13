@@ -1898,8 +1898,8 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
               <h3 className="text-sm font-semibold mb-3">Connect Broker</h3>
               <div className="space-y-4 p-5 rounded-xl border border-border/50 bg-card">
                 <div className="grid grid-cols-2 gap-2">
-                  {(['alpaca', 'binance', 'okx', 'deriv'] as const).map(b => (
-                    <button key={b} onClick={() => { setBroker(b); setConnectError(''); setPassphrase(''); }}
+                  {(['alpaca', 'binance', 'okx', 'bybit', 'bitget', 'deriv'] as const).map(b => (
+                    <button key={b} onClick={() => { setBroker(b); setAccountType('live'); setConnectError(''); setPassphrase(''); }}
                       className={`p-2.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
                         broker === b ? 'bg-primary/10 border-primary text-primary' : 'border-border hover:bg-accent'
                       }`}>
