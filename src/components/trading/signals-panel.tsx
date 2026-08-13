@@ -164,7 +164,10 @@ export function SignalsPanel() {
           </Button>
         </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-border">
+      <div
+        className="overflow-y-auto divide-y divide-border"
+        style={{ flex: '1 1 0%', minHeight: 0 }}
+      >
         {signals.map(sig => {
           const IconComp = SIGNAL_ICONS[sig.signalType] || Zap;
           const isBullish = sig.direction === 'bullish' || sig.direction === 'long';

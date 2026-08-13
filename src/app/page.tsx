@@ -1832,26 +1832,36 @@ function SecuritySettings() {
 function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { accounts, setAccounts, isAuthenticated } = useTradingStore();
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState('');
   const [broker, setBroker] = useState('alpaca');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [accountType, setAccountType] = useState('demo');
+  const requiresPassphrase = broker === 'okx' || broker === 'bitget';
 
   const handleConnect = async () => {
     if (!apiKey || !apiSecret) return;
     setConnecting(true);
+    setConnectError('');
     try {
       const res = await fetch('/api/trading/accounts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ broker, accountType, apiKey, apiSecret }),
+        body: JSON.stringify({ broker, accountType, apiKey, apiSecret, passphrase: requiresPassphrase ? passphrase : undefined }),
       });
       if (res.ok) {
         const accs = await (await fetch('/api/trading/accounts')).json();
         setAccounts(accs);
-        setApiKey(''); setApiSecret('');
+        setApiKey(''); setApiSecret(''); setPassphrase('');
+        setConnectError('');
         onOpenChange(false);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setConnectError(data.error || `Connection failed (${res.status})`);
       }
-    } catch { /* */ } finally { setConnecting(false); }
+    } catch {
+      setConnectError('Network error. Check your connection.');
+    } finally { setConnecting(false); }
   };
 
   return (
@@ -1883,7 +1893,7 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
               <div className="space-y-4 p-5 rounded-xl border border-border/50 bg-card">
                 <div className="grid grid-cols-2 gap-2">
                   {(['alpaca', 'binance', 'okx', 'deriv'] as const).map(b => (
-                    <button key={b} onClick={() => setBroker(b)}
+                    <button key={b} onClick={() => { setBroker(b); setConnectError(''); setPassphrase(''); }}
                       className={`p-2.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
                         broker === b ? 'bg-primary/10 border-primary text-primary' : 'border-border hover:bg-accent'
                       }`}>
@@ -1920,7 +1930,20 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
                     className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" />
                 </div>
 
-                <Button onClick={handleConnect} disabled={connecting || !apiKey || !apiSecret} className="w-full cursor-pointer">
+                {requiresPassphrase && (
+                <div className="space-y-2">
+                  <label className="text-xs text-muted-foreground font-medium">Passphrase</label>
+                  <input type="password" value={passphrase} onChange={e => setPassphrase(e.target.value)}
+                    placeholder={`Enter your ${broker.toUpperCase()} passphrase`}
+                    className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" />
+                </div>
+                )}
+
+                {connectError && (
+                  <p className="text-xs text-red-500 bg-red-500/10 rounded-lg px-3 py-2">{connectError}</p>
+                )}
+
+                <Button onClick={handleConnect} disabled={connecting || !apiKey || !apiSecret || (requiresPassphrase && !passphrase)} className="w-full cursor-pointer">
                   {connecting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Shield className="h-4 w-4 mr-2" />}
                   Connect {broker.charAt(0).toUpperCase() + broker.slice(1)}
                 </Button>
@@ -2408,7 +2431,7 @@ export default function TradingDashboard() {
                   <Card className="flex-1 h-[500px] overflow-hidden flex flex-col">
                     <PriceChart autoTick />
                   </Card>
-                  <Card className="hidden lg:block w-80 h-[500px] overflow-hidden flex flex-col !gap-0 !py-0">
+                  <Card className="hidden lg:block w-80 overflow-hidden flex flex-col" style={{ height: 500, padding: 0, gap: 0 }}>
                     <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Sparkles className="h-4 w-4 text-amber-500" />
