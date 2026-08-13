@@ -1,0 +1,618 @@
+[PM2] Saving current process list...
+[PM2] Successfully saved in /root/.pm2/dump.pm2
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+Datasource "db": PostgreSQL database "lightworld_fovi_db", schema "public" at "localhost:5432"
+
+The database is already in sync with the Prisma schema.
+
+✔ Generated Prisma Client (v6.19.2) to ./node_modules/@prisma/client in 935ms
+
+[TAILING] Tailing last 5 lines for [fovi-next] process (change the value with --lines option)
+/root/.pm2/logs/fovi-next-out.log last 5 lines:
+5|fovi-nex | - Local:         http://localhost:3002
+5|fovi-nex | - Network:       http://163.245.212.15:3002
+5|fovi-nex |
+5|fovi-nex | ✓ Starting...
+5|fovi-nex | ✓ Ready in 2.1s
+
+/root/.pm2/logs/fovi-next-error.log last 5 lines:
+5|fovi-nex | ⚠️  PRODUCTION SECURITY WARNINGS:
+5|fovi-nex |    The following environment variables need attention:
+5|fovi-nex |   - INTERNAL_SERVICE_SECRET is not set or uses the default value. Mini-services will not be authenticated. Generate with: openssl rand -hex 32
+5|fovi-nex |
+5|fovi-nex | [encryption] Sync crypto API not available — using async fallback. Consider upgrading to Node.js 22+
+
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko failed, using demo: CoinGecko HTTP 429
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+○ Compiling /_not-found/page ...
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] ExchangeRate-API: 21 real forex prices
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices
+5|fovi-next  | [market-data] Finnhub: no FINNHUB_API_KEY, stocks use demo data
+5|fovi-next  | [portfolio GET] error: Error: OKX broker requires apiKey and apiSecret
+5|fovi-next  |     at new S (src/lib/broker/okx.ts:64:13)
+5|fovi-next  |     at Y (src/lib/broker/factory.ts:93:14)
+5|fovi-next  |     at R (src/app/api/trading/portfolio/route.ts:29:26)
+5|fovi-next  |   62 |   constructor(config: BrokerConfig) {
+5|fovi-next  |   63 |     if (!config.apiKey || !config.apiSecret) {
+5|fovi-next  | > 64 |       throw new Error('OKX broker requires apiKey and apiSecret');
+5|fovi-next  |      |             ^
+5|fovi-next  |   65 |     }
+5|fovi-next  |   66 |     this.baseUrl = OKX_BASE_URL;
+5|fovi-next  |   67 |     this.apiKey = config.apiKey;
+5|fovi-next  | [market-data] metals.live failed, using demo: fetch failed
+5|fovi-next  | [market-data] CoinGecko: 13 real crypto prices

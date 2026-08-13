@@ -122,9 +122,32 @@ export async function createBrokerFromAccount(account: {
   passphrase?: string | null;
   id: string;
 }): Promise<IBroker> {
-  const decryptedApiKey = account.apiKey ? (await decrypt(account.apiKey)) || account.apiKey : undefined;
-  const decryptedSecret = account.apiSecret ? (await decrypt(account.apiSecret)) || account.apiSecret : undefined;
-  const decryptedPassphrase = account.passphrase ? (await decrypt(account.passphrase)) || account.passphrase : undefined;
+  // Decrypt credentials — if decryption fails, fall back to demo broker
+  // instead of passing garbage encrypted data as plaintext
+  let decryptedApiKey: string | undefined;
+  let decryptedSecret: string | undefined;
+  let decryptedPassphrase: string | undefined;
+
+  if (account.apiKey) {
+    const d = await decrypt(account.apiKey);
+    decryptedApiKey = d || undefined;
+  }
+  if (account.apiSecret) {
+    const d = await decrypt(account.apiSecret);
+    decryptedSecret = d || undefined;
+  }
+  if (account.passphrase) {
+    const d = await decrypt(account.passphrase);
+    decryptedPassphrase = d || undefined;
+  }
+
+  // If this is a linked broker but credentials couldn't be decrypted,
+  // fall back to demo broker with the stored balance
+  const needsCredentials = account.broker !== 'demo' && (account.apiKey || account.apiSecret);
+  if (needsCredentials && (!decryptedApiKey || !decryptedSecret)) {
+    console.warn(`[broker] Credentials could not be decrypted for ${account.broker} account ${account.id}. Reconnect in Settings.`);
+    return new DemoBroker({ provider: 'demo', isDemo: true });
+  }
 
   const config: BrokerConfig = {
     provider: (account.broker || 'demo') as BrokerConfig['provider'],
