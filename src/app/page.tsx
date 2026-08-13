@@ -30,6 +30,7 @@ import { SentimentPanel } from '@/components/trading/sentiment-panel';
 import { CorrelationPanel } from '@/components/trading/correlation-panel';
 import { SessionsPanel } from '@/components/trading/sessions-panel';
 import { WebhookPanel } from '@/components/trading/webhook-panel';
+import { BotsPanel } from '@/components/trading/bots-panel';
 import { LeaderboardPanel } from '@/components/trading/leaderboard-panel';
 import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
 import { PositionDetailSheet } from '@/components/trading/position-detail-sheet';
@@ -1992,6 +1993,7 @@ function DesktopSidebar() {
     { id: 'sentiment', label: 'Sentiment', icon: Globe },
     { id: 'correlation', label: 'Correlation', icon: GitBranch },
     { id: 'sessions', label: 'Sessions', icon: Timer },
+    { id: 'bots', label: 'Bot Manager', icon: Bot },
     { id: 'webhook', label: 'Webhooks', icon: Activity },
   ];
 
@@ -2539,6 +2541,14 @@ export default function TradingDashboard() {
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 220px)' }}><OrderHistoryPanel /></div>
                 </Card>
+              </motion.div>
+            )}
+
+            {/* ====== BOT MANAGER TAB ====== */}
+            {activeTab === 'bots' && (
+              <motion.div key="bots" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><BotsPanel /></div>
               </motion.div>
             )}
 
