@@ -252,6 +252,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     const activeId = savedActiveId && merged.find(a => a.id === savedActiveId)
       ? savedActiveId
       : merged.find(a => a.isDefault)?.id || merged[0]?.id || null;
+    // Persist resolved active ID so it survives refresh even if
+    // it was resolved via the isDefault fallback (not from localStorage)
+    if (activeId) saveToLS('fovi_active_account', activeId);
     set({ accounts: merged, activeAccountId: activeId });
   },
 

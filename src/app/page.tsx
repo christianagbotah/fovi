@@ -1857,6 +1857,14 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
         // Auto-switch to the newly connected account
         if (newAccount?.id) {
           setActiveAccount(newAccount.id);
+          // Persist to DB so it survives page refresh
+          if (!newAccount.id.startsWith('local_')) {
+            fetch('/api/trading/accounts/switch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accountId: newAccount.id }),
+            }).catch(() => {});
+          }
         }
         setApiKey(''); setApiSecret(''); setPassphrase('');
         setConnectError('');
