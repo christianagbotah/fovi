@@ -2406,7 +2406,7 @@ export default function TradingDashboard() {
                   <Card className="flex-1 h-[500px] overflow-hidden flex flex-col">
                     <PriceChart autoTick />
                   </Card>
-                  <Card className="hidden lg:block w-80 h-[500px] overflow-hidden flex flex-col">
+                  <Card className="hidden lg:block w-80 h-[500px] overflow-hidden flex flex-col !gap-0 !py-0">
                     <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Sparkles className="h-4 w-4 text-amber-500" />
