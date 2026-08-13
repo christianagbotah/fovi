@@ -1003,3 +1003,23 @@ Stage Summary:
 - Key fix: selecting any real broker now auto-switches to Live Trading mode
 - Previous Invalid Sign (50113) error was also same root cause
 - Better UX: clear error messages guide users to fix credential issues
+
+---
+Task ID: fix-account-persistence
+Agent: main
+Task: Fix OKX broker connection not persisting after page reload
+
+Work Log:
+- Investigated the full account persistence flow: handleConnect → POST /api/trading/accounts → GET /api/trading/accounts → setAccounts → localStorage
+- Root cause: When DB is not connected (or even when it is but the GET is called before the account is fully written), the newly connected account was NEVER saved to localStorage. On reload, GET returns only the demo account, and the OKX account was lost.
+- Fixed `handleConnect` in page.tsx: After successful POST, immediately saves the new account to `localStorage.fovi_accounts`. Then merges localStorage accounts with API accounts before calling setAccounts.
+- Fixed `setAccounts` in trading-store.ts: Changed merge logic from `lsAccounts.length > accounts.length` (too restrictive) to always merge when localStorage accounts exist. Also persists merged result back to localStorage.
+- Fixed `loadData` useEffect in page.tsx: Changed from only calling setAccounts when `accData.length > 0` to always calling it (even with empty array) so localStorage fallback kicks in. Added else branch to load localStorage accounts when API fails.
+- Fixed `handleAddAccount` in account-switcher.tsx: Added localStorage persistence after successful account creation.
+- Tested with Agent Browser: Injected test OKX account → reload → shows OKX in header. Reload again → still OKX. Switch to DEMO → reload → still DEMO. Switch back to OKX → reload → still OKX. Clear localStorage → falls back to DEMO.
+
+Stage Summary:
+- Account persistence now works via localStorage as fallback, independent of DB availability
+- On VPS with PostgreSQL: DB is primary, localStorage is backup
+- On sandbox without DB: localStorage is the only persistence mechanism
+- All 4 files modified: page.tsx, trading-store.ts, account-switcher.tsx

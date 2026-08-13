@@ -164,6 +164,12 @@ export function AccountSwitcher() {
 
       if (res.ok) {
         const dbAccount = await res.json();
+        // Persist to localStorage as fallback for no-DB environments
+        try {
+          const existing = JSON.parse(localStorage.getItem(ACC_STORAGE_KEY) || '[]');
+          const filtered = existing.filter((a: any) => a.id !== dbAccount.id);
+          localStorage.setItem(ACC_STORAGE_KEY, JSON.stringify([dbAccount, ...filtered]));
+        } catch { /* quota */ }
         const updated = [...accounts, dbAccount];
         setAccounts(updated);
         setActiveAccount(dbAccount.id);

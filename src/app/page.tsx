@@ -1852,7 +1852,23 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
       });
       if (res.ok) {
         const newAccount = await res.json();
-        const accs = await (await fetch('/api/trading/accounts')).json();
+        // Save new account to localStorage immediately so it survives refresh
+        // even if the DB is not connected (sandbox / demo mode)
+        try {
+          const existing = JSON.parse(localStorage.getItem('fovi_accounts') || '[]');
+          const filtered = existing.filter((a: any) => a.id !== newAccount.id);
+          localStorage.setItem('fovi_accounts', JSON.stringify([newAccount, ...filtered]));
+        } catch { /* quota */ }
+        // Now refresh accounts from API and merge
+        let accs = await (await fetch('/api/trading/accounts')).json();
+        if (!Array.isArray(accs)) accs = [];
+        // Merge with localStorage-persisted accounts
+        try {
+          const lsAccs = JSON.parse(localStorage.getItem('fovi_accounts') || '[]');
+          const apiIds = new Set(accs.map((a: any) => a.id));
+          const localOnly = lsAccs.filter((a: any) => !apiIds.has(a.id));
+          if (localOnly.length > 0) accs = [...accs, ...localOnly];
+        } catch { /* ignore */ }
         setAccounts(accs);
         // Auto-switch to the newly connected account
         if (newAccount?.id) {
@@ -2329,9 +2345,15 @@ export default function TradingDashboard() {
         }
         if (accRes.ok) {
           const accData = await accRes.json();
-          if (Array.isArray(accData) && accData.length > 0) {
+          // Always call setAccounts — it merges localStorage accounts
+          // as fallback, so even empty API results load local accounts
+          if (Array.isArray(accData)) {
             setAccounts(accData);
           }
+        } else {
+          // API failed — still load localStorage accounts as fallback
+          const lsAccs = (() => { try { return JSON.parse(localStorage.getItem('fovi_accounts') || '[]'); } catch { return []; } })();
+          if (lsAccs.length > 0) setAccounts(lsAccs);
         }
         // Only set portfolio from API when AI bot is NOT running
         // (AI dashboard manages portfolio state via setPortfolio)
