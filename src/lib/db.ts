@@ -5,29 +5,20 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 /**
- * Determine the database URL. Supports SQLite (file:) and PostgreSQL.
- * If DATABASE_URL is not set, defaults to a local SQLite file.
+ * Validate that DATABASE_URL matches the Prisma schema provider (postgresql).
+ * On production VPS this must be a postgresql:// URL.
  */
-function getDatabaseUrl(): string {
+function isDatabaseUrlValid(): boolean {
   const url = process.env.DATABASE_URL || '';
-  if (url.startsWith('file:') || url.startsWith('sqlite:') ||
-      url.startsWith('postgresql://') || url.startsWith('postgres://')) {
-    return url;
-  }
-  // No DATABASE_URL set — default to local SQLite in the db/ folder
-  const defaultPath = 'file:./db/fovi.db';
-  console.warn(`[DB] No DATABASE_URL set — defaulting to SQLite: ${defaultPath}`);
-  return defaultPath;
+  return url.startsWith('postgresql://') || url.startsWith('postgres://');
 }
 
 let _dbFailed = false;
 let _db: PrismaClient | null = null;
 
-const dbUrl = getDatabaseUrl();
-if (!_dbFailed) {
+if (!_dbFailed && isDatabaseUrlValid()) {
   try {
     _db = new PrismaClient({
-      datasourceUrl: dbUrl,
       log: process.env.NODE_ENV === 'development' ? ['error'] : [],
     });
   } catch (e) {
@@ -35,6 +26,9 @@ if (!_dbFailed) {
     _db = null;
     console.warn('[DB] PrismaClient init failed:', e instanceof Error ? e.message : e);
   }
+} else if (!isDatabaseUrlValid()) {
+  _dbFailed = true;
+  console.warn('[DB] No DATABASE_URL found — running in demo mode. Set DATABASE_URL in .env to a postgresql:// connection string.');
 }
 
 export const db = _db;
