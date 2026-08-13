@@ -151,7 +151,7 @@ export function SignalsPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="absolute inset-0 flex flex-col">
       <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
         <span className="text-xs font-medium text-muted-foreground">
           {signals.length} active signals

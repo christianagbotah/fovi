@@ -2418,7 +2418,7 @@ export default function TradingDashboard() {
                         AI Powered
                       </Badge>
                     </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
+                    <div className="flex-1 min-h-0 overflow-hidden relative">
                       <SignalsPanel />
                     </div>
                   </Card>
@@ -2518,7 +2518,7 @@ export default function TradingDashboard() {
             {activeTab === 'signals' && (
               <motion.div key="signals" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full flex flex-col min-h-0 overflow-hidden">
-                <div className="flex-1 min-h-0 p-4" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
+                <div className="flex-1 min-h-0 p-4 relative" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
               </motion.div>
             )}
 
