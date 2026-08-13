@@ -1831,7 +1831,7 @@ function SecuritySettings() {
 // Settings Sheet
 // ============================================================
 function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { accounts, setAccounts, isAuthenticated } = useTradingStore();
+  const { accounts, setAccounts, setActiveAccount, isAuthenticated } = useTradingStore();
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
   const [broker, setBroker] = useState('alpaca');
@@ -1851,8 +1851,13 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
         body: JSON.stringify({ broker, accountType, apiKey, apiSecret, passphrase: requiresPassphrase ? passphrase : undefined }),
       });
       if (res.ok) {
+        const newAccount = await res.json();
         const accs = await (await fetch('/api/trading/accounts')).json();
         setAccounts(accs);
+        // Auto-switch to the newly connected account
+        if (newAccount?.id) {
+          setActiveAccount(newAccount.id);
+        }
         setApiKey(''); setApiSecret(''); setPassphrase('');
         setConnectError('');
         onOpenChange(false);
