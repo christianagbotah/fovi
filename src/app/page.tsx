@@ -15,7 +15,6 @@ import {
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
 import { AdminBrokersPanel } from '@/components/trading/admin-brokers-panel';
-import { AdminFinancePanel } from '@/components/trading/admin-finance-panel';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
 import { PriceChart } from '@/components/trading/price-chart';
 import { PositionsPanel } from '@/components/trading/positions-panel';
@@ -30,7 +29,6 @@ import { SentimentPanel } from '@/components/trading/sentiment-panel';
 import { CorrelationPanel } from '@/components/trading/correlation-panel';
 import { SessionsPanel } from '@/components/trading/sessions-panel';
 import { WebhookPanel } from '@/components/trading/webhook-panel';
-import { BotsPanel } from '@/components/trading/bots-panel';
 import { LeaderboardPanel } from '@/components/trading/leaderboard-panel';
 import { SignalDetailSheet } from '@/components/trading/signal-detail-sheet';
 import { PositionDetailSheet } from '@/components/trading/position-detail-sheet';
@@ -45,7 +43,6 @@ import { useMarketSocket } from '@/hooks/use-market-socket';
 import { useTradeNotifications } from '@/hooks/use-trade-notifications';
 import { PagePreloader } from '@/components/page-preloader';
 import { DemoBanner } from '@/components/trading/demo-banner';
-import { toast } from 'sonner';
 
 
 // ============================================================
@@ -1281,7 +1278,6 @@ function SecuritySettings() {
         {isAdmin && <SettingsTab id="admin-users" label="Users" icon={User} active={activeSection === 'admin-users'} onClick={() => { setActiveSection('admin-users'); loadAdminSubData(); }} />}
         {isAdmin && <SettingsTab id="admin-subs" label="Subs Mgmt" icon={Crown} active={activeSection === 'admin-subs'} onClick={() => { setActiveSection('admin-subs'); loadAdminSubData(); }} />}
         {isAdmin && <SettingsTab id="admin-brokers" label="Brokers" icon={Link2} active={activeSection === 'admin-brokers'} onClick={setActiveSection} />}
-        {isAdmin && <SettingsTab id="admin-finance" label="Revenue" icon={Wallet} active={activeSection === 'admin-finance'} onClick={setActiveSection} />}
       </div>
 
       {/* ====== SECURITY TAB ====== */}
@@ -1820,9 +1816,6 @@ function SecuritySettings() {
       {activeSection === 'admin-brokers' && isAdmin && (
         <AdminBrokersPanel />
       )}
-      {activeSection === 'admin-finance' && isAdmin && (
-        <AdminFinancePanel />
-      )}
     </div>
   );
 }
@@ -1852,32 +1845,30 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
       });
       if (res.ok) {
         const newAccount = await res.json();
-        // Save new account to localStorage immediately so it survives refresh
-        // even if the DB is not connected (sandbox / demo mode)
+        // Persist to localStorage immediately — survives refresh even without DB
         try {
           const existing = JSON.parse(localStorage.getItem('fovi_accounts') || '[]');
           const filtered = existing.filter((a: any) => a.id !== newAccount.id);
           localStorage.setItem('fovi_accounts', JSON.stringify([newAccount, ...filtered]));
         } catch { /* quota */ }
-        // Now refresh accounts from API and merge
-        let accs = await (await fetch('/api/trading/accounts')).json();
+        // Refresh and merge accounts from API with localStorage
+        let accs: any[] = [];
+        try { accs = await (await fetch('/api/trading/accounts')).json(); } catch { /* */ }
         if (!Array.isArray(accs)) accs = [];
-        // Merge with localStorage-persisted accounts
         try {
           const lsAccs = JSON.parse(localStorage.getItem('fovi_accounts') || '[]');
           const apiIds = new Set(accs.map((a: any) => a.id));
           const localOnly = lsAccs.filter((a: any) => !apiIds.has(a.id));
           if (localOnly.length > 0) accs = [...accs, ...localOnly];
-        } catch { /* ignore */ }
+        } catch { /* */ }
         setAccounts(accs);
         // Auto-switch to the newly connected account
         if (newAccount?.id) {
           setActiveAccount(newAccount.id);
-          // Persist to DB so it survives page refresh
+          // Also persist the switch in DB
           if (!newAccount.id.startsWith('local_')) {
             fetch('/api/trading/accounts/switch', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ accountId: newAccount.id }),
             }).catch(() => {});
           }
@@ -1926,9 +1917,9 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             <div>
               <h3 className="text-sm font-semibold mb-3">Connect Broker</h3>
               <div className="space-y-4 p-5 rounded-xl border border-border/50 bg-card">
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {(['alpaca', 'binance', 'okx', 'bybit', 'bitget', 'deriv'] as const).map(b => (
-                    <button key={b} onClick={() => { setBroker(b); setAccountType('live'); setConnectError(''); setPassphrase(''); }}
+                    <button key={b} onClick={() => { setBroker(b); if (b !== 'demo') setAccountType('live'); }}
                       className={`p-2.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
                         broker === b ? 'bg-primary/10 border-primary text-primary' : 'border-border hover:bg-accent'
                       }`}>
@@ -1966,16 +1957,18 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
                 </div>
 
                 {requiresPassphrase && (
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground font-medium">Passphrase</label>
-                  <input type="password" value={passphrase} onChange={e => setPassphrase(e.target.value)}
-                    placeholder={`Enter your ${broker.toUpperCase()} passphrase`}
-                    className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" />
-                </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground font-medium">Passphrase</label>
+                    <input type="password" value={passphrase} onChange={e => setPassphrase(e.target.value)}
+                      placeholder="Enter your passphrase"
+                      className="w-full h-10 px-3 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" />
+                  </div>
                 )}
 
                 {connectError && (
-                  <p className="text-xs text-red-500 bg-red-500/10 rounded-lg px-3 py-2">{connectError}</p>
+                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-xs">
+                    {connectError}
+                  </div>
                 )}
 
                 <Button onClick={handleConnect} disabled={connecting || !apiKey || !apiSecret || (requiresPassphrase && !passphrase)} className="w-full cursor-pointer">
@@ -2051,7 +2044,6 @@ function DesktopSidebar() {
     { id: 'sentiment', label: 'Sentiment', icon: Globe },
     { id: 'correlation', label: 'Correlation', icon: GitBranch },
     { id: 'sessions', label: 'Sessions', icon: Timer },
-    { id: 'bots', label: 'Bot Manager', icon: Bot },
     { id: 'webhook', label: 'Webhooks', icon: Activity },
   ];
 
@@ -2296,7 +2288,8 @@ export default function TradingDashboard() {
       }
     })();
     // If no accounts loaded yet, seed from localStorage
-    const { accounts: currentAccounts } = useTradingStore.getState();
+    // Also always restore the active account ID from localStorage
+    const { accounts: currentAccounts, setActiveAccount: doSetActive } = useTradingStore.getState();
     if (currentAccounts.length === 0) {
       try {
         const stored = localStorage.getItem('fovi_accounts');
@@ -2305,6 +2298,12 @@ export default function TradingDashboard() {
         }
       } catch { /* ignore */ }
     }
+    // Always restore active account from localStorage (survives all merge logic)
+    try {
+      const raw = localStorage.getItem('fovi_active_account');
+      const savedId = raw ? JSON.parse(raw) : null;
+      if (savedId) doSetActive(savedId);
+    } catch { /* ignore */ }
   }, []);
 
   // Simulate initial page load — show preloader for ~2s
@@ -2333,8 +2332,10 @@ export default function TradingDashboard() {
           fetch('/api/trading/portfolio'),
           fetch('/api/trading/market/symbols'),
         ]);
-        // Detect demo mode from response headers
-        if (accRes.headers.get('x-demo') === 'true') {
+        // Detect storage mode from response headers
+        const accStorage = accRes.headers.get('x-storage') || 'unknown';
+        const accIsDemo = accRes.headers.get('x-demo') === 'true';
+        if (accIsDemo) {
           useTradingStore.getState().setDemoMode(true);
         }
         if (portRes.headers.get('x-demo') === 'true') {
@@ -2345,15 +2346,36 @@ export default function TradingDashboard() {
         }
         if (accRes.ok) {
           const accData = await accRes.json();
-          // Always call setAccounts — it merges localStorage accounts
-          // as fallback, so even empty API results load local accounts
           if (Array.isArray(accData)) {
-            setAccounts(accData);
+            // When API is in demo/no-DB mode, merge with localStorage accounts
+            // instead of overwriting them. This preserves connected broker accounts.
+            if (accStorage === 'demo' || accStorage === 'none') {
+              const lsAccs = (() => { try { return JSON.parse(localStorage.getItem('fovi_accounts') || '[]'); } catch { return []; } })();
+              const realBrokerAccs = lsAccs.filter((a: any) => a.broker !== 'demo');
+              if (realBrokerAccs.length > 0) {
+                const apiIds = new Set(accData.map((a: any) => a.id));
+                const localOnly = realBrokerAccs.filter((a: any) => !apiIds.has(a.id));
+                setAccounts([...accData, ...localOnly]);
+              } else {
+                setAccounts(accData);
+              }
+            } else {
+              setAccounts(accData);
+            }
+            // CRITICAL: After any setAccounts call, restore the active account
+            // from localStorage. This prevents the API response from resetting
+            // the user's selected account back to the default/demo.
+            try {
+              const raw = localStorage.getItem('fovi_active_account');
+              const savedId = raw ? JSON.parse(raw) : null;
+              if (savedId) {
+                const store = useTradingStore.getState();
+                if (store.accounts.find((a: any) => a.id === savedId)) {
+                  store.setActiveAccount(savedId);
+                }
+              }
+            } catch { /* ignore */ }
           }
-        } else {
-          // API failed — still load localStorage accounts as fallback
-          const lsAccs = (() => { try { return JSON.parse(localStorage.getItem('fovi_accounts') || '[]'); } catch { return []; } })();
-          if (lsAccs.length > 0) setAccounts(lsAccs);
         }
         // Only set portfolio from API when AI bot is NOT running
         // (AI dashboard manages portfolio state via setPortfolio)
@@ -2472,7 +2494,7 @@ export default function TradingDashboard() {
                   <Card className="flex-1 h-[500px] overflow-hidden flex flex-col">
                     <PriceChart autoTick />
                   </Card>
-                  <Card className="hidden lg:block w-80 overflow-hidden flex flex-col" style={{ height: 500, padding: 0, gap: 0 }}>
+                  <Card className="hidden lg:block w-80 overflow-hidden">
                     <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Sparkles className="h-4 w-4 text-amber-500" />
@@ -2482,7 +2504,7 @@ export default function TradingDashboard() {
                         AI Powered
                       </Badge>
                     </div>
-                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                    <div className="h-[calc(100%-49px)] overflow-y-auto">
                       <SignalsPanel />
                     </div>
                   </Card>
@@ -2581,8 +2603,8 @@ export default function TradingDashboard() {
             {/* ====== SIGNALS TAB ====== */}
             {activeTab === 'signals' && (
               <motion.div key="signals" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full flex flex-col min-h-0 overflow-hidden">
-                <div className="flex-1 min-h-0 p-4 flex flex-col" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
+                exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.15 }} className="h-full">
+                <div className="p-4" style={{ paddingBottom: '100px' }}><SignalsPanel /></div>
               </motion.div>
             )}
 
@@ -2605,14 +2627,6 @@ export default function TradingDashboard() {
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 220px)' }}><OrderHistoryPanel /></div>
                 </Card>
-              </motion.div>
-            )}
-
-            {/* ====== BOT MANAGER TAB ====== */}
-            {activeTab === 'bots' && (
-              <motion.div key="bots" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }} className="h-full">
-                <div className="p-4" style={{ paddingBottom: '100px' }}><BotsPanel /></div>
               </motion.div>
             )}
 

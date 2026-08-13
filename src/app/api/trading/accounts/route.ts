@@ -1,15 +1,24 @@
 // POST: Create trading account, GET: List accounts
+// Production-ready: validates broker credentials even without DB,
+// returns proper account objects with clear headers indicating storage mode.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
 import { DemoBroker } from '@/lib/broker/demo';
-import { createBrokerFromAccount } from '@/lib/broker/factory';
+import { createBroker } from '@/lib/broker/factory';
 import { encrypt } from '@/lib/encryption';
 import { v4 as uuidv4 } from 'uuid';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
 
-// Demo fallback data — now includes allocation fields
+// ============================================================
+// Response headers to tell the frontend the storage mode
+// ============================================================
+const HEADERS_DB = { 'x-demo': 'false', 'x-storage': 'db' };
+const HEADERS_LOCAL = { 'x-demo': 'false', 'x-storage': 'local' };
+const HEADERS_DEMO = { 'x-demo': 'true', 'x-storage': 'none' };
+
+// Demo fallback data
 const makeDemoAccount = (overrides: Record<string, any> = {}) => ({
   id: 'demo_acc_1',
   userId: DEMO_USER_ID,
@@ -31,23 +40,58 @@ const makeDemoAccount = (overrides: Record<string, any> = {}) => ({
 
 const DEMO_ACCOUNTS = [makeDemoAccount()];
 
+/** Build a local-only account object (returned when DB is unavailable) */
+function makeLocalAccount(params: {
+  id: string;
+  broker: string;
+  accountType: string;
+  balance: number;
+  currency: string;
+  accountId?: string | null;
+}) {
+  const now = new Date().toISOString();
+  return {
+    id: params.id,
+    userId: DEMO_USER_ID,
+    broker: params.broker,
+    accountType: params.accountType,
+    accountId: params.accountId || null,
+    isDefault: false,
+    balance: params.balance,
+    linkedBalance: params.balance,
+    totalAllocated: 0,
+    totalRealizedProfit: 0,
+    currency: params.currency,
+    isActive: true,
+    lastSyncedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+// ============================================================
+// POST — Create / connect a trading account
+// ============================================================
 export async function POST(req: NextRequest) {
-  let broker = 'demo';
-  try {
-    const body = await req.json();
-    const id = uuidv4();
-    broker = body.broker || 'demo';
-    const accountType = body.accountType || 'demo';
-    const isLinked = broker !== 'demo';
+  const body = await req.json().catch(() => ({}));
+  const id = uuidv4();
+  const broker = body.broker || 'demo';
+  const accountType = body.accountType || 'demo';
+  const isRealBroker = broker !== 'demo';
+  const dbReady = !!(db && hasModel('tradingAccount'));
 
-    // Demo path: no validation or encryption needed
-    if (broker === 'demo') {
-      if (!db || !hasModel('tradingAccount')) {
-        return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 100000, linkedBalance: 100000 }), { headers: { 'x-demo': 'true' } });
-      }
+  // --------------------------------------------------------
+  // 1. Demo broker — simple path
+  // --------------------------------------------------------
+  if (!isRealBroker) {
+    if (!dbReady) {
+      return NextResponse.json(
+        makeDemoAccount({ id, broker, accountType, balance: 100000, linkedBalance: 100000 }),
+        { headers: HEADERS_DEMO },
+      );
+    }
+    try {
       const userId = await getUserId(req);
-
-      // --- Subscription limit check ---
       const accountCheck = await checkSubscriptionLimit(userId, 'maxAccounts');
       if (!accountCheck.allowed) {
         return NextResponse.json(
@@ -55,8 +99,7 @@ export async function POST(req: NextRequest) {
           { status: 403 },
         );
       }
-
-      const account = await db.tradingAccount.create({
+      const account = await db!.tradingAccount.create({
         data: {
           id, userId, broker, accountType,
           isDefault: body.isDefault || false,
@@ -66,21 +109,70 @@ export async function POST(req: NextRequest) {
           currency: body.currency || 'USD',
         },
       });
-      return NextResponse.json(account);
+      return NextResponse.json(account, { headers: HEADERS_DB });
+    } catch (error: any) {
+      console.error('[accounts POST] Demo DB error:', error);
+      return NextResponse.json(
+        { error: `Database error: ${error?.message || 'Unknown'}` },
+        { status: 500 },
+      );
     }
+  }
 
-    // Non-demo: encrypt credentials
-    const encryptedApiKey = body.apiKey ? await encrypt(body.apiKey) : null;
-    const encryptedApiSecret = body.apiSecret ? await encrypt(body.apiSecret) : null;
-    const encryptedPassphrase = body.passphrase ? await encrypt(body.passphrase) : null;
+  // --------------------------------------------------------
+  // 2. Real broker — ALWAYS validate credentials first
+  //    (regardless of DB availability)
+  // --------------------------------------------------------
+  let brokerInfo: { balance: number; currency: string; accountId?: string } | null = null;
+  let validationError: string | null = null;
 
-    if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 0, linkedBalance: 0 }), { headers: { 'x-demo': 'true' } });
-    }
+  try {
+    const brokerInstance = createBroker({
+      provider: broker as any,
+      accountId: id,
+      apiKey: body.apiKey || undefined,
+      apiSecret: body.apiSecret || undefined,
+      passphrase: body.passphrase || undefined,
+      isDemo: accountType === 'demo',
+    });
+    const info = await brokerInstance.getAccountInfo();
+    brokerInfo = { balance: info.balance, currency: info.currency, accountId: info.accountId };
+  } catch (err: any) {
+    validationError = err?.message || 'Broker validation failed';
+    console.warn(`[accounts POST] ${broker} validation failed:`, validationError);
+  }
 
+  // Validation failed — return a REAL error, never a fake account
+  if (!brokerInfo) {
+    return NextResponse.json(
+      { error: `Credential validation failed: ${validationError}` },
+      { status: 400 },
+    );
+  }
+
+  // --------------------------------------------------------
+  // 3. Credentials are valid. Try to save to DB.
+  //    If DB is unavailable, return a local-only account
+  //    with x-storage: local header so the frontend persists it.
+  // --------------------------------------------------------
+  if (!dbReady) {
+    // DB not available — return local account for frontend to persist
+    console.warn(`[accounts POST] DB not available, returning local account for ${broker}`);
+    const localAccount = makeLocalAccount({
+      id,
+      broker,
+      accountType,
+      balance: brokerInfo.balance,
+      currency: brokerInfo.currency,
+      accountId: brokerInfo.accountId,
+    });
+    return NextResponse.json(localAccount, { headers: HEADERS_LOCAL });
+  }
+
+  // DB is available — save with encrypted credentials
+  try {
     const userId = await getUserId(req);
 
-    // --- Subscription limit check ---
     const accountCheck = await checkSubscriptionLimit(userId, 'maxAccounts');
     if (!accountCheck.allowed) {
       return NextResponse.json(
@@ -89,100 +181,79 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create account with encrypted credentials
-    const account = await db.tradingAccount.create({
+    const encryptedApiKey = body.apiKey ? encrypt(body.apiKey) : null;
+    const encryptedApiSecret = body.apiSecret ? encrypt(body.apiSecret) : null;
+    const encryptedPassphrase = body.passphrase ? encrypt(body.passphrase) : null;
+
+    const account = await db!.tradingAccount.create({
       data: {
         id, userId, broker, accountType,
-        accountId: body.accountId,
+        accountId: brokerInfo.accountId || body.accountId || null,
         apiKey: encryptedApiKey,
         apiSecret: encryptedApiSecret,
         passphrase: encryptedPassphrase,
         isDefault: body.isDefault || false,
-        balance: 0,
-        linkedBalance: 0,
-        totalAllocated: 0, totalRealizedProfit: 0,
-        currency: body.currency || 'USD',
+        balance: brokerInfo.balance,
+        linkedBalance: brokerInfo.balance,
+        totalAllocated: 0,
+        totalRealizedProfit: 0,
+        currency: brokerInfo.currency,
       },
     });
 
-    // Validate credentials by calling the broker
-    try {
-      const brokerInstance = await createBrokerFromAccount({
-        broker,
-        accountType,
-        accountId: body.accountId || null,
-        apiKey: body.apiKey || null,
-        apiSecret: body.apiSecret || null,
-        passphrase: body.passphrase || null,
-        id,
-      });
-      const info = await brokerInstance.getAccountInfo();
-
-      // Update account with real balance from broker
-      const updatedAccount = await db.tradingAccount.update({
-        where: { id },
-        data: {
-          balance: info.balance,
-          linkedBalance: info.balance,
-          currency: info.currency,
-        },
-      });
-      return NextResponse.json(updatedAccount);
-    } catch (validationError: any) {
-      // Validation failed — delete the account
-      try { await db.tradingAccount.delete({ where: { id } }); } catch { /* best effort */ }
-      return NextResponse.json(
-        { error: `Credential validation failed: ${validationError?.message || 'Unknown error'}` },
-        { status: 400 }
-      );
-    }
-  } catch (error: any) {
-    console.error('[accounts POST] Error:', error);
-    // Only fall back to demo for demo broker type
-    if (broker === 'demo') {
-      return NextResponse.json(makeDemoAccount({ id: uuidv4() }), { headers: { 'x-demo': 'true' } });
-    }
-    return NextResponse.json(
-      { error: `Failed to create account: ${error?.message || 'Unknown error'}` },
-      { status: 500 }
-    );
+    return NextResponse.json(account, { headers: HEADERS_DB });
+  } catch (dbError: any) {
+    // DB write failed after successful validation — return local account
+    console.error(`[accounts POST] DB write failed for ${broker}:`, dbError);
+    const localAccount = makeLocalAccount({
+      id,
+      broker,
+      accountType,
+      balance: brokerInfo.balance,
+      currency: brokerInfo.currency,
+      accountId: brokerInfo.accountId,
+    });
+    return NextResponse.json(localAccount, { headers: HEADERS_LOCAL });
   }
 }
 
+// ============================================================
+// GET — List all trading accounts
+// ============================================================
 export async function GET(req: NextRequest) {
   try {
     if (!db || !hasModel('tradingAccount')) {
-      // Enrich demo accounts with live broker balance
       const broker = new DemoBroker({ provider: 'demo', isDemo: true });
       const info = await broker.getAccountInfo();
-      return NextResponse.json([makeDemoAccount({ balance: info.balance, linkedBalance: info.balance })], { headers: { 'x-demo': 'true' } });
+      return NextResponse.json(
+        [makeDemoAccount({ balance: info.balance, linkedBalance: info.balance })],
+        { headers: HEADERS_DEMO },
+      );
     }
 
     const userId = await getUserId(req);
-
-    // Ensure demo user row exists for FK constraints
     await ensureDemoUser();
 
     // Ensure demo account exists
     try {
-      const existing = await db.tradingAccount.findFirst({
+      const existing = await db!.tradingAccount.findFirst({
         where: { userId, accountType: 'demo', broker: 'demo' },
       });
       if (!existing) {
-        const count = await db.tradingAccount.count({ where: { userId } });
-        await db.tradingAccount.create({
+        const count = await db!.tradingAccount.count({ where: { userId } });
+        await db!.tradingAccount.create({
           data: { userId, broker: 'demo', accountType: 'demo', isDefault: count === 0, balance: 100000, linkedBalance: 100000, currency: 'USD' },
         });
       }
     } catch { /* seed may fail, ok */ }
 
-    const accounts = await db.tradingAccount.findMany({
+    const accounts = await db!.tradingAccount.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
-    return NextResponse.json(accounts);
+    return NextResponse.json(accounts, { headers: HEADERS_DB });
   } catch (error) {
     console.warn('[accounts GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_ACCOUNTS, { headers: { 'x-demo': 'true' } });
+    return NextResponse.json(DEMO_ACCOUNTS, { headers: HEADERS_DEMO });
   }
 }
