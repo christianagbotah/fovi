@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       }, { headers: { 'x-demo': 'true' } });
     }
 
-    const broker = createBrokerFromAccount(account);
+    const broker = await createBrokerFromAccount(account);
     const info = await broker.getAccountInfo();
     const positions = await broker.getPositions();
 

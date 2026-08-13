@@ -38,7 +38,7 @@ export async function DELETE(
     }
 
     // Create broker and cancel the order
-    const broker = createBrokerFromAccount(order.account);
+    const broker = await createBrokerFromAccount(order.account);
     await broker.cancelOrder(order.symbol, order.brokerOrderId || order.id);
 
     // Update order status in DB

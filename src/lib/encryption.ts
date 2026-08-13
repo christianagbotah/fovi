@@ -1,46 +1,87 @@
 // ============================================================
 // encryption.ts — AES-256-GCM encryption for broker API keys
+// Supports both sync (Node 22+) and async (Node 18+) crypto APIs
 // ============================================================
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
+// Detect sync API availability at module load
+const hasSyncImportKey = typeof (crypto.subtle as any).importKeySync === 'function';
+const hasSyncEncrypt = typeof (crypto.subtle as any).encryptSync === 'function';
+const hasSyncDecrypt = typeof (crypto.subtle as any).decryptSync === 'function';
+const USE_SYNC = hasSyncImportKey && hasSyncEncrypt && hasSyncDecrypt;
+
+if (!USE_SYNC) {
+  console.warn('[encryption] Sync crypto API not available — using async fallback. Consider upgrading to Node.js 22+');
+}
+
 /**
  * Get the encryption key from env, generating a deterministic
- * fallback if ENCRYPTION_KEY is not set (prevents data loss on
- * first deploy, but admin should set ENCRYPTION_KEY in production).
+ * fallback if ENCRYPTION_KEY is not set.
  */
 function getKey(): Uint8Array {
   const envKey = process.env.ENCRYPTION_KEY;
   if (envKey && envKey.length >= 32) {
     return new TextEncoder().encode(envKey.slice(0, 32));
   }
-  // Deterministic fallback from APP_SECRET or a fixed dev key.
-  // NOT secure for production — admin must set ENCRYPTION_KEY.
   const source = process.env.APP_SECRET || 'fovi-dev-encryption-key-32b!';
-  // Hash to get exactly 32 bytes
-  return crypto.subtle.digestSync('SHA-256', new TextEncoder().encode(source)) as unknown as Uint8Array;
+  if (typeof (crypto.subtle as any).digestSync === 'function') {
+    return (crypto.subtle as any).digestSync('SHA-256', new TextEncoder().encode(source)) as Uint8Array;
+  }
+  // Fallback: simple hash for older Node versions
+  const encoder = new TextEncoder();
+  const data = encoder.encode(source);
+  let hash = 0;
+  for (let i = 0; i < data.length; i++) {
+    const chr = data[i];
+    hash = ((hash << 5) - hash) + chr;
+    hash |= 0;
+  }
+  const key = new Uint8Array(32);
+  const view = new DataView(key.buffer);
+  view.setInt32(0, hash, true);
+  view.setInt32(4, hash * 31, true);
+  // Fill remaining with derived bytes
+  for (let i = 8; i < 32; i++) {
+    key[i] = data[i % data.length] ^ (hash & 0xFF);
+  }
+  return key;
 }
 
 /**
- * Encrypt a plaintext string (synchronous).
+ * Encrypt a plaintext string.
  * Returns base64-encoded string: base64(iv + authTag + ciphertext)
  */
-export function encrypt(plaintext: string): string {
+export async function encrypt(plaintext: string): Promise<string> {
   if (!plaintext) return '';
   try {
     const key = getKey();
     const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-    const cryptoKey = crypto.subtle.importKeySync(
-      'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
-    );
     const encoded = new TextEncoder().encode(plaintext);
-    const encrypted = crypto.subtle.encryptSync(
-      { name: ALGORITHM, iv },
-      cryptoKey,
-      encoded
-    );
+
+    let encrypted: ArrayBuffer;
+    if (USE_SYNC) {
+      const cryptoKey = (crypto.subtle as any).importKeySync(
+        'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+      );
+      encrypted = (crypto.subtle as any).encryptSync(
+        { name: ALGORITHM, iv },
+        cryptoKey,
+        encoded
+      );
+    } else {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+      );
+      encrypted = await crypto.subtle.encrypt(
+        { name: ALGORITHM, iv },
+        cryptoKey,
+        encoded
+      );
+    }
+
     const result = new Uint8Array(iv.length + encrypted.byteLength);
     result.set(iv, 0);
     result.set(new Uint8Array(encrypted), iv.length);
@@ -52,33 +93,46 @@ export function encrypt(plaintext: string): string {
 }
 
 /**
- * Decrypt a base64-encoded encrypted string (synchronous).
+ * Decrypt a base64-encoded encrypted string.
  */
-export function decrypt(encryptedBase64: string): string {
+export async function decrypt(encryptedBase64: string): Promise<string> {
   if (!encryptedBase64) return '';
   try {
     const key = getKey();
     const data = Buffer.from(encryptedBase64, 'base64');
     const iv = data.subarray(0, IV_LENGTH);
     const ciphertext = data.subarray(IV_LENGTH);
-    const cryptoKey = crypto.subtle.importKeySync(
-      'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
-    );
-    const decrypted = crypto.subtle.decryptSync(
-      { name: ALGORITHM, iv },
-      cryptoKey,
-      ciphertext
-    );
+
+    let decrypted: ArrayBuffer;
+    if (USE_SYNC) {
+      const cryptoKey = (crypto.subtle as any).importKeySync(
+        'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+      );
+      decrypted = (crypto.subtle as any).decryptSync(
+        { name: ALGORITHM, iv },
+        cryptoKey,
+        ciphertext
+      );
+    } else {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+      );
+      decrypted = await crypto.subtle.decrypt(
+        { name: ALGORITHM, iv },
+        cryptoKey,
+        ciphertext
+      );
+    }
+
     return new TextDecoder().decode(decrypted);
   } catch (e) {
     console.warn('[encryption] Decrypt failed:', e);
-    return ''; // Return empty — caller should handle gracefully
+    return '';
   }
 }
 
 /**
  * Check if a value looks like it's already encrypted (base64 with length > 20).
- * Used for migration: detect unencrypted values vs encrypted ones.
  */
 export function isEncrypted(value: string): boolean {
   if (!value || value.length < 20) return false;

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Plus, Trash2, ChevronDown, Check, Wallet,
+  Plus, Trash2, ChevronDown, Check, Wallet, Loader2,
   Briefcase, Zap, Landmark, ShieldCheck, Shield, KeyRound, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -138,8 +138,13 @@ export function AccountSwitcher() {
     }
   };
 
+  const [linking, setLinking] = useState(false);
+
   const handleAddAccount = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (linking) return;
+    setLinking(true);
+
     const form = e.currentTarget;
     const data = new FormData(form);
     const broker = data.get('broker') as string || 'demo';
@@ -149,10 +154,8 @@ export function AccountSwitcher() {
     const passphrase = (data.get('passphrase') as string) || null;
 
     const isDemo = broker === 'demo';
-    const balance = isDemo ? 100000 : 0;
 
     try {
-      // Create account in DB and get the real account with DB-generated ID
       const res = await fetch('/api/trading/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -161,28 +164,27 @@ export function AccountSwitcher() {
 
       if (res.ok) {
         const dbAccount = await res.json();
-        // Use the DB account (has real ID, validated fields)
         const updated = [...accounts, dbAccount];
         setAccounts(updated);
         setActiveAccount(dbAccount.id);
-        // Persist as default in DB so it survives refresh
         fetch('/api/trading/accounts/switch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ accountId: dbAccount.id }),
         }).catch(() => {});
         toast.success(isDemo ? 'Demo account created' : 'Broker account linked successfully');
+        setShowAddDialog(false);
+        setBrokerType('demo');
       } else {
-        // API returned an error — show the real error message
         const errData = await res.json().catch(() => ({}));
         toast.error(errData?.error || `Failed to link ${broker} account`);
       }
-    } catch {
-      toast.error('Failed to create account. Check your connection.');
+    } catch (err: any) {
+      console.error('[Link Account]', err);
+      toast.error(err?.message || 'Failed to create account. Check your connection.');
+    } finally {
+      setLinking(false);
     }
-
-    setShowAddDialog(false);
-    setBrokerType('demo');
   };
 
   const handleDelete = async (id: string) => {
@@ -513,8 +515,9 @@ export function AccountSwitcher() {
               )}
             </AnimatePresence>
 
-            <Button type="submit" className="w-full cursor-pointer">
-              {brokerType === 'demo' ? 'Create Demo Account' : 'Link Broker Account'}
+            <Button type="submit" disabled={linking} className="w-full cursor-pointer">
+              {linking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {linking ? 'Connecting...' : brokerType === 'demo' ? 'Create Demo Account' : 'Link Broker Account'}
             </Button>
           </form>
         </DialogContent>

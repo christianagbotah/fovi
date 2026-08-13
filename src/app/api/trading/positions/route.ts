@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
     if (!account) return NextResponse.json([], { headers: { 'x-demo': 'true' } });
 
     const isDemo = account.broker === 'demo' || account.accountType === 'demo';
-    const broker = createBrokerFromAccount(account);
+    const broker = await createBrokerFromAccount(account);
     const brokerPositions = await broker.getPositions();
 
     // Load in-memory SL/TP overrides for demo accounts

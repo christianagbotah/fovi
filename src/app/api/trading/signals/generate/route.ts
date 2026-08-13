@@ -129,7 +129,7 @@ async function getCandlesForSymbol(symbol: string, timeframe: string, limit: num
       if (userId) {
         const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
         if (account) {
-          const broker = createBrokerFromAccount(account);
+          const broker = await createBrokerFromAccount(account);
           const brokerCandles = await broker.getCandles(symbol, timeframe, limit);
           if (brokerCandles && brokerCandles.length >= 30) return brokerCandles;
         }
@@ -156,7 +156,7 @@ async function getPriceForSymbol(symbol: string): Promise<number> {
       if (userId) {
         const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
         if (account) {
-          const broker = createBrokerFromAccount(account);
+          const broker = await createBrokerFromAccount(account);
           return await broker.getPrice(symbol);
         }
       }

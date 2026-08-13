@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({ where: whereClause });
     if (!account) return NextResponse.json({ error: 'No account found' }, { status: 400, headers: { 'x-demo': 'true' } });
 
-    const broker = createBrokerFromAccount(account);
+    const broker = await createBrokerFromAccount(account);
     const result = await broker.placeOrder({
       symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
     });

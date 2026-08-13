@@ -87,7 +87,7 @@ export async function DELETE(
     }
 
     // Close via broker
-    const broker = createBrokerFromAccount(position.account);
+    const broker = await createBrokerFromAccount(position.account);
     const result = await broker.closePosition(position.symbol);
 
     // Calculate realized PnL

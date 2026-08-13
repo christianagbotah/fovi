@@ -69,9 +69,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Non-demo: encrypt credentials
-    const encryptedApiKey = body.apiKey ? encrypt(body.apiKey) : null;
-    const encryptedApiSecret = body.apiSecret ? encrypt(body.apiSecret) : null;
-    const encryptedPassphrase = body.passphrase ? encrypt(body.passphrase) : null;
+    const encryptedApiKey = body.apiKey ? await encrypt(body.apiKey) : null;
+    const encryptedApiSecret = body.apiSecret ? await encrypt(body.apiSecret) : null;
+    const encryptedPassphrase = body.passphrase ? await encrypt(body.passphrase) : null;
 
     if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(makeDemoAccount({ id, broker, accountType, balance: 0, linkedBalance: 0 }), { headers: { 'x-demo': 'true' } });
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
 
     // Validate credentials by calling the broker
     try {
-      const brokerInstance = createBrokerFromAccount({
+      const brokerInstance = await createBrokerFromAccount({
         broker,
         accountType,
         accountId: body.accountId || null,

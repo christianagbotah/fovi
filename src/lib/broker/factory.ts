@@ -113,7 +113,7 @@ export function createBroker(config: BrokerConfig): IBroker {
   return new DemoBroker(config);
 }
 
-export function createBrokerFromAccount(account: {
+export async function createBrokerFromAccount(account: {
   broker: string;
   accountType: string;
   accountId: string | null;
@@ -121,13 +121,17 @@ export function createBrokerFromAccount(account: {
   apiSecret: string | null;
   passphrase?: string | null;
   id: string;
-}): IBroker {
+}): Promise<IBroker> {
+  const decryptedApiKey = account.apiKey ? (await decrypt(account.apiKey)) || account.apiKey : undefined;
+  const decryptedSecret = account.apiSecret ? (await decrypt(account.apiSecret)) || account.apiSecret : undefined;
+  const decryptedPassphrase = account.passphrase ? (await decrypt(account.passphrase)) || account.passphrase : undefined;
+
   const config: BrokerConfig = {
     provider: (account.broker || 'demo') as BrokerConfig['provider'],
     accountId: account.id,
-    apiKey: account.apiKey ? decrypt(account.apiKey) || account.apiKey : undefined,
-    apiSecret: account.apiSecret ? decrypt(account.apiSecret) || account.apiSecret : undefined,
-    passphrase: account.passphrase ? decrypt(account.passphrase) || account.passphrase : undefined,
+    apiKey: decryptedApiKey,
+    apiSecret: decryptedSecret,
+    passphrase: decryptedPassphrase,
     isDemo: account.accountType === 'demo',
   };
   return createBroker(config);
