@@ -30,7 +30,7 @@ import {
 
 const PORT = 3012;
 const POLL_INTERVAL_MS = 60_000; // 60 seconds
-const NEXTJS_API = 'http://localhost:3000';
+const NEXTJS_API = 'http://localhost:3002';
 
 // ============================================================
 // PostgreSQL Connection (for Bot table queries)
