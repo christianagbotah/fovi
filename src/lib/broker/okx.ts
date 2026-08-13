@@ -360,8 +360,9 @@ export class OkxBroker implements IBroker {
   ): Promise<T> {
     const timestamp = new Date().toISOString();
     // OKX prehash = timestamp + METHOD + requestPath + body
-    // (requestPath must include the query string for GET requests.)
-    const prehash = `${timestamp}${method.toUpperCase()}${path}${body || ''}`;
+    // requestPath MUST include /api/v5 prefix (per OKX docs)
+    const requestPath = `/api/v5${path}`;
+    const prehash = `${timestamp}${method.toUpperCase()}${requestPath}${body || ''}`;
     const signature = await this.sign(prehash);
 
     const headers: Record<string, string> = {
