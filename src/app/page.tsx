@@ -45,6 +45,7 @@ import { useMarketSocket } from '@/hooks/use-market-socket';
 import { useTradeNotifications } from '@/hooks/use-trade-notifications';
 import { PagePreloader } from '@/components/page-preloader';
 import { DemoBanner } from '@/components/trading/demo-banner';
+import { toast } from 'sonner';
 
 
 // ============================================================
@@ -1855,12 +1856,17 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
         setApiKey(''); setApiSecret(''); setPassphrase('');
         setConnectError('');
         onOpenChange(false);
+        toast.success(`${broker.charAt(0).toUpperCase() + broker.slice(1)} account connected successfully`);
       } else {
         const data = await res.json().catch(() => ({}));
-        setConnectError(data.error || `Connection failed (${res.status})`);
+        const msg = data.error || `Connection failed (${res.status})`;
+        setConnectError(msg);
+        toast.error(msg);
       }
     } catch {
-      setConnectError('Network error. Check your connection.');
+      const msg = 'Network error. Check your connection.';
+      setConnectError(msg);
+      toast.error(msg);
     } finally { setConnecting(false); }
   };
 
