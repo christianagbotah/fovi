@@ -247,16 +247,32 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       if (localOnly.length > 0) {
         merged = [...accounts, ...localOnly];
       }
-      // Also persist the final merged list back to localStorage
-      // so it stays in sync with the API
+      // Persist the final merged list back to localStorage
       saveToLS('fovi_accounts', merged);
     }
-    const savedActiveId = loadFromLS<string | null>('fovi_active_account', null);
-    const activeId = savedActiveId && merged.find(a => a.id === savedActiveId)
-      ? savedActiveId
-      : merged.find(a => a.isDefault)?.id || merged[0]?.id || null;
-    // Persist resolved active ID so it survives refresh even if
-    // it was resolved via the isDefault fallback (not from localStorage)
+
+    // ============================================================
+    // CRITICAL: Preserve the current active account if it still
+    // exists in the merged list.  Only fall back to localStorage/
+    // isDefault when there is NO valid active account yet.
+    // This prevents multiple setAccounts calls (hydration + loadData
+    // + polling) from racing and resetting the user's selection.
+    // ============================================================
+    const currentActive = get().activeAccountId;
+    let activeId: string | null = null;
+
+    if (currentActive && merged.find(a => a.id === currentActive)) {
+      // Current selection is still valid — keep it
+      activeId = currentActive;
+    } else {
+      // Nothing valid yet — resolve from localStorage, then isDefault
+      const savedActiveId = loadFromLS<string | null>('fovi_active_account', null);
+      activeId = savedActiveId && merged.find(a => a.id === savedActiveId)
+        ? savedActiveId
+        : merged.find(a => a.isDefault)?.id || merged[0]?.id || null;
+    }
+
+    // Persist the resolved ID so it survives refresh
     if (activeId) saveToLS('fovi_active_account', activeId);
     set({ accounts: merged, activeAccountId: activeId });
   },
