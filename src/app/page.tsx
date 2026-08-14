@@ -2347,6 +2347,10 @@ export default function TradingDashboard() {
         if (accRes.ok) {
           const accData = await accRes.json();
           if (Array.isArray(accData)) {
+            // DB tells us which account is active via x-active-account header.
+            // This is the single source of truth — no localStorage guessing.
+            const dbActiveId = accRes.headers.get('x-active-account') || null;
+
             // When API is in demo/no-DB mode, merge with localStorage accounts
             // instead of overwriting them. This preserves connected broker accounts.
             if (accStorage === 'demo' || accStorage === 'none') {
@@ -2355,26 +2359,13 @@ export default function TradingDashboard() {
               if (realBrokerAccs.length > 0) {
                 const apiIds = new Set(accData.map((a: any) => a.id));
                 const localOnly = realBrokerAccs.filter((a: any) => !apiIds.has(a.id));
-                setAccounts([...accData, ...localOnly]);
+                setAccounts([...accData, ...localOnly], dbActiveId);
               } else {
-                setAccounts(accData);
+                setAccounts(accData, dbActiveId);
               }
             } else {
-              setAccounts(accData);
+              setAccounts(accData, dbActiveId);
             }
-            // CRITICAL: After any setAccounts call, restore the active account
-            // from localStorage. This prevents the API response from resetting
-            // the user's selected account back to the default/demo.
-            try {
-              const raw = localStorage.getItem('fovi_active_account');
-              const savedId = raw ? JSON.parse(raw) : null;
-              if (savedId) {
-                const store = useTradingStore.getState();
-                if (store.accounts.find((a: any) => a.id === savedId)) {
-                  store.setActiveAccount(savedId);
-                }
-              }
-            } catch { /* ignore */ }
           }
         }
         // Only set portfolio from API when AI bot is NOT running

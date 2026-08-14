@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(localAccount, { headers: HEADERS_LOCAL });
   }
 
-  // DB is available — save with encrypted credentials
+  // DB is available — save with encrypted credentials and auto-switch to it
   try {
     const userId = await getUserId(req);
 
@@ -185,6 +185,13 @@ export async function POST(req: NextRequest) {
     const encryptedApiSecret = body.apiSecret ? encrypt(body.apiSecret) : null;
     const encryptedPassphrase = body.passphrase ? encrypt(body.passphrase) : null;
 
+    // Auto-switch: new broker becomes the default (active) account in DB.
+    // This makes the DB the single source of truth for the active account.
+    await db!.tradingAccount.updateMany({
+      where: { userId },
+      data: { isDefault: false },
+    });
+
     const account = await db!.tradingAccount.create({
       data: {
         id, userId, broker, accountType,
@@ -192,7 +199,7 @@ export async function POST(req: NextRequest) {
         apiKey: encryptedApiKey,
         apiSecret: encryptedApiSecret,
         passphrase: encryptedPassphrase,
-        isDefault: body.isDefault || false,
+        isDefault: true, // newly connected broker is automatically active
         balance: brokerInfo.balance,
         linkedBalance: brokerInfo.balance,
         totalAllocated: 0,
@@ -251,7 +258,17 @@ export async function GET(req: NextRequest) {
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
-    return NextResponse.json(accounts, { headers: HEADERS_DB });
+
+    // The account with isDefault=true is the active one — DB is the
+    // single source of truth.  Frontend reads this header to set the
+    // correct activeAccountId without relying on localStorage.
+    const defaultAccount = accounts.find(a => a.isDefault);
+    const headers: Record<string, string> = { ...HEADERS_DB };
+    if (defaultAccount) {
+      headers['x-active-account'] = defaultAccount.id;
+    }
+
+    return NextResponse.json(accounts, { headers });
   } catch (error) {
     console.warn('[accounts GET] DB error, using fallback:', error);
     return NextResponse.json(DEMO_ACCOUNTS, { headers: HEADERS_DEMO });

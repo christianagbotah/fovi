@@ -133,7 +133,7 @@ interface TradingState {
   accounts: TradingAccount[];
   activeAccountId: string | null;
   setActiveAccount: (id: string) => void;
-  setAccounts: (accounts: TradingAccount[]) => void;
+  setAccounts: (accounts: TradingAccount[], dbActiveId?: string | null) => void;
 
   // Market
   watchlist: MarketSymbol[];
@@ -236,9 +236,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     set({ activeAccountId: id });
     saveToLS('fovi_active_account', id);
   },
-  setAccounts: (accounts) => {
-    // Merge with locally-persisted accounts from localStorage.
-    // This ensures broker connections survive refresh even without a DB.
+  setAccounts: (accounts, dbActiveId) => {
+    // ----------------------------------------------------------
+    // 1. Merge with any localStorage-only accounts (no-DB fallback)
+    // ----------------------------------------------------------
     const lsAccounts = loadFromLS<TradingAccount[] | null>('fovi_accounts', null);
     let merged = accounts;
     if (lsAccounts && lsAccounts.length > 0) {
@@ -247,32 +248,39 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       if (localOnly.length > 0) {
         merged = [...accounts, ...localOnly];
       }
-      // Persist the final merged list back to localStorage
+      // Keep localStorage in sync
       saveToLS('fovi_accounts', merged);
     }
 
-    // ============================================================
-    // CRITICAL: Preserve the current active account if it still
-    // exists in the merged list.  Only fall back to localStorage/
-    // isDefault when there is NO valid active account yet.
-    // This prevents multiple setAccounts calls (hydration + loadData
-    // + polling) from racing and resetting the user's selection.
-    // ============================================================
-    const currentActive = get().activeAccountId;
+    // ----------------------------------------------------------
+    // 2. Resolve the active account — priority order:
+    //    a) dbActiveId  — from the DB isDefault (authoritative)
+    //    b) currentActive — already set in this session
+    //    c) localStorage fallback (for no-DB / demo mode)
+    //    d) isDefault field, then first account
+    // ----------------------------------------------------------
     let activeId: string | null = null;
 
-    if (currentActive && merged.find(a => a.id === currentActive)) {
-      // Current selection is still valid — keep it
-      activeId = currentActive;
-    } else {
-      // Nothing valid yet — resolve from localStorage, then isDefault
-      const savedActiveId = loadFromLS<string | null>('fovi_active_account', null);
-      activeId = savedActiveId && merged.find(a => a.id === savedActiveId)
-        ? savedActiveId
-        : merged.find(a => a.isDefault)?.id || merged[0]?.id || null;
+    // (a) DB told us which account is active
+    if (dbActiveId && merged.find(a => a.id === dbActiveId)) {
+      activeId = dbActiveId;
+    }
+    // (b) Already have a valid active in this session
+    else {
+      const currentActive = get().activeAccountId;
+      if (currentActive && merged.find(a => a.id === currentActive)) {
+        activeId = currentActive;
+      }
+      // (c) Fall back to localStorage (demo / no-DB environments)
+      else {
+        const savedActiveId = loadFromLS<string | null>('fovi_active_account', null);
+        activeId = savedActiveId && merged.find(a => a.id === savedActiveId)
+          ? savedActiveId
+          : merged.find(a => a.isDefault)?.id || merged[0]?.id || null;
+      }
     }
 
-    // Persist the resolved ID so it survives refresh
+    // Cache to localStorage for instant hydration on next mount
     if (activeId) saveToLS('fovi_active_account', activeId);
     set({ accounts: merged, activeAccountId: activeId });
   },
