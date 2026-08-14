@@ -2340,14 +2340,15 @@ export default function TradingDashboard() {
         ]);
         // Detect storage mode from response headers
         const accStorage = accRes.headers.get('x-storage') || 'unknown';
-        const accIsDemo = accRes.headers.get('x-demo') === 'true';
-        if (accIsDemo) {
+        // Any DB-backed response with x-demo:false clears demo mode
+        if (accRes.headers.get('x-demo') === 'false' && accStorage === 'db') {
+          useTradingStore.getState().setDemoMode(false);
+        } else if (accRes.headers.get('x-demo') === 'true') {
           useTradingStore.getState().setDemoMode(true);
         }
-        if (portRes.headers.get('x-demo') === 'true') {
-          useTradingStore.getState().setDemoMode(true);
-        }
-        if (symRes.headers.get('x-demo') === 'true') {
+        if (portRes.headers.get('x-demo') === 'false') {
+          useTradingStore.getState().setDemoMode(false);
+        } else if (portRes.headers.get('x-demo') === 'true') {
           useTradingStore.getState().setDemoMode(true);
         }
         if (accRes.ok) {

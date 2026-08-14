@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({
       where: accountId ? { id: accountId, userId } : { userId, isDefault: true },
     });
-    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'true' } });
+    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'false', 'x-storage': 'db' } });
 
     const isDemo = account.broker === 'demo' || account.accountType === 'demo';
     const broker = await createBrokerFromAccount(account);

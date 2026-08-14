@@ -31,14 +31,14 @@ export async function apiFetch<T = any>(
 
   const res = await fetch(url, { ...options, headers });
 
-  // Detect x-demo header
-  const isDemo = res.headers.get('x-demo') === 'true';
-  if (isDemo) {
-    // Use requestAnimationFrame to avoid setState during render
+  // Detect x-demo header — two-way: can turn demo ON or OFF
+  const demoHeader = res.headers.get('x-demo');
+  if (demoHeader === 'true' || demoHeader === 'false') {
+    const isDemo = demoHeader === 'true';
     if (typeof window !== 'undefined') {
       requestAnimationFrame(() => {
         const store = useTradingStore.getState();
-        if (!store.demoMode) store.setDemoMode(true);
+        if (store.demoMode !== isDemo) store.setDemoMode(isDemo);
       });
     }
   }

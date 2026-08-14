@@ -19,11 +19,12 @@ export async function GET(req: NextRequest) {
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
     if (!account) {
+      // No account found but DB is working — not demo mode, just empty
       return NextResponse.json({
         totalBalance: 0, totalPnl: 0, totalPnlPercent: 0,
         dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
         activeSignals: 0, winRate: 0, totalTrades: 0,
-      }, { headers: { 'x-demo': 'true' } });
+      }, { headers: { 'x-demo': 'false', 'x-storage': 'db' } });
     }
 
     const broker = await createBrokerFromAccount(account);
@@ -62,13 +63,13 @@ export async function GET(req: NextRequest) {
       activeSignals,
       winRate,
       totalTrades,
-    });
+    }, { headers: { 'x-demo': 'false', 'x-storage': 'db' } });
   } catch (error) {
     console.warn('[portfolio GET] error:', error);
     return NextResponse.json({
       totalBalance: 100000, totalPnl: 0, totalPnlPercent: 0,
       dayPnl: 0, dayPnlPercent: 0, openPositions: 0,
       activeSignals: 0, winRate: 0, totalTrades: 0,
-    }, { headers: { 'x-demo': 'true' } });
+    }, { headers: { 'x-demo': 'true', 'x-storage': 'error' } });
   }
 }
