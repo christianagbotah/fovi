@@ -1023,3 +1023,19 @@ Stage Summary:
 - On VPS with PostgreSQL: DB is primary, localStorage is backup
 - On sandbox without DB: localStorage is the only persistence mechanism
 - All 4 files modified: page.tsx, trading-store.ts, account-switcher.tsx
+---
+Task ID: deploy-fix
+Agent: main
+Task: Diagnose why VPS still shows old behavior after git pull
+
+Work Log:
+- Verified all fix code is present locally in route.ts, page.tsx, trading-store.ts
+- Checked git log: fix commit `eaa315f` IS pushed to origin/main
+- User ran `git pull && pm2 delete/start` on VPS → "Already up to date"
+- Checked ecosystem.config.cjs: PM2 runs `next start --port 3002` which serves pre-built .next/
+- **ROOT CAUSE FOUND**: `next start` serves compiled output from `.next/` directory. After `git pull`, source updated but `.next/` was never rebuilt. PM2 was serving stale compiled code.
+
+Stage Summary:
+- Diagnosis: Missing `next build` after git pull. `pm2 restart/start` does NOT recompile.
+- Fix: User needs to run `rm -rf .next && npm run build` before `pm2 start`
+- All persistence fixes (x-storage headers, JSON.parse, localStorage merge, active account restore) are confirmed correct in source code
