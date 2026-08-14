@@ -1854,7 +1854,12 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
         } catch { /* quota */ }
         // Refresh and merge accounts from API with localStorage
         let accs: any[] = [];
-        try { accs = await (await fetch('/api/trading/accounts')).json(); } catch { /* */ }
+        let refreshDbActiveId: string | null = null;
+        try { 
+          const refreshRes = await fetch('/api/trading/accounts');
+          refreshDbActiveId = refreshRes.headers.get('x-active-account') || null;
+          accs = await refreshRes.json(); 
+        } catch { /* */ }
         if (!Array.isArray(accs)) accs = [];
         try {
           const lsAccs = JSON.parse(localStorage.getItem('fovi_accounts') || '[]');
@@ -1862,7 +1867,7 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
           const localOnly = lsAccs.filter((a: any) => !apiIds.has(a.id));
           if (localOnly.length > 0) accs = [...accs, ...localOnly];
         } catch { /* */ }
-        setAccounts(accs);
+        setAccounts(accs, refreshDbActiveId);
         // Auto-switch to the newly connected account
         if (newAccount?.id) {
           setActiveAccount(newAccount.id);

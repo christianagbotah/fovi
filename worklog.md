@@ -1061,3 +1061,21 @@ Stage Summary:
 - Refresh reads the active account from the DB via x-active-account header
 - localStorage is a fallback cache only for demo/no-DB environments
 - Pushed as commit 89e2e0d
+---
+Task ID: fix-vps-errors
+Agent: main
+Task: Fix remaining VPS errors: toast is not defined, /api/subscriptions/plans 401, verify DB connection
+
+Work Log:
+- Verified DATABASE_URL is working on VPS — user's curl shows `x-storage: db` and `x-demo: false` headers
+- Verified `toast is not defined` was from old build — current code has `import { toast } from 'sonner'` on line 46
+- Verified `/api/subscriptions/plans` GET has zero auth checks — 401 was from old build
+- Improved `handleConnect` in page.tsx to read `x-active-account` header from refresh fetch and pass to `setAccounts`
+- Verified `/api/trading/accounts/switch` route correctly updates `isDefault` in DB
+- Verified `getUserId` resolves to `ensureDemoUser()` when no auth header present
+
+Stage Summary:
+- All 3 reported errors were from old build on VPS, not code bugs
+- DB connection confirmed working (`x-storage: db`)
+- One minor improvement: handleConnect now passes `dbActiveId` to `setAccounts` for consistency
+- User needs to reconnect OKX account (no `x-active-account` header = no isDefault account in DB yet)
