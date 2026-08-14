@@ -1830,12 +1830,24 @@ function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   const [connectError, setConnectError] = useState('');
   // Default broker to the last non-demo connected broker, or 'okx'
   const lastRealBroker = accounts.find(a => a.broker !== 'demo' && a.apiKey)?.broker;
+  const lastRealAccountType = accounts.find(a => a.broker !== 'demo' && a.apiKey)?.accountType;
   const [broker, setBroker] = useState(lastRealBroker || 'okx');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [passphrase, setPassphrase] = useState('');
-  const [accountType, setAccountType] = useState('demo');
+  const [accountType, setAccountType] = useState(lastRealAccountType || 'demo');
   const requiresPassphrase = broker === 'okx' || broker === 'bitget';
+
+  // Re-sync defaults when sheet opens (handles Radix unmount/remount)
+  useEffect(() => {
+    if (!open) return;
+    const real = accounts.find(a => a.broker !== 'demo' && a.apiKey);
+    if (real) {
+      setBroker(real.broker);
+      setAccountType(real.accountType || 'demo');
+    }
+    setConnectError('');
+  }, [open, accounts]);
 
   const handleConnect = async () => {
     if (!apiKey || !apiSecret) return;
