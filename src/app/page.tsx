@@ -43,6 +43,7 @@ import { useMarketSocket } from '@/hooks/use-market-socket';
 import { useTradeNotifications } from '@/hooks/use-trade-notifications';
 import { PagePreloader } from '@/components/page-preloader';
 import { DemoBanner } from '@/components/trading/demo-banner';
+import { toast } from 'sonner';
 
 
 // ============================================================
