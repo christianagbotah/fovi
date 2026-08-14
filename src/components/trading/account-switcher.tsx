@@ -194,12 +194,47 @@ export function AccountSwitcher() {
   };
 
   const handleDelete = async (id: string) => {
-    fetch(`/api/trading/accounts/${id}`, { method: 'DELETE' }).catch(() => {});
-    const updated = accounts.filter(a => a.id !== id);
-    setAccounts(updated);
-    saveAccountsLS(updated);
+    // Close dropdown immediately so user sees feedback
+    setDropdownOpen(false);
+    setMobileSheetOpen(false);
+    try {
+      const res = await fetch(`/api/trading/accounts/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        toast.error('Failed to remove account');
+        return;
+      }
+    } catch {
+      toast.error('Network error removing account');
+      return;
+    }
+    // Remove from localStorage immediately
+    const lsAccounts = loadAccountsLS();
+    if (lsAccounts) {
+      saveAccountsLS(lsAccounts.filter(a => a.id !== id));
+    }
+    // Re-fetch from API to get authoritative list (avoids race with polling)
+    try {
+      const accRes = await fetch('/api/trading/accounts');
+      if (accRes.ok) {
+        const freshData = await accRes.json();
+        const dbActiveId = accRes.headers.get('x-active-account') || null;
+        setAccounts(Array.isArray(freshData) ? freshData : [], dbActiveId);
+      }
+    } catch { /* fallback: filter locally */ }
+    // If the deleted account was active, switch to the first remaining
+    const remaining = useTradingStore.getState().accounts;
     if (activeAccountId === id) {
-      setActiveAccount(updated[0]?.id || null);
+      const next = remaining.find(a => a.isDefault)?.id || remaining[0]?.id || null;
+      if (next) {
+        setActiveAccount(next);
+        fetch('/api/trading/accounts/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: next }),
+        }).catch(() => {});
+      } else {
+        setActiveAccount(null);
+      }
     }
     toast.success('Account removed');
   };

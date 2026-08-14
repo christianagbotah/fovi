@@ -1825,10 +1825,12 @@ function SecuritySettings() {
 // Settings Sheet
 // ============================================================
 function SettingsSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { accounts, setAccounts, setActiveAccount, isAuthenticated } = useTradingStore();
+  const { accounts, setAccounts, setActiveAccount, isAuthenticated, activeAccountId } = useTradingStore();
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
-  const [broker, setBroker] = useState('alpaca');
+  // Default broker to the last non-demo connected broker, or 'okx'
+  const lastRealBroker = accounts.find(a => a.broker !== 'demo' && a.apiKey)?.broker;
+  const [broker, setBroker] = useState(lastRealBroker || 'okx');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [passphrase, setPassphrase] = useState('');
