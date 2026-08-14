@@ -1039,3 +1039,25 @@ Stage Summary:
 - Diagnosis: Missing `next build` after git pull. `pm2 restart/start` does NOT recompile.
 - Fix: User needs to run `rm -rf .next && npm run build` before `pm2 start`
 - All persistence fixes (x-storage headers, JSON.parse, localStorage merge, active account restore) are confirmed correct in source code
+
+---
+Task ID: db-source-of-truth
+Agent: main
+Task: Make PostgreSQL the single source of truth for active account selection
+
+Work Log:
+- Modified GET /api/trading/accounts to return `x-active-account` header with the isDefault account ID
+- Modified POST /api/trading/accounts to auto-set `isDefault: true` on newly connected broker (updateMany false + create true)
+- Refactored `setAccounts` in trading-store.ts to accept optional `dbActiveId` parameter
+- Priority order in setAccounts: (a) dbActiveId from API header → (b) current session active → (c) localStorage fallback → (d) isDefault field → (e) first account
+- Updated page.tsx loadData to read `x-active-account` header and pass as dbActiveId
+- Removed the post-setAccounts localStorage override hack — no longer needed
+- All other setAccounts callers (account-switcher, ai-trading-dashboard, hydration) work without dbActiveId (optional param)
+- Verified no new type errors or lint issues
+
+Stage Summary:
+- DB is now the authoritative source for which account is active
+- Connecting a broker auto-switches to it in the DB (isDefault=true)
+- Refresh reads the active account from the DB via x-active-account header
+- localStorage is a fallback cache only for demo/no-DB environments
+- Pushed as commit 89e2e0d
