@@ -1,12 +1,15 @@
+// ============================================================
+// POST/GET /api/trading/orders
+// Phase 1 CR1: Remove DemoBroker fallback on no-DB and catch.
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, hasModel } from '@/lib/db';
 import { getUserId, getUserIdSync } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
-import { DemoBroker } from '@/lib/broker/demo';
-import { getAssetType } from '@/lib/broker/demo';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
-import { enforceLiveTradingPolicy, CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER, isExplicitlyDemo } from '@/lib/trading-policy';
+import { enforceLiveTradingPolicy, CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER, isExplicitlyDemo, logSecurityEvent } from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 
 const OrderSchema = z.object({
@@ -27,7 +30,14 @@ type OrderInput = z.infer<typeof OrderSchema>;
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json([], { headers: { ...DEMO_PROVENANCE_HEADER, 'x-demo': 'true' } });
+    return NextResponse.json(
+      {
+        error: 'Order data is temporarily unavailable.',
+        code: 'SERVICE_UNAVAILABLE',
+        remediationPhase: 'containment',
+      },
+      { status: 503 },
+    );
   }
   try {
     const { searchParams } = new URL(req.url);
@@ -37,7 +47,9 @@ export async function GET(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
-    if (!account) return NextResponse.json([], { headers: { ...DEMO_PROVENANCE_HEADER, 'x-demo': 'true' } });
+    if (!account) {
+      return NextResponse.json([]);
+    }
 
     const orders = await db.order.findMany({
       where: { accountId: account.id },
@@ -46,7 +58,11 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(orders);
   } catch (error) {
-    console.warn('[orders GET] DB error:', error);
+    logSecurityEvent({
+      eventType: 'ORDERS_GET_ERROR',
+      route: '/api/trading/orders',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
     return NextResponse.json({ error: 'Failed to fetch orders' }, { status: 500 });
   }
 }
@@ -63,39 +79,21 @@ export async function POST(req: NextRequest) {
   }
   const { symbol, side, type, qty, limitPrice, stopLoss, takeProfit, assetType, accountId, aiGenerated, signalId } = parsed.data;
 
-  // ── No DB available: only allow explicitly demo orders ──
+  // ── No DB available: return 503, do NOT create DemoBroker orders ──
   if (!db || !hasModel('tradingAccount')) {
-    // In no-DB mode, all orders are demo by definition (no live accounts exist)
-    try {
-      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
-      const result = await broker.placeOrder({
-        symbol, side, type: type || 'market', qty, limitPrice, stopPrice: stopLoss,
-      });
-
-      if (result.status === 'rejected') {
-        return NextResponse.json(
-          { error: 'Order rejected — insufficient balance' },
-          { status: 400, headers: { ...DEMO_PROVENANCE_HEADER, 'x-demo': 'true' } },
-        );
-      }
-
-      if (result.status === 'filled' && result.filledQty > 0) {
-        saveDemoPositionSLTP(symbol, stopLoss, takeProfit);
-      }
-
-      return NextResponse.json({
-        id: result.orderId, accountId: 'demo_acc_1', brokerOrderId: result.orderId,
-        symbol, assetType: assetType || 'stock', side, type: type || 'market', qty,
-        limitPrice: limitPrice || null, stopPrice: stopLoss || null,
-        filledQty: result.filledQty, filledPrice: result.filledPrice,
-        status: result.status, aiGenerated: false, signalId: null,
-        reason: 'Manual trade (demo)', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-        environment: 'demo', isSynthetic: true, source: 'fovi-demo-generator',
-      }, { headers: { ...DEMO_PROVENANCE_HEADER, 'x-demo': 'true' } });
-    } catch (error) {
-      console.warn('[orders POST] Demo broker error:', error);
-      return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
-    }
+    logSecurityEvent({
+      eventType: 'ORDERS_POST_NO_DB',
+      route: '/api/trading/orders',
+      reason: 'Database unavailable for order placement',
+    });
+    return NextResponse.json(
+      {
+        error: 'Order placement is temporarily unavailable. No order was executed.',
+        code: 'SERVICE_UNAVAILABLE',
+        remediationPhase: 'containment',
+      },
+      { status: 503 },
+    );
   }
 
   // ── DB available: full flow ──
@@ -183,19 +181,24 @@ export async function POST(req: NextRequest) {
 
     const responseHeaders: Record<string, string> = {};
     if (isExplicitlyDemo(account)) {
-      Object.assign(responseHeaders, DEMO_PROVENANCE_HEADER, { 'x-demo': 'true' });
+      Object.assign(responseHeaders, DEMO_PROVENANCE_HEADER);
     }
 
     return NextResponse.json(order, { headers: responseHeaders });
   } catch (error) {
-    // ── CONTAINMENT: Never fall back to DemoBroker for live accounts ──
+    // ── CONTAINMENT: Never fall back to DemoBroker ──
+    logSecurityEvent({
+      eventType: 'ORDERS_POST_ERROR',
+      route: '/api/trading/orders',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+
     if (error instanceof BrokerFactoryError) {
       return NextResponse.json(
-        { error: error.message, code: error.code },
+        { error: error.message, code: error.code, remediationPhase: 'containment' },
         { status: error.code === CONTAINMENT_CODES.BROKER_CONNECTION_FAILED ? 503 : 400 },
       );
     }
-    console.warn('[orders POST] error:', error);
     return NextResponse.json({ error: 'Order processing failed' }, { status: 500 });
   }
 }

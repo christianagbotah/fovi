@@ -2,6 +2,8 @@
 // Broker Factory - Creates broker instances based on config
 // Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MT5
 // Phase 1: NO live-to-demo fallback. Decryption failure = error.
+// Phase 1 CR1: P0-13 — DemoBroker ONLY when provider==='demo' AND isDemo===true.
+//              Unknown non-builtin providers throw BrokerFactoryError.
 // ============================================================
 
 import type { BrokerConfig } from '../types';
@@ -91,8 +93,14 @@ export class BrokerFactoryError extends Error {
 }
 
 export function createBroker(config: BrokerConfig): IBroker {
-  // DemoBroker ONLY for explicit demo provider
+  // ── P0-13: DemoBroker ONLY when provider==='demo' AND isDemo===true ──
   if (config.provider === 'demo') {
+    if (config.isDemo !== true) {
+      throw new BrokerFactoryError(
+        CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
+        'DemoBroker requires both provider="demo" and isDemo=true.',
+      );
+    }
     return new DemoBroker(config);
   }
 

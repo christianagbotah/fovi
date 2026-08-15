@@ -1,10 +1,18 @@
+// ============================================================
+// PATCH/DELETE /api/trading/positions/[id]
+// Phase 1 CR1:
+//   P0-7: PATCH — reject live position modification (deferred feature)
+//   P0-6: DELETE — enforce live-trading policy before close
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
-import { enforceLiveTradingPolicy, isExplicitlyDemo } from '@/lib/trading-policy';
+import { enforceLiveTradingPolicy, isExplicitlyDemo, CONTAINMENT_CODES, logSecurityEvent } from '@/lib/trading-policy';
+import { v4 as uuidv4 } from 'uuid';
 
 // PATCH — update TP/SL or other position fields
 export async function PATCH(
@@ -30,6 +38,28 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // ── P0-7: Reject live position-protection modification (deferred) ──
+    if (!isExplicitlyDemo(position.account)) {
+      const correlationId = uuidv4();
+      logSecurityEvent({
+        eventType: 'POSITION_PROTECTION_BLOCKED',
+        correlationId,
+        route: '/api/trading/positions/[id]',
+        userId,
+        identifier: id,
+        reason: 'Live position-protection modification is deferred pending audit. Use broker directly.',
+      });
+      return NextResponse.json(
+        {
+          error: 'Live position-protection modification is temporarily disabled pending platform audit.',
+          code: CONTAINMENT_CODES.LIVE_BLOCKED,
+          correlationId,
+          remediationPhase: 'containment',
+        },
+        { status: 403 },
+      );
+    }
+
     const updateData: Record<string, unknown> = {};
     if (body.stopLoss !== undefined) updateData.stopLoss = body.stopLoss;
     if (body.takeProfit !== undefined) updateData.takeProfit = body.takeProfit;
@@ -42,8 +72,7 @@ export async function PATCH(
 
     const updated = await db.position.update({ where: { id }, data: updateData });
 
-    const isDemo = isExplicitlyDemo(position.account);
-    if (isDemo && (body.stopLoss !== undefined || body.takeProfit !== undefined)) {
+    if (body.stopLoss !== undefined || body.takeProfit !== undefined) {
       saveDemoPositionSLTP(
         position.symbol,
         body.stopLoss ?? updated.stopLoss,
@@ -53,7 +82,11 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.warn('[positions PATCH] error:', error);
+    logSecurityEvent({
+      eventType: 'POSITION_PATCH_ERROR',
+      route: '/api/trading/positions/[id]',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
     return NextResponse.json({ error: 'Failed to update position' }, { status: 500 });
   }
 }
@@ -81,7 +114,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // ── CONTAINMENT: Enforce live-trading policy on close ──
+    // ── P0-6: Enforce live-trading policy BEFORE createBroker/closePosition ──
     const policy = enforceLiveTradingPolicy(position.account, `position close (${position.symbol})`);
     if (policy.blocked) return policy.response;
 
@@ -142,14 +175,18 @@ export async function DELETE(
       rawPnl: closedPnl, status: result.status,
     });
   } catch (error) {
-    // ── CONTAINMENT: Never fall back to DemoBroker ──
+    logSecurityEvent({
+      eventType: 'POSITION_DELETE_ERROR',
+      route: '/api/trading/positions/[id]',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+
     if (error instanceof BrokerFactoryError) {
       return NextResponse.json(
-        { error: error.message, code: error.code },
+        { error: error.message, code: error.code, remediationPhase: 'containment' },
         { status: error.code === 'BROKER_CONNECTION_FAILED' ? 503 : 400 },
       );
     }
-    console.warn('[positions DELETE] error:', error);
     return NextResponse.json({ error: 'Failed to close position' }, { status: 500 });
   }
 }

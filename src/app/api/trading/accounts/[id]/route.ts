@@ -1,8 +1,15 @@
+// ============================================================
+// PATCH/DELETE /api/trading/accounts/[id]
+// Phase 1 CR1:
+//   P0-10: DELETE catch returns 500, PATCH catch returns 500
+//   P0-11: Return safeAccountDTO for PATCH response
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
 import { z } from 'zod/v4';
-import { safeAccountDTO } from '@/lib/trading-policy';
+import { safeAccountDTO, logSecurityEvent } from '@/lib/trading-policy';
 
 const patchSchema = z.object({
   label: z.string().max(100).optional(),
@@ -10,11 +17,6 @@ const patchSchema = z.object({
   isDefault: z.boolean().optional(),
 });
 
-/**
- * PATCH /api/trading/accounts/:id
- * Update account label or active status.
- * Deposits/withdrawals are NOT supported — users fund via their broker directly.
- */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -29,7 +31,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     if (!db || !hasModel('tradingAccount')) {
-      return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+      return NextResponse.json(
+        { error: 'Database unavailable.' },
+        { status: 503 },
+      );
     }
 
     const userId = await getUserId(req);
@@ -43,16 +48,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: { ...parsed.data, updatedAt: new Date() },
     });
 
+    // P0-11: Return safeAccountDTO
     return NextResponse.json({ success: true, account: safeAccountDTO(updated as unknown as Record<string, unknown>) });
   } catch (error) {
-    console.warn('[accounts/[id] PATCH] error:', error);
+    logSecurityEvent({
+      eventType: 'ACCOUNT_PATCH_ERROR',
+      route: '/api/trading/accounts/[id]',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
     return NextResponse.json({ error: 'Failed to update account' }, { status: 500 });
   }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+    return NextResponse.json(
+      { error: 'Database unavailable.' },
+      { status: 503 },
+    );
   }
   try {
     const { id } = await params;
@@ -60,7 +73,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     await db.tradingAccount.deleteMany({ where: { id, userId } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.warn('[accounts/[id] DELETE] error:', error);
-    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+    // P0-10: Catch returns 500, NOT success
+    logSecurityEvent({
+      eventType: 'ACCOUNT_DELETE_ERROR',
+      route: '/api/trading/accounts/[id]',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json({ error: 'Failed to delete account.' }, { status: 500 });
   }
 }

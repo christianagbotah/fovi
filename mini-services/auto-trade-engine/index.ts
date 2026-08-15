@@ -1,18 +1,9 @@
 // ============================================================
 // Fovi Auto-Trade Engine — API-first Execution Loop
-// ============================================================
-// Mini-service that polls the Next.js API for active bot configs,
-// monitors in-memory positions for SL/TP hits, and executes trades.
-//
-// Architecture (v2 — API-first + Bot table):
-//   - Fetches active BotConfig bots via GET /api/trading/engine/bots
-//   - ALSO queries the "Bot" table directly (PostgreSQL) for Bot Manager bots
-//   - Executes trades via POST /api/trading/orders
-//   - Reports results via POST /api/trading/engine/report
-//   - Updates Bot table stats (totalTrades, winTrades, totalPnl, etc.) directly
-//   - Maintains in-memory position tracking for SL/TP monitoring
-//   - Uses real technical analysis (RSI, MACD, SMA, BB, ATR) for signals
-//   - Fetches real candle data (CoinGecko OHLC) when available
+// Phase 1 CR1: Emergency Containment
+//   P0-5:  Bind Bun.serve to 127.0.0.1, auth check for /cycle etc.
+//   P0-15: AUTOMATED_TRADING_ENABLED check, provenance on market data,
+//          secret header in callNextJSApi, reject non-demo bots from demo data.
 // ============================================================
 
 import postgres from 'postgres';
@@ -31,6 +22,16 @@ import {
 const PORT = 3012;
 const POLL_INTERVAL_MS = 60_000; // 60 seconds
 const NEXTJS_API = 'http://localhost:3002';
+
+// ── P0-15: Automated trading kill-switch ──
+function envBool(name: string): boolean {
+  const raw = process.env[name];
+  if (!raw) return false;
+  const lower = raw.trim().toLowerCase();
+  return lower === 'true' || lower === '1' || lower === 'yes';
+}
+const AUTOMATED_TRADING_ENABLED = envBool('AUTOMATED_TRADING_ENABLED');
+const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET || '';
 
 // ============================================================
 // PostgreSQL Connection (for Bot table queries)
@@ -94,7 +95,6 @@ interface InMemoryPosition {
   unrealizedPnl: number;
 }
 
-// Bot table row (from direct SQL query — Bot Manager bots)
 interface BotTableBot {
   id: string;
   userId: string;
@@ -121,7 +121,6 @@ interface BotTableBot {
   currentStreak: number;
   lastTradeAt: string | null;
   lastError: string | null;
-  // Joined TradingAccount fields
   accountBroker: string;
   accountType: string;
   accountBalance: number;
@@ -144,6 +143,12 @@ interface ActivityEntry {
   error?: string;
 }
 
+// ── P0-15: Market price provenance ──
+interface PriceResult {
+  price: number;
+  isDemoData: boolean;
+}
+
 // ============================================================
 // In-Memory State
 // ============================================================
@@ -162,6 +167,32 @@ function addActivity(entry: Omit<ActivityEntry, 'id' | 'timestamp'>) {
 }
 
 // ============================================================
+// P0-5: Internal service auth for control endpoints
+// ============================================================
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+function checkInternalAuth(req: Request): boolean {
+  if (!INTERNAL_SERVICE_SECRET) return false;
+  const provided = req.headers.get('x-internal-service-secret') || '';
+  return constantTimeEqual(provided, INTERNAL_SERVICE_SECRET);
+}
+
+function authErrorResponse(): Response {
+  return new Response(
+    JSON.stringify({ error: 'Unauthorized.', code: 'INTERNAL_AUTH_INVALID' }),
+    { status: 401, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+// ============================================================
 // HTTP Health Check Server (Bun.serve)
 // ============================================================
 
@@ -170,11 +201,14 @@ let cycleCount = 0;
 let lastCycleTime: string | null = null;
 let lastCycleError: string | null = null;
 
+// P0-5: Bind to 127.0.0.1 only
 Bun.serve({
   port: PORT,
+  hostname: '127.0.0.1',
   fetch(req) {
     const url = new URL(req.url);
 
+    // Health endpoints — unauthenticated
     if (url.pathname === '/health' || url.pathname === '/') {
       return Response.json({
         status: 'ok',
@@ -185,10 +219,13 @@ Bun.serve({
         lastCycleTime,
         lastCycleError,
         pollIntervalMs: POLL_INTERVAL_MS,
+        automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
       });
     }
 
+    // ── P0-5: All other endpoints require internal service auth ──
     if (url.pathname === '/status') {
+      if (!checkInternalAuth(req)) return authErrorResponse();
       return Response.json({
         cycleCount,
         lastCycleTime,
@@ -197,10 +234,12 @@ Bun.serve({
         managedPositions: positions.size,
         activeBots: 0,
         dbReady: pgReady,
+        automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
       });
     }
 
     if (url.pathname === '/cycle' && req.method === 'POST') {
+      if (!checkInternalAuth(req)) return authErrorResponse();
       runCycle().catch((e) => {
         console.error('[AutoTrade] Manual cycle error:', e);
       });
@@ -208,10 +247,12 @@ Bun.serve({
     }
 
     if (url.pathname === '/activity') {
+      if (!checkInternalAuth(req)) return authErrorResponse();
       return Response.json(activityLog);
     }
 
     if (url.pathname === '/positions') {
+      if (!checkInternalAuth(req)) return authErrorResponse();
       return Response.json(Array.from(positions.values()));
     }
 
@@ -219,7 +260,8 @@ Bun.serve({
   },
 });
 
-console.log(`[AutoTrade] Engine HTTP server running on port ${PORT}`);
+console.log(`[AutoTrade] Engine HTTP server running on 127.0.0.1:${PORT}`);
+console.log(`[AutoTrade] AUTOMATED_TRADING_ENABLED: ${AUTOMATED_TRADING_ENABLED}`);
 console.log(`[AutoTrade] Endpoints: GET /health, GET /status, POST /cycle, GET /activity, GET /positions`);
 console.log(`[AutoTrade] Next.js API target: ${NEXTJS_API}`);
 
@@ -227,7 +269,6 @@ console.log(`[AutoTrade] Next.js API target: ${NEXTJS_API}`);
 // Bot Table Direct SQL Helpers
 // ============================================================
 
-/** Fetch running bots from the Bot table (Bot Manager page) */
 async function fetchBotTableBots(): Promise<BotTableBot[]> {
   if (!sql || !pgReady) return [];
   try {
@@ -257,7 +298,6 @@ async function fetchBotTableBots(): Promise<BotTableBot[]> {
   }
 }
 
-/** Update stats columns on a Bot row after processing */
 async function updateBotStats(
   botId: string,
   stats: {
@@ -290,7 +330,6 @@ async function updateBotStats(
   }
 }
 
-/** Update lastError on a Bot row */
 async function updateBotLastError(botId: string, error: string | null) {
   if (!sql || !pgReady) return;
   try {
@@ -305,7 +344,7 @@ async function updateBotLastError(botId: string, error: string | null) {
 }
 
 // ============================================================
-// Market Price Fetch — CoinGecko → Next.js API → demo
+// Market Price Fetch — with provenance tagging
 // ============================================================
 
 const COINGECKO_IDS: Record<string, string> = {
@@ -334,8 +373,13 @@ function getDemoPrice(symbol: string): number {
   return Math.max(0.01, Math.round((base + (rand - 0.48) * 2 * 0.002 * base) * 100) / 100);
 }
 
-async function fetchMarketPrice(symbol: string): Promise<number> {
-  // Layer 1: Next.js market API
+/**
+ * Fetch market price with provenance tagging.
+ * P0-15: Returns { price, isDemoData } so callers can reject
+ * demo data for non-demo accounts.
+ */
+async function fetchMarketPrice(symbol: string): Promise<PriceResult> {
+  // Layer 1: Next.js market API (real data)
   try {
     const res = await fetch(
       `${NEXTJS_API}/api/trading/market/symbols?symbol=${encodeURIComponent(symbol)}`,
@@ -344,11 +388,11 @@ async function fetchMarketPrice(symbol: string): Promise<number> {
     if (res.ok) {
       const data = await res.json() as Record<string, unknown>;
       const price = data.price ?? data.currentPrice;
-      if (typeof price === 'number' && price > 0) return price;
+      if (typeof price === 'number' && price > 0) return { price, isDemoData: false };
     }
   } catch { /* fall through */ }
 
-  // Layer 2: CoinGecko for crypto
+  // Layer 2: CoinGecko for crypto (real data)
   if (isCryptoSymbol(symbol)) {
     try {
       const id = COINGECKO_IDS[symbol.toUpperCase()];
@@ -359,13 +403,13 @@ async function fetchMarketPrice(symbol: string): Promise<number> {
       if (res.ok) {
         const data = await res.json() as Record<string, { usd?: number }>;
         const price = data[id]?.usd;
-        if (price && price > 0) return price;
+        if (price && price > 0) return { price, isDemoData: false };
       }
     } catch { /* fall through */ }
   }
 
-  // Layer 3: Demo
-  return getDemoPrice(symbol);
+  // Layer 3: Demo price
+  return { price: getDemoPrice(symbol), isDemoData: true };
 }
 
 // ============================================================
@@ -384,17 +428,14 @@ async function fetchCandles(symbol: string, limit: number = 100): Promise<Candle
 
   let candles: CandleData[] | null = null;
 
-  // Layer 1: CoinGecko OHLC
   if (isCryptoSymbol(symbol)) {
     candles = await fetchCoinGeckoOHLC(symbol, limit);
   }
 
-  // Layer 2: Next.js API
   if (!candles || candles.length < 10) {
     candles = await fetchNextJSCandles(symbol, limit);
   }
 
-  // Layer 3: Demo
   if (!candles || candles.length < 10) {
     candles = generateDemoCandles(symbol, limit);
   }
@@ -483,6 +524,7 @@ function roundPrice(price: number): number {
 
 // ============================================================
 // HTTP API Calls to Next.js
+// P0-15: Include internal service secret header
 // ============================================================
 
 async function callNextJSApi(
@@ -492,9 +534,14 @@ async function callNextJSApi(
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   try {
     const url = `${NEXTJS_API}${path}`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    // P0-15: Send internal service secret to all API calls
+    if (INTERNAL_SERVICE_SECRET) {
+      headers['X-Internal-Service-Secret'] = INTERNAL_SERVICE_SECRET;
+    }
     const opts: RequestInit = {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       signal: AbortSignal.timeout(30_000),
     };
     if (body) opts.body = JSON.stringify(body);
@@ -509,12 +556,29 @@ async function callNextJSApi(
 }
 
 // ============================================================
+// Helper: check if a bot config has an explicitly demo account
+// ============================================================
+
+function isExplicitlyDemoAccount(config: BotRow): boolean {
+  return config.account?.broker === 'demo' && config.account?.accountType === 'demo';
+}
+
+// ============================================================
 // Main Execution Cycle
 // ============================================================
 
 async function runCycle() {
   const cycleStart = Date.now();
   console.log(`[AutoTrade] ═══ Cycle #${cycleCount + 1} starting at ${new Date().toISOString()} ═══`);
+
+  // ── P0-15: Automated trading kill-switch ──
+  if (!AUTOMATED_TRADING_ENABLED) {
+    console.log('[AutoTrade] AUTOMATED_TRADING_ENABLED=false — skipping cycle');
+    lastCycleTime = new Date().toISOString();
+    lastCycleError = null;
+    cycleCount++;
+    return;
+  }
 
   try {
     // Fetch active bots from Next.js API
@@ -529,7 +593,6 @@ async function runCycle() {
     const botConfigs = result.data as BotRow[];
     console.log(`[AutoTrade] Found ${botConfigs.length} active bot(s)`);
 
-    // Log cycle start for each bot
     for (const config of botConfigs) {
       addActivity({
         type: 'cycle_start',
@@ -555,7 +618,6 @@ async function runCycle() {
           error: errMsg,
         });
 
-        // Report error to Next.js
         callNextJSApi('POST', '/api/trading/engine/report', {
           botId: config.id,
           tradeType: 'error',
@@ -564,7 +626,6 @@ async function runCycle() {
       }
     }
 
-    // Log cycle end
     for (const config of botConfigs) {
       addActivity({
         type: 'cycle_end',
@@ -574,7 +635,7 @@ async function runCycle() {
       });
     }
 
-    // ── Phase 2: Process Bot Manager bots (Bot table) ──
+    // ── Bot Manager bots (Bot table) ──
     try {
       const botTableBots = await fetchBotTableBots();
       if (botTableBots.length > 0) {
@@ -585,7 +646,6 @@ async function runCycle() {
         const tag = `[AutoTrade] [BotTable:${bot.id.slice(0, 8)}]`;
         console.log(`${tag} Processing "${bot.name}" (strategy: ${bot.strategy}, symbols: ${bot.symbols})`);
 
-        // Log cycle start for this bot
         addActivity({
           type: 'cycle_start',
           botId: bot.id,
@@ -593,7 +653,6 @@ async function runCycle() {
           symbol: '—',
         });
 
-        // Map BotTableBot → BotRow (same shape processBot expects)
         const config: BotRow = {
           id: bot.id,
           userId: bot.userId,
@@ -621,13 +680,11 @@ async function runCycle() {
           } : null,
         };
 
-        // Record activity log length before processing to detect new events
         const preActivityLen = activityLog.length;
 
         try {
           await processBot(config);
 
-          // Scan new activity entries to derive stat deltas
           const newEntryCount = activityLog.length - preActivityLen;
           const newEntries = activityLog.slice(0, newEntryCount);
 
@@ -675,7 +732,6 @@ async function runCycle() {
             console.log(`${tag} Stats updated: +${deltaTrades} trades, PnL Δ=${deltaPnl.toFixed(2)}`);
           }
 
-          // Clear lastError on successful processing
           if (bot.lastError) {
             await updateBotLastError(bot.id, null);
           }
@@ -692,11 +748,9 @@ async function runCycle() {
             error: errMsg,
           });
 
-          // Persist error to Bot table
           await updateBotLastError(bot.id, errMsg);
         }
 
-        // Log cycle end for this bot
         addActivity({
           type: 'cycle_end',
           botId: bot.id,
@@ -706,7 +760,6 @@ async function runCycle() {
       }
     } catch (err) {
       console.warn('[AutoTrade] Bot table processing phase error:', err instanceof Error ? err.message : err);
-      // Don't set lastCycleError — BotConfig phase may have succeeded
     }
 
     lastCycleError = null;
@@ -727,7 +780,7 @@ async function runCycle() {
   cycleCount++;
   lastCycleTime = new Date().toISOString();
   const elapsed = Date.now() - cycleStart;
-  console.log(`[AutoTrade] ═══ Cycle #${cycleCount} completed in ${elapsed}ms ═\n`);
+  console.log(`[AutoTrade] ═══ Cycle #${cycleCount} completed in ${elapsed}ms ═══\n`);
 }
 
 // ============================================================
@@ -736,17 +789,17 @@ async function runCycle() {
 
 async function processBot(config: BotRow) {
   const tag = `[AutoTrade] [${config.id.slice(0, 8)}]`;
-  // Map frontend strategy names to engine strategy names
   const strategyMap: Record<string, string> = {
     signal_based: 'balanced',
     scalping: 'momentum',
   };
   const strategy = strategyMap[config.strategy] || config.strategy || 'balanced';
-  const risk = 'medium'; // Use medium as default risk tolerance
+  const risk = 'medium';
   const accountBalance = config.account?.balance ?? 100000;
   const maxPos = config.maxPositions || 5;
+  const isBotDemo = isExplicitlyDemoAccount(config);
 
-  console.log(`${tag} Processing "${config.name}" (strategy: ${strategy}, account: ${config.accountId})`);
+  console.log(`${tag} Processing "${config.name}" (strategy: ${strategy}, account: ${config.accountId}, isDemo: ${isBotDemo})`);
 
   // ── Step 1: Check SL/TP on in-memory positions ──
   const botPositions = Array.from(positions.values()).filter(
@@ -756,25 +809,25 @@ async function processBot(config: BotRow) {
   const closedSymbols: Set<string> = new Set();
 
   for (const pos of botPositions) {
-    const currentPrice = await fetchMarketPrice(pos.symbol);
-    pos.currentPrice = currentPrice;
+    const priceResult = await fetchMarketPrice(pos.symbol);
+    pos.currentPrice = priceResult.price;
     pos.unrealizedPnl =
       pos.side === 'long'
-        ? (currentPrice - pos.avgEntryPrice) * pos.qty
-        : (pos.avgEntryPrice - currentPrice) * pos.qty;
+        ? (priceResult.price - pos.avgEntryPrice) * pos.qty
+        : (pos.avgEntryPrice - priceResult.price) * pos.qty;
 
     const sl = pos.stopLoss;
     const tp = pos.takeProfit;
     let closeReason: string | null = null;
 
     if (sl !== null && sl > 0) {
-      if (pos.side === 'long' && currentPrice <= sl) closeReason = 'stop_loss';
-      else if (pos.side === 'short' && currentPrice >= sl) closeReason = 'stop_loss';
+      if (pos.side === 'long' && priceResult.price <= sl) closeReason = 'stop_loss';
+      else if (pos.side === 'short' && priceResult.price >= sl) closeReason = 'stop_loss';
     }
 
     if (!closeReason && tp !== null && tp > 0) {
-      if (pos.side === 'long' && currentPrice >= tp) closeReason = 'take_profit';
-      else if (pos.side === 'short' && currentPrice <= tp) closeReason = 'take_profit';
+      if (pos.side === 'long' && priceResult.price >= tp) closeReason = 'take_profit';
+      else if (pos.side === 'short' && priceResult.price <= tp) closeReason = 'take_profit';
     }
 
     if (closeReason) {
@@ -782,14 +835,12 @@ async function processBot(config: BotRow) {
       const isWin = pnl > 0;
 
       console.log(
-        `${tag} ${closeReason.toUpperCase()} hit for ${pos.symbol}: price=${currentPrice.toFixed(2)} PnL=${pnl.toFixed(2)}`
+        `${tag} ${closeReason.toUpperCase()} hit for ${pos.symbol}: price=${priceResult.price.toFixed(2)} PnL=${pnl.toFixed(2)}`
       );
 
-      // Remove from in-memory positions
       positions.delete(pos.id);
       closedSymbols.add(pos.symbol);
 
-      // Report to Next.js
       callNextJSApi('POST', '/api/trading/engine/report', {
         botId: config.id,
         tradeType: 'closed',
@@ -798,7 +849,7 @@ async function processBot(config: BotRow) {
         reason: closeReason,
         symbol: pos.symbol,
         side: pos.side,
-        price: currentPrice,
+        price: priceResult.price,
       });
 
       addActivity({
@@ -807,7 +858,7 @@ async function processBot(config: BotRow) {
         botName: config.name,
         symbol: pos.symbol,
         side: pos.side === 'long' ? 'sell' : 'buy',
-        price: currentPrice,
+        price: priceResult.price,
         pnl,
       });
     }
@@ -820,12 +871,10 @@ async function processBot(config: BotRow) {
     return;
   }
 
-  // Get symbols from bot config, or use defaults
   const botSymbols = config.symbols
     ? config.symbols.split(',').map((s) => s.trim()).filter(Boolean)
     : ALL_SYMBOLS;
 
-  // Exclude symbols with existing open positions
   const openSymbols = new Set(
     botPositions
       .filter((p) => !closedSymbols.has(p.symbol))
@@ -866,20 +915,37 @@ async function processBot(config: BotRow) {
   }
 
   // ── Step 4: Validate confidence ──
-  const minConfidence = 50; // Fixed minimum for all risk levels
+  const minConfidence = 50;
   if (bestSignal.confidence < minConfidence) {
     console.log(`${tag} Signal confidence ${bestSignal.confidence}% below ${minConfidence}% — skipping`);
     return;
   }
 
-  // ── Step 5: Position sizing ──
-  const allocAmount = config.allocationAmount || 10000;
-  const maxPosSize = allocAmount * 0.2;
-  const livePrice = await fetchMarketPrice(bestSignal.symbol);
+  // ── Step 5: Fetch live price with provenance ──
+  // P0-15: Reject demo data for non-demo bots
+  const priceResult = await fetchMarketPrice(bestSignal.symbol);
+  if (!isBotDemo && priceResult.isDemoData) {
+    console.log(`${tag} [${bestSignal.symbol}] Skipping — only demo price data available for non-demo bot`);
+    addActivity({
+      type: 'signal_generated',
+      botId: config.id,
+      botName: config.name,
+      symbol: bestSignal.symbol,
+      side: bestSignal.side,
+      confidence: bestSignal.confidence,
+      reason: 'Skipped: non-demo bot cannot use demo price data',
+    });
+    return;
+  }
+
+  const livePrice = priceResult.price;
   if (livePrice <= 0) {
     console.log(`${tag} Invalid price for ${bestSignal.symbol}: ${livePrice}`);
     return;
   }
+
+  const allocAmount = config.allocationAmount || 10000;
+  const maxPosSize = allocAmount * 0.2;
 
   const qty = calculatePositionSize(
     accountBalance,
@@ -900,8 +966,14 @@ async function processBot(config: BotRow) {
   }
 
   console.log(
-    `${tag} Executing ${bestSignal.side.toUpperCase()} ${bestSignal.symbol} qty=${qty.toFixed(6)} @ ${livePrice.toFixed(2)} SL=${bestSignal.stopLoss.toFixed(2)} TP=${bestSignal.takeProfit.toFixed(2)} (confidence: ${bestSignal.confidence}%)`
+    `${tag} Executing ${bestSignal.side.toUpperCase()} ${bestSignal.symbol} qty=${qty.toFixed(6)} @ ${livePrice.toFixed(2)} SL=${bestSignal.stopLoss.toFixed(2)} TP=${bestSignal.takeProfit.toFixed(2)} (confidence: ${bestSignal.confidence}%, isDemoData: ${priceResult.isDemoData})`
   );
+
+  // ── P0-15: Check AUTOMATED_TRADING_ENABLED before placing order ──
+  if (!AUTOMATED_TRADING_ENABLED) {
+    console.log(`${tag} AUTOMATED_TRADING_ENABLED=false — not executing trade`);
+    return;
+  }
 
   // ── Step 6: Execute via Next.js API ──
   await executeTrade(config, {
@@ -915,7 +987,6 @@ async function processBot(config: BotRow) {
     reason: bestSignal.reason,
   });
 
-  // Also log signal
   addActivity({
     type: 'signal_generated',
     botId: config.id,
@@ -962,7 +1033,6 @@ async function executeTrade(
     const orderData = result.data as Record<string, unknown>;
     console.log(`  Order placed via API: id=${orderData.id} status=${orderData.status}`);
 
-    // Create in-memory position for SL/TP tracking
     const positionId = `eng_${config.id}_${trade.symbol}_${Date.now()}`;
     positions.set(positionId, {
       id: positionId,
@@ -979,7 +1049,6 @@ async function executeTrade(
       unrealizedPnl: 0,
     });
 
-    // Report to Next.js
     callNextJSApi('POST', '/api/trading/engine/report', {
       botId: config.id,
       tradeType: 'opened',
@@ -1016,19 +1085,16 @@ async function executeTrade(
 // Start the Engine
 // ============================================================
 
-// Run first cycle immediately
 runCycle().catch((err) => {
   console.error('[AutoTrade] Initial cycle failed:', err);
 });
 
-// Schedule recurring cycles
 setInterval(() => {
   runCycle().catch((err) => {
     console.error('[AutoTrade] Scheduled cycle failed:', err);
   });
 }, POLL_INTERVAL_MS);
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('[AutoTrade] SIGTERM — shutting down');
   if (sql) sql.end().then(() => process.exit(0));

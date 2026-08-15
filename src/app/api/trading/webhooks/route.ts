@@ -1,10 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, DEMO_USER_ID } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
-import { CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
+// ============================================================
+// GET/POST/DELETE /api/trading/webhooks
+// Phase 1 CR1: GET requires auth (no longer in public paths in proxy.ts).
+// POST keeps 503 disabled response. No demo fallback.
+// ============================================================
 
-// ── CONTAINMENT: Removed hard-coded live-looking secrets (sk_live_*) ──
-// Demo configs now use clearly-labeled demo secrets.
+import { NextRequest, NextResponse } from 'next/server';
+import { db, hasModel } from '@/lib/db';
+import { getUserId } from '@/lib/get-user-id';
+import { CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
+
 const demoWebhooks: Array<{
   id: string;
   name: string;
@@ -41,14 +45,14 @@ function randomId(len = 12): string {
   return out;
 }
 
-/** Mask a secret for display: show first 4 and last 4 chars */
 function maskSecret(secret: string): string {
   if (secret.length <= 8) return '****';
   return secret.slice(0, 4) + '****' + secret.slice(-4);
 }
 
-// GET: list all webhook configs (secrets masked)
+// GET: list all webhook configs (secrets masked) — requires auth
 export async function GET(req: NextRequest) {
+  // ── CR1: Require auth since webhooks is no longer in public paths ──
   if (!db || !hasModel('webhookConfig')) {
     return NextResponse.json(
       {
@@ -61,7 +65,6 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // ── CONTAINMENT: Require authenticated user ──
     const userId = await getUserId(req);
 
     const configs = await db.webhookConfig.findMany({
@@ -72,7 +75,6 @@ export async function GET(req: NextRequest) {
     const webhooks = configs.map((c) => ({
       id: c.id,
       name: c.name,
-      // CONTAINMENT: Never return full secret
       secret: maskSecret(c.secret ?? ''),
       autoExecute: c.autoExecute,
       defaultStrategy: c.defaultStrategy,
@@ -81,7 +83,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ webhooks, calls: [] });
   } catch (error) {
-    console.warn('[webhooks GET] DB error:', error);
+    logSecurityEvent({
+      eventType: 'WEBHOOKS_GET_ERROR',
+      route: '/api/trading/webhooks',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
     return NextResponse.json({ error: 'Failed to fetch webhooks' }, { status: 500 });
   }
 }
@@ -97,13 +103,12 @@ export async function POST(req: NextRequest) {
     }
 
     const id = `wh_${randomId(8)}`;
-    // CONTAINMENT: Use clearly-labeled demo prefix, not sk_live_
     const secret = `whsec_${randomId(16)}`;
 
     if (!db || !hasModel('webhookConfig')) {
       return NextResponse.json(
         {
-          id, name: trimmed, secret, // Secret returned once at creation
+          id, name: trimmed, secret,
           autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual',
           createdAt: new Date().toISOString(),
           environment: 'demo', isSynthetic: true,
@@ -113,7 +118,6 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      // ── CONTAINMENT: Require authenticated user ──
       const userId = await getUserId(req);
 
       const created = await db.webhookConfig.create({
@@ -127,7 +131,6 @@ export async function POST(req: NextRequest) {
           defaultStrategy: defaultStrategy || 'manual',
         },
       });
-      // CONTAINMENT: Return secret once at creation, then only masked
       return NextResponse.json(
         {
           id: created.id, name: created.name, secret,
@@ -137,7 +140,11 @@ export async function POST(req: NextRequest) {
         { status: 201 },
       );
     } catch (error) {
-      console.warn('[webhooks POST] DB error:', error);
+      logSecurityEvent({
+        eventType: 'WEBHOOKS_POST_ERROR',
+        route: '/api/trading/webhooks',
+        reason: error instanceof Error ? error.message : 'Unknown error',
+      });
       return NextResponse.json({ error: 'Failed to create webhook' }, { status: 500 });
     }
   } catch {
@@ -160,13 +167,16 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    // ── CONTAINMENT: Require authenticated user ──
     const userId = await getUserId(req);
 
     await db.webhookConfig.deleteMany({ where: { id, userId } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.warn('[webhooks DELETE] DB error:', error);
+    logSecurityEvent({
+      eventType: 'WEBHOOKS_DELETE_ERROR',
+      route: '/api/trading/webhooks',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
     return NextResponse.json({ error: 'Failed to delete webhook' }, { status: 500 });
   }
 }

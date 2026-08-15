@@ -1,44 +1,37 @@
+// ============================================================
+// GET /api/trading/positions — Open positions list
+// Phase 1 CR1: Remove DemoBroker on DB missing. Return 503.
+// Only generate demo positions for explicitly demo accounts.
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserIdSync } from '@/lib/get-user-id';
-import { createBrokerFromAccount } from '@/lib/broker/factory';
-import { DemoBroker } from '@/lib/broker/demo';
-import { getDemoPrice, getAssetType } from '@/lib/broker/demo';
+import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
+import { getAssetType } from '@/lib/broker/demo';
 import { loadDemoPositionSLTP } from '@/lib/demo-sltp-store';
+import { logSecurityEvent, isExplicitlyDemo, DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
-  // ── No DB available: use in-memory demo broker ──
+  // No DB → return 503, NOT demo positions
   if (!db || !hasModel('tradingAccount')) {
-    try {
-      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
-      const brokerPositions = await broker.getPositions();
-      // Merge with any SL/TP stored from manual orders
-      const slTpMap = loadDemoPositionSLTP();
-      const positions = brokerPositions.map((bp, idx) => {
-        const sltp = slTpMap.get(bp.symbol) || {};
-        return {
-          id: `demo_pos_${idx}_${bp.symbol}`,
-          accountId: 'demo_acc_1',
-          symbol: bp.symbol,
-          name: null,
-          assetType: getAssetType(bp.symbol),
-          side: bp.side,
-          qty: bp.qty,
-          avgEntryPrice: bp.avgEntryPrice,
-          currentPrice: bp.currentPrice,
-          unrealizedPnl: bp.unrealizedPnl,
-          realizedPnl: 0,
-          stopLoss: sltp.stopLoss ?? null,
-          takeProfit: sltp.takeProfit ?? null,
-          status: 'open',
-          openedAt: sltp.openedAt || new Date().toISOString(),
-          closedAt: null,
-        };
-      });
-      return NextResponse.json(positions);
-    } catch {
-      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
-    }
+    const correlationId = uuidv4();
+    logSecurityEvent({
+      eventType: 'POSITIONS_DB_UNAVAILABLE',
+      correlationId,
+      route: '/api/trading/positions',
+      reason: 'Database unavailable for positions query',
+    });
+    return NextResponse.json(
+      {
+        error: 'Position data is temporarily unavailable.',
+        code: 'SERVICE_UNAVAILABLE',
+        correlationId,
+        remediationPhase: 'containment',
+      },
+      { status: 503 },
+    );
   }
 
   try {
@@ -49,22 +42,24 @@ export async function GET(req: NextRequest) {
     const account = await db.tradingAccount.findFirst({
       where: accountId ? { id: accountId, userId } : { userId, isDefault: true },
     });
-    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'false', 'x-storage': 'db' } });
 
-    const isDemo = account.broker === 'demo' || account.accountType === 'demo';
+    if (!account) {
+      return NextResponse.json([], { headers: { 'x-demo': 'false', 'x-storage': 'db' } });
+    }
+
+    const isDemo = isExplicitlyDemo(account);
     const broker = await createBrokerFromAccount(account);
     const brokerPositions = await broker.getPositions();
 
-    // Load in-memory SL/TP overrides for demo accounts
+    // Load in-memory SL/TP overrides for demo accounts only
     const slTpMap = isDemo ? loadDemoPositionSLTP() : new Map();
 
-    // Upsert positions to DB, including SL/TP for demo accounts
+    // Upsert positions to DB
     for (const bp of brokerPositions) {
       const existing = await db.position.findFirst({
         where: { accountId: account.id, symbol: bp.symbol, status: 'open' },
       });
 
-      // For demo accounts, merge DB-persisted SL/TP with in-memory overrides
       const memorySltp = slTpMap.get(bp.symbol);
       const stopLoss = memorySltp?.stopLoss ?? existing?.stopLoss ?? null;
       const takeProfit = memorySltp?.takeProfit ?? existing?.takeProfit ?? null;
@@ -75,7 +70,6 @@ export async function GET(req: NextRequest) {
           data: {
             currentPrice: bp.currentPrice,
             unrealizedPnl: bp.unrealizedPnl,
-            // Persist SL/TP from memory to DB for demo accounts
             ...(isDemo && stopLoss !== undefined ? { stopLoss } : {}),
             ...(isDemo && takeProfit !== undefined ? { takeProfit } : {}),
           },
@@ -91,7 +85,6 @@ export async function GET(req: NextRequest) {
             avgEntryPrice: bp.avgEntryPrice,
             currentPrice: bp.currentPrice,
             unrealizedPnl: bp.unrealizedPnl,
-            // Persist SL/TP from memory to DB for demo accounts
             ...(isDemo ? { stopLoss, takeProfit } : {}),
           },
         });
@@ -103,7 +96,7 @@ export async function GET(req: NextRequest) {
       orderBy: { openedAt: 'desc' },
     });
 
-    // For demo accounts, merge: DB-persisted SL/TP is the base, in-memory overrides take precedence
+    // Merge in-memory SL/TP overrides for demo accounts
     if (isDemo) {
       for (const pos of positions) {
         const memSltp = slTpMap.get(pos.symbol);
@@ -114,38 +107,32 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json(positions);
-  } catch (error) {
-    // DB query failed — fall back to demo broker positions
-    console.warn('[positions GET] DB error, using demo fallback:', error);
-    try {
-      const broker = new DemoBroker({ provider: 'demo', isDemo: true });
-      const brokerPositions = await broker.getPositions();
-      const slTpMap = loadDemoPositionSLTP();
-      const positions = brokerPositions.map((bp, idx) => {
-        const sltp = slTpMap.get(bp.symbol) || {};
-        return {
-          id: `demo_pos_${idx}_${bp.symbol}`,
-          accountId: 'demo_acc_1',
-          symbol: bp.symbol,
-          name: null,
-          assetType: getAssetType(bp.symbol),
-          side: bp.side,
-          qty: bp.qty,
-          avgEntryPrice: bp.avgEntryPrice,
-          currentPrice: bp.currentPrice,
-          unrealizedPnl: bp.unrealizedPnl,
-          realizedPnl: 0,
-          stopLoss: sltp.stopLoss ?? null,
-          takeProfit: sltp.takeProfit ?? null,
-          status: 'open',
-          openedAt: sltp.openedAt || new Date().toISOString(),
-          closedAt: null,
-        };
-      });
-      return NextResponse.json(positions);
-    } catch {
-      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
+    const responseHeaders: Record<string, string> = { 'x-storage': 'db' };
+    if (isDemo) {
+      Object.assign(responseHeaders, DEMO_PROVENANCE_HEADER);
     }
+
+    return NextResponse.json(positions, { headers: responseHeaders });
+  } catch (error) {
+    // Catch returns 500, NOT demo fallback
+    const correlationId = uuidv4();
+    logSecurityEvent({
+      eventType: 'POSITIONS_ERROR',
+      correlationId,
+      route: '/api/trading/positions',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    if (error instanceof BrokerFactoryError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, correlationId, remediationPhase: 'containment' },
+        { status: error.code === 'BROKER_CONNECTION_FAILED' ? 503 : 400 },
+      );
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to fetch positions.', code: 'POSITIONS_ERROR', correlationId, remediationPhase: 'containment' },
+      { status: 500 },
+    );
   }
 }

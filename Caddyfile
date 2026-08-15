@@ -20,13 +20,15 @@
 #   iptables -A INPUT -p tcp --dport 3011 -j DROP
 #   iptables -A INPUT -p tcp --dport 3012 -s 127.0.0.1 -j ACCEPT
 #   iptables -A INPUT -p tcp --dport 3012 -j DROP
+#   iptables -A INPUT -p tcp --dport 3013 -s 127.0.0.1 -j ACCEPT
+#   iptables -A INPUT -p tcp --dport 3013 -j DROP
 # ============================================================
 
 :81 {
-        reverse_proxy localhost:3002 {
-                header_up Host {host}
-                header_up X-Forwarded-For {remote_host}
-                header_up X-Forwarded-Proto {scheme}
-                header_up X-Real-IP {remote_host}
-        }
+	reverse_proxy localhost:3002 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
 }

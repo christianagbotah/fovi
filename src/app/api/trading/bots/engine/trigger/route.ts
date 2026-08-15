@@ -1,5 +1,10 @@
+// ============================================================
+// POST /api/trading/bots/engine/trigger
+// Phase 1 CR1: Keep enforceInternalAuth, add secret header to engine fetch.
+// ============================================================
+
 import { NextResponse } from 'next/server';
-import { enforceInternalAuth } from '@/lib/trading-policy';
+import { enforceInternalAuth, INTERNAL_SERVICE_SECRET } from '@/lib/trading-policy';
 
 const ENGINE_URL = 'http://localhost:3012/cycle';
 
@@ -11,6 +16,9 @@ export async function POST(req: Request) {
   try {
     const res = await fetch(ENGINE_URL, {
       method: 'POST',
+      headers: {
+        'X-Internal-Service-Secret': INTERNAL_SERVICE_SECRET,
+      },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {
