@@ -1,13 +1,12 @@
 // ============================================================
 // PATCH/DELETE /api/trading/accounts/[id]
-// Phase 1 CR1:
-//   P0-10: DELETE catch returns 500, PATCH catch returns 500
-//   P0-11: Return safeAccountDTO for PATCH response
+// Phase 1 CR2: Strict auth (AuthRequiredError → 401), safe DTO,
+//   tenant-scoped delete.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { z } from 'zod/v4';
 import { safeAccountDTO, logSecurityEvent } from '@/lib/trading-policy';
 
@@ -20,6 +19,7 @@ const patchSchema = z.object({
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    const userId = await getUserId(req);
     const raw = await req.json();
     const parsed = patchSchema.safeParse(raw);
 
@@ -37,7 +37,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
     }
 
-    const userId = await getUserId(req);
     const account = await db.tradingAccount.findFirst({ where: { id, userId } });
     if (!account) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
@@ -48,9 +47,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: { ...parsed.data, updatedAt: new Date() },
     });
 
-    // P0-11: Return safeAccountDTO
     return NextResponse.json({ success: true, account: safeAccountDTO(updated as unknown as Record<string, unknown>) });
   } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'ACCOUNT_PATCH_ERROR',
       route: '/api/trading/accounts/[id]',
@@ -70,10 +71,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     const { id } = await params;
     const userId = await getUserId(req);
+    // Tenant-scoped: only delete accounts belonging to this user
     await db.tradingAccount.deleteMany({ where: { id, userId } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    // P0-10: Catch returns 500, NOT success
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'ACCOUNT_DELETE_ERROR',
       route: '/api/trading/accounts/[id]',

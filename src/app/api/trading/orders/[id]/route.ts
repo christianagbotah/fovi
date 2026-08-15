@@ -1,12 +1,11 @@
 // ============================================================
 // DELETE /api/trading/orders/[id] — Cancel an order
-// Phase 1 CR1: Add enforceLiveTradingPolicy check before cancelOrder.
-// Catch returns 500, no demo fallback.
+// Phase 1 CR2: Strict auth, hard-block live cancel.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { enforceLiveTradingPolicy, logSecurityEvent } from '@/lib/trading-policy';
 
@@ -19,10 +18,9 @@ export async function DELETE(
   }
 
   try {
-    const { id } = await params;
     const userId = await getUserId(req);
+    const { id } = await params;
 
-    // Find the order by ID, include account to verify ownership
     const order = await db.order.findFirst({
       where: { id },
       include: { account: true },
@@ -32,11 +30,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
+    // Cross-tenant check
     if (order.account.userId !== userId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Only allow cancelling pending or partially_filled orders
     if (!['pending', 'partially_filled'].includes(order.status)) {
       return NextResponse.json(
         { error: `Cannot cancel order with status: ${order.status}` },
@@ -48,18 +46,16 @@ export async function DELETE(
     const policy = enforceLiveTradingPolicy(order.account, `order cancel (${order.symbol} ${order.id})`);
     if (policy.blocked) return policy.response;
 
-    // Create broker and cancel the order
     const broker = await createBrokerFromAccount(order.account);
     await broker.cancelOrder(order.symbol, order.brokerOrderId || order.id);
 
-    // Update order status in DB
-    await db.order.update({
-      where: { id },
-      data: { status: 'cancelled' },
-    });
+    await db.order.update({ where: { id }, data: { status: 'cancelled' } });
 
     return NextResponse.json({ success: true, orderId: id, status: 'cancelled' });
   } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'ORDER_CANCEL_ERROR',
       route: '/api/trading/orders/[id]',

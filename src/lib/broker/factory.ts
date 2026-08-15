@@ -1,9 +1,8 @@
 // ============================================================
 // Broker Factory - Creates broker instances based on config
-// Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MT5
-// Phase 1: NO live-to-demo fallback. Decryption failure = error.
-// Phase 1 CR1: P0-13 — DemoBroker ONLY when provider==='demo' AND isDemo===true.
-//              Unknown non-builtin providers throw BrokerFactoryError.
+// Phase 1 CR2: Unknown/unapproved providers ALWAYS throw.
+//   DemoBroker ONLY when provider==='demo' AND isDemo===true.
+//   No GenericRESTBroker fallback for any provider.
 // ============================================================
 
 import type { BrokerConfig } from '../types';
@@ -14,11 +13,9 @@ import { OkxBroker } from './okx';
 import { BybitBroker } from './bybit';
 import { BitgetBroker } from './bitget';
 import { MT5Broker } from './mt5';
-import { GenericRESTBroker } from './generic-rest';
 import { decrypt } from '@/lib/encryption';
 import { CONTAINMENT_CODES } from '@/lib/trading-policy';
 
-// Broker interface that all providers implement
 export interface IBroker {
   getAccountInfo(): Promise<{
     accountId: string;
@@ -76,13 +73,6 @@ export interface IBroker {
   cancelOrder(symbol: string, orderId: string): Promise<void>;
 }
 
-/**
- * Built-in provider codes that have dedicated broker implementations.
- */
-const BUILTIN_CODES = new Set([
-  'demo', 'alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5',
-]);
-
 export class BrokerFactoryError extends Error {
   code: string;
   constructor(code: string, message: string) {
@@ -93,7 +83,7 @@ export class BrokerFactoryError extends Error {
 }
 
 export function createBroker(config: BrokerConfig): IBroker {
-  // ── P0-13: DemoBroker ONLY when provider==='demo' AND isDemo===true ──
+  // DemoBroker ONLY when provider==='demo' AND isDemo===true
   if (config.provider === 'demo') {
     if (config.isDemo !== true) {
       throw new BrokerFactoryError(
@@ -104,7 +94,7 @@ export function createBroker(config: BrokerConfig): IBroker {
     return new DemoBroker(config);
   }
 
-  // Built-in implementations
+  // Built-in implementations — switch, no fallback
   switch (config.provider) {
     case 'alpaca':
       return new AlpacaBroker(config);
@@ -119,19 +109,13 @@ export function createBroker(config: BrokerConfig): IBroker {
     case 'mt5':
       return new MT5Broker(config);
     default:
-      break;
+      // CR2: Unknown/unapproved providers ALWAYS throw.
+      // No GenericRESTBroker fallback.
+      throw new BrokerFactoryError(
+        CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
+        `Unknown or unapproved broker provider: "${config.provider}". Reconnect in Settings.`,
+      );
   }
-
-  // For non-built-in providers, try GenericRESTBroker
-  if (!BUILTIN_CODES.has(config.provider)) {
-    return new GenericRESTBroker(config);
-  }
-
-  // Should not reach here for known providers
-  throw new BrokerFactoryError(
-    CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
-    `Unknown broker provider: ${config.provider}`,
-  );
 }
 
 export async function createBrokerFromAccount(account: {
@@ -150,39 +134,31 @@ export async function createBrokerFromAccount(account: {
   }
 
   // For non-demo accounts, credentials are required
-  const needsCredentials = account.broker !== 'demo';
-  if (needsCredentials && (!account.apiKey || !account.apiSecret)) {
+  if (!account.apiKey || !account.apiSecret) {
     throw new BrokerFactoryError(
       CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
       `Broker ${account.broker} account ${account.id} has no stored credentials. Reconnect in Settings.`,
     );
   }
 
-  // Decrypt credentials — failure is an error, NOT a fallback to DemoBroker
-  let decryptedApiKey: string | undefined;
-  let decryptedSecret: string | undefined;
-  let decryptedPassphrase: string | undefined;
+  // Decrypt credentials — failure is an error, NOT a fallback
+  const decryptedApiKey = await decrypt(account.apiKey);
+  if (!decryptedApiKey) {
+    throw new BrokerFactoryError(
+      CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
+      `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
+    );
+  }
 
-  if (account.apiKey) {
-    const d = await decrypt(account.apiKey);
-    if (!d) {
-      throw new BrokerFactoryError(
-        CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
-        `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
-      );
-    }
-    decryptedApiKey = d;
+  const decryptedSecret = await decrypt(account.apiSecret);
+  if (!decryptedSecret) {
+    throw new BrokerFactoryError(
+      CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
+      `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
+    );
   }
-  if (account.apiSecret) {
-    const d = await decrypt(account.apiSecret);
-    if (!d) {
-      throw new BrokerFactoryError(
-        CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
-        `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
-      );
-    }
-    decryptedSecret = d;
-  }
+
+  let decryptedPassphrase: string | undefined;
   if (account.passphrase) {
     const d = await decrypt(account.passphrase);
     decryptedPassphrase = d || undefined;

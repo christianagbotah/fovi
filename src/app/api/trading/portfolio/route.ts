@@ -1,23 +1,30 @@
 // ============================================================
 // GET /api/trading/portfolio — Portfolio summary
-// Phase 1 CR1: Remove fake $100k balance. No demo fallback.
+// Phase 1 CR2: Strict auth, demo provenance for demo accounts.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserIdSync } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
-import { logSecurityEvent, CONTAINMENT_CODES } from '@/lib/trading-policy';
+import { logSecurityEvent, CONTAINMENT_CODES, isExplicitlyDemo, DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
-  // No DB → return 503, NOT a fake balance
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('tradingAccount')) {
     const correlationId = uuidv4();
     logSecurityEvent({
       eventType: 'PORTFOLIO_DB_UNAVAILABLE',
       correlationId,
       route: '/api/trading/portfolio',
+      userId,
       reason: 'Database unavailable for portfolio query',
     });
     return NextResponse.json(
@@ -34,13 +41,11 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-    const userId = getUserIdSync(req);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
 
-    // No account found but DB is working — return empty portfolio
     if (!account) {
       return NextResponse.json(
         {
@@ -52,6 +57,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const isDemo = isExplicitlyDemo(account);
     const broker = await createBrokerFromAccount(account);
     const info = await broker.getAccountInfo();
     const positions = await broker.getPositions();
@@ -65,7 +71,6 @@ export async function GET(req: NextRequest) {
       : [];
     const winCount = closedPositions.filter(p => (p.realizedPnl || 0) > 0).length;
     const winRate = closedPositions.length > 0 ? Math.round((winCount / closedPositions.length) * 100) : 0;
-
     const totalTrades = closedPositions.length;
 
     let activeSignals = 0;
@@ -78,27 +83,25 @@ export async function GET(req: NextRequest) {
     const dayPnl = info.dayPnl || 0;
     const dayPnlPercent = info.balance > 0 ? (dayPnl / info.balance) * 100 : 0;
 
+    const responseHeaders: Record<string, string> = { 'x-storage': 'db' };
+    if (isDemo) {
+      Object.assign(responseHeaders, DEMO_PROVENANCE_HEADER);
+    }
+
     return NextResponse.json(
       {
-        totalBalance,
-        totalPnl: totalBalance - account.balance,
-        totalPnlPercent,
-        dayPnl,
-        dayPnlPercent,
-        openPositions: positions.length,
-        activeSignals,
-        winRate,
-        totalTrades,
+        totalBalance, totalPnl: totalBalance - account.balance,
+        totalPnlPercent, dayPnl, dayPnlPercent,
+        openPositions: positions.length, activeSignals,
+        winRate, totalTrades,
       },
-      { headers: { 'x-demo': 'false', 'x-storage': 'db' } },
+      { headers: responseHeaders },
     );
   } catch (error) {
-    // Catch block returns 500, NOT a fake balance
     const correlationId = uuidv4();
     logSecurityEvent({
-      eventType: 'PORTFOLIO_ERROR',
-      correlationId,
-      route: '/api/trading/portfolio',
+      eventType: 'PORTFOLIO_ERROR', correlationId,
+      route: '/api/trading/portfolio', userId,
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
 
@@ -110,12 +113,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(
-      {
-        error: 'Failed to fetch portfolio data.',
-        code: 'PORTFOLIO_ERROR',
-        correlationId,
-        remediationPhase: 'containment',
-      },
+      { error: 'Failed to fetch portfolio data.', code: 'PORTFOLIO_ERROR', correlationId, remediationPhase: 'containment' },
       { status: 500 },
     );
   }

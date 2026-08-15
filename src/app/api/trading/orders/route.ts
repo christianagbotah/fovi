@@ -1,12 +1,12 @@
 // ============================================================
 // POST/GET /api/trading/orders
-// Phase 1 CR1: Remove DemoBroker fallback on no-DB and catch.
+// Phase 1 CR2: Strict auth, demo provenance, hard-block live orders.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, getUserIdSync } from '@/lib/get-user-id';
+import { getUserId, getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
 import { enforceLiveTradingPolicy, CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER, isExplicitlyDemo, logSecurityEvent } from '@/lib/trading-policy';
@@ -29,20 +29,22 @@ const OrderSchema = z.object({
 type OrderInput = z.infer<typeof OrderSchema>;
 
 export async function GET(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(
-      {
-        error: 'Order data is temporarily unavailable.',
-        code: 'SERVICE_UNAVAILABLE',
-        remediationPhase: 'containment',
-      },
+      { error: 'Order data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
       { status: 503 },
     );
   }
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-    const userId = getUserIdSync(req);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
@@ -59,8 +61,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(orders);
   } catch (error) {
     logSecurityEvent({
-      eventType: 'ORDERS_GET_ERROR',
-      route: '/api/trading/orders',
+      eventType: 'ORDERS_GET_ERROR', route: '/api/trading/orders', userId,
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
     return NextResponse.json({ error: 'Failed to fetch orders' }, { status: 500 });
@@ -68,6 +69,13 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const raw = await req.json();
   const parsed = OrderSchema.safeParse(raw);
   if (!parsed.success) {
@@ -79,27 +87,18 @@ export async function POST(req: NextRequest) {
   }
   const { symbol, side, type, qty, limitPrice, stopLoss, takeProfit, assetType, accountId, aiGenerated, signalId } = parsed.data;
 
-  // ── No DB available: return 503, do NOT create DemoBroker orders ──
   if (!db || !hasModel('tradingAccount')) {
     logSecurityEvent({
-      eventType: 'ORDERS_POST_NO_DB',
-      route: '/api/trading/orders',
+      eventType: 'ORDERS_POST_NO_DB', route: '/api/trading/orders', userId,
       reason: 'Database unavailable for order placement',
     });
     return NextResponse.json(
-      {
-        error: 'Order placement is temporarily unavailable. No order was executed.',
-        code: 'SERVICE_UNAVAILABLE',
-        remediationPhase: 'containment',
-      },
+      { error: 'Order placement is temporarily unavailable. No order was executed.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
       { status: 503 },
     );
   }
 
-  // ── DB available: full flow ──
   try {
-    const userId = await getUserId(req);
-
     const whereClause = accountId ? { id: accountId, userId } : { userId, isDefault: true };
     const account = await db.tradingAccount.findFirst({ where: whereClause });
     if (!account) {
@@ -120,7 +119,6 @@ export async function POST(req: NextRequest) {
     }
 
     const orderId = uuidv4();
-
     const order = await db.order.create({
       data: {
         id: orderId, accountId: account.id, brokerOrderId: result.orderId,
@@ -150,7 +148,10 @@ export async function POST(req: NextRequest) {
             },
           });
         } catch (posErr) {
-          console.warn('[orders POST] position upsert error:', posErr);
+          logSecurityEvent({
+            eventType: 'ORDER_POSITION_UPSERT_ERROR', route: '/api/trading/orders', userId,
+            reason: posErr instanceof Error ? posErr.message : 'Unknown',
+          });
         }
       }
     }
@@ -159,25 +160,20 @@ export async function POST(req: NextRequest) {
     if (result.filledPrice && result.filledQty > 0 && (stopLoss || takeProfit)) {
       try {
         if (stopLoss) {
-          await broker.placeOrder({
-            symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'stop',
-            qty: result.filledQty, stopPrice: stopLoss,
-          });
+          await broker.placeOrder({ symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'stop', qty: result.filledQty, stopPrice: stopLoss });
         }
         if (takeProfit) {
-          await broker.placeOrder({
-            symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'limit',
-            qty: result.filledQty, limitPrice: takeProfit,
-          });
+          await broker.placeOrder({ symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'limit', qty: result.filledQty, limitPrice: takeProfit });
         }
       } catch (sltpErr) {
-        console.warn('[orders POST] SL/TP order submission failed (non-critical):', sltpErr);
+        logSecurityEvent({
+          eventType: 'ORDER_SLTP_SUBMIT_ERROR', route: '/api/trading/orders', userId,
+          reason: sltpErr instanceof Error ? sltpErr.message : 'Unknown',
+        });
       }
     }
 
-    await db.tradingAccount.update({
-      where: { id: account.id }, data: { lastSyncedAt: new Date() },
-    });
+    await db.tradingAccount.update({ where: { id: account.id }, data: { lastSyncedAt: new Date() } });
 
     const responseHeaders: Record<string, string> = {};
     if (isExplicitlyDemo(account)) {
@@ -186,10 +182,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(order, { headers: responseHeaders });
   } catch (error) {
-    // ── CONTAINMENT: Never fall back to DemoBroker ──
     logSecurityEvent({
-      eventType: 'ORDERS_POST_ERROR',
-      route: '/api/trading/orders',
+      eventType: 'ORDERS_POST_ERROR', route: '/api/trading/orders', userId,
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
 

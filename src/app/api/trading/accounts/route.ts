@@ -1,14 +1,15 @@
 // ============================================================
 // POST/GET /api/trading/accounts
-// Phase 1 CR1:
-//   P0-12: Import safeAccountDTO, await encrypt() calls
-//   P0-10: GET catch returns 500, POST DB failure returns 503
-//   BROKER_CREDENTIAL_INTAKE_ENABLED check for non-demo POST
+// Phase 1 CR2:
+//   Strict auth: AuthRequiredError → 401
+//   Demo creation also returns safeAccountDTO
+//   Demo accounts get provenance headers
+//   Non-demo credential intake remains disabled during containment
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBroker } from '@/lib/broker/factory';
 import { encrypt } from '@/lib/encryption';
 import { v4 as uuidv4 } from 'uuid';
@@ -16,7 +17,9 @@ import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guar
 import {
   BROKER_CREDENTIAL_INTAKE_ENABLED,
   CONTAINMENT_CODES,
+  safeAccountDTO,
   safeAccountDTOs,
+  DEMO_PROVENANCE_HEADER,
   logSecurityEvent,
 } from '@/lib/trading-policy';
 
@@ -26,6 +29,13 @@ const HEADERS_DB = { 'x-demo': 'false', 'x-storage': 'db' };
 // POST — Create / connect a trading account
 // ============================================================
 export async function POST(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const body = await req.json().catch(() => ({}));
   const id = uuidv4();
   const broker = body.broker || 'demo';
@@ -40,6 +50,7 @@ export async function POST(req: NextRequest) {
       eventType: 'CREDENTIAL_INTAKE_BLOCKED',
       correlationId,
       route: '/api/trading/accounts',
+      userId,
       reason: `Broker credential intake blocked. broker=${broker} type=${accountType}`,
     });
     return NextResponse.json(
@@ -64,7 +75,6 @@ export async function POST(req: NextRequest) {
       );
     }
     try {
-      const userId = await getUserId(req);
       const accountCheck = await checkSubscriptionLimit(userId, 'maxAccounts');
       if (!accountCheck.allowed) {
         return NextResponse.json(
@@ -82,11 +92,16 @@ export async function POST(req: NextRequest) {
           currency: body.currency || 'USD',
         },
       });
-      return NextResponse.json(account, { headers: HEADERS_DB });
+      // CR2: Return safe DTO + demo provenance for demo accounts
+      return NextResponse.json(
+        safeAccountDTO(account as unknown as Record<string, unknown>),
+        { headers: DEMO_PROVENANCE_HEADER },
+      );
     } catch (error: unknown) {
       logSecurityEvent({
         eventType: 'ACCOUNTS_POST_DEMO_ERROR',
         route: '/api/trading/accounts',
+        userId,
         reason: error instanceof Error ? error.message : 'Unknown',
       });
       return NextResponse.json(
@@ -115,7 +130,12 @@ export async function POST(req: NextRequest) {
     brokerInfo = { balance: info.balance, currency: info.currency, accountId: info.accountId };
   } catch (err: unknown) {
     validationError = err instanceof Error ? err.message : 'Broker validation failed';
-    console.warn(`[accounts POST] ${broker} validation failed:`, validationError);
+    logSecurityEvent({
+      eventType: 'BROKER_VALIDATION_FAILED',
+      route: '/api/trading/accounts',
+      userId,
+      reason: `Broker ${broker} validation failed: ${validationError}`,
+    });
   }
 
   if (!brokerInfo) {
@@ -129,12 +149,12 @@ export async function POST(req: NextRequest) {
   // 3. Save to DB (credentials already validated)
   // --------------------------------------------------------
   if (!dbReady) {
-    // P0-10: DB unavailable → 503, NOT a local linked account
     const correlationId = uuidv4();
     logSecurityEvent({
       eventType: 'ACCOUNTS_POST_NO_DB',
       correlationId,
       route: '/api/trading/accounts',
+      userId,
       reason: 'Database unavailable — cannot persist validated broker credentials',
     });
     return NextResponse.json(
@@ -149,7 +169,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const userId = await getUserId(req);
     const accountCheck = await checkSubscriptionLimit(userId, 'maxAccounts');
     if (!accountCheck.allowed) {
       return NextResponse.json(
@@ -158,7 +177,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // P0-12: All encrypt() calls MUST be awaited
     const encryptedApiKey = body.apiKey ? await encrypt(body.apiKey) : null;
     const encryptedApiSecret = body.apiSecret ? await encrypt(body.apiSecret) : null;
     const encryptedPassphrase = body.passphrase ? await encrypt(body.passphrase) : null;
@@ -176,12 +194,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // CONTAINMENT: Return safe DTO — strip credential fields
     return NextResponse.json(safeAccountDTO(account as unknown as Record<string, unknown>), { headers: HEADERS_DB });
   } catch (dbError: unknown) {
     logSecurityEvent({
       eventType: 'ACCOUNTS_POST_DB_ERROR',
       route: '/api/trading/accounts',
+      userId,
       reason: dbError instanceof Error ? dbError.message : 'Unknown',
     });
     return NextResponse.json(
@@ -218,7 +236,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(safeAccountDTOs(accounts as unknown as Record<string, unknown>[]), { headers });
   } catch (error) {
-    // P0-10: Catch returns 500, NOT demo accounts
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'ACCOUNTS_GET_ERROR',
       route: '/api/trading/accounts',

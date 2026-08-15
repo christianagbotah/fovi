@@ -1,12 +1,15 @@
 // ============================================================
 // Fovi Auto-Trade Engine — API-first Execution Loop
-// Phase 1 CR1: Emergency Containment
+// Phase 1 CR2:
 //   P0-5:  Bind Bun.serve to 127.0.0.1, auth check for /cycle etc.
 //   P0-15: AUTOMATED_TRADING_ENABLED check, provenance on market data,
 //          secret header in callNextJSApi, reject non-demo bots from demo data.
+//   CR2:   timingSafeEqual from node:crypto, candle provenance tracking,
+//          reject non-demo bots on synthetic data.
 // ============================================================
 
 import postgres from 'postgres';
+import { timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
 import {
   generateSignal,
   calculatePositionSize,
@@ -143,10 +146,24 @@ interface ActivityEntry {
   error?: string;
 }
 
-// ── P0-15: Market price provenance ──
+// ── P0-15/CR2: Market price provenance ──
 interface PriceResult {
   price: number;
   isDemoData: boolean;
+  environment: 'live' | 'demo';
+  source: string;
+}
+
+// ── CR2: Candle provenance ──
+interface CandleProvenance {
+  environment: 'live' | 'demo';
+  isSynthetic: boolean;
+  source: string;
+}
+
+interface CandleWithProvenance {
+  candles: CandleData[];
+  provenance: CandleProvenance;
 }
 
 // ============================================================
@@ -167,28 +184,35 @@ function addActivity(entry: Omit<ActivityEntry, 'id' | 'timestamp'>) {
 }
 
 // ============================================================
-// P0-5: Internal service auth for control endpoints
+// CR2: Internal service auth using node:crypto.timingSafeEqual
 // ============================================================
 
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+function checkInternalAuth(req: Request): { valid: boolean; status: number } {
+  if (!INTERNAL_SERVICE_SECRET) {
+    return { valid: false, status: 503 };
   }
-  return result === 0;
-}
-
-function checkInternalAuth(req: Request): boolean {
-  if (!INTERNAL_SERVICE_SECRET) return false;
   const provided = req.headers.get('x-internal-service-secret') || '';
-  return constantTimeEqual(provided, INTERNAL_SERVICE_SECRET);
+  const expected = Buffer.from(INTERNAL_SERVICE_SECRET);
+  const input = Buffer.from(provided);
+  if (input.length !== expected.length) {
+    return { valid: false, status: 401 };
+  }
+  try {
+    if (nodeTimingSafeEqual(input, expected)) {
+      return { valid: true, status: 200 };
+    }
+  } catch {
+    // fall through
+  }
+  return { valid: false, status: 401 };
 }
 
-function authErrorResponse(): Response {
+function authErrorResponse(status: number): Response {
+  const code = status === 503 ? 'INTERNAL_AUTH_REQUIRED' : 'INTERNAL_AUTH_INVALID';
+  const msg = status === 503 ? 'Internal service authentication not configured.' : 'Unauthorized.';
   return new Response(
-    JSON.stringify({ error: 'Unauthorized.', code: 'INTERNAL_AUTH_INVALID' }),
-    { status: 401, headers: { 'Content-Type': 'application/json' } },
+    JSON.stringify({ error: msg, code }),
+    { status, headers: { 'Content-Type': 'application/json' } },
   );
 }
 
@@ -225,7 +249,8 @@ Bun.serve({
 
     // ── P0-5: All other endpoints require internal service auth ──
     if (url.pathname === '/status') {
-      if (!checkInternalAuth(req)) return authErrorResponse();
+      const auth = checkInternalAuth(req);
+      if (!auth.valid) return authErrorResponse(auth.status);
       return Response.json({
         cycleCount,
         lastCycleTime,
@@ -239,7 +264,8 @@ Bun.serve({
     }
 
     if (url.pathname === '/cycle' && req.method === 'POST') {
-      if (!checkInternalAuth(req)) return authErrorResponse();
+      const auth = checkInternalAuth(req);
+      if (!auth.valid) return authErrorResponse(auth.status);
       runCycle().catch((e) => {
         console.error('[AutoTrade] Manual cycle error:', e);
       });
@@ -247,12 +273,14 @@ Bun.serve({
     }
 
     if (url.pathname === '/activity') {
-      if (!checkInternalAuth(req)) return authErrorResponse();
+      const auth = checkInternalAuth(req);
+      if (!auth.valid) return authErrorResponse(auth.status);
       return Response.json(activityLog);
     }
 
     if (url.pathname === '/positions') {
-      if (!checkInternalAuth(req)) return authErrorResponse();
+      const auth = checkInternalAuth(req);
+      if (!auth.valid) return authErrorResponse(auth.status);
       return Response.json(Array.from(positions.values()));
     }
 
@@ -388,7 +416,7 @@ async function fetchMarketPrice(symbol: string): Promise<PriceResult> {
     if (res.ok) {
       const data = await res.json() as Record<string, unknown>;
       const price = data.price ?? data.currentPrice;
-      if (typeof price === 'number' && price > 0) return { price, isDemoData: false };
+      if (typeof price === 'number' && price > 0) return { price, isDemoData: false, environment: 'live', source: 'nextjs-market-api' };
     }
   } catch { /* fall through */ }
 
@@ -403,45 +431,54 @@ async function fetchMarketPrice(symbol: string): Promise<PriceResult> {
       if (res.ok) {
         const data = await res.json() as Record<string, { usd?: number }>;
         const price = data[id]?.usd;
-        if (price && price > 0) return { price, isDemoData: false };
+        if (price && price > 0) return { price, isDemoData: false, environment: 'live', source: 'coingecko' };
       }
     } catch { /* fall through */ }
   }
 
   // Layer 3: Demo price
-  return { price: getDemoPrice(symbol), isDemoData: true };
+  return { price: getDemoPrice(symbol), isDemoData: true, environment: 'demo', source: 'fovi-demo-generator' };
 }
 
 // ============================================================
 // Candle Data Fetching
 // ============================================================
 
-const candleCache = new Map<string, { candles: CandleData[]; ts: number }>();
+const candleCache = new Map<string, { result: CandleWithProvenance; ts: number }>();
 const CANDLE_CACHE_TTL = 45_000;
 
-async function fetchCandles(symbol: string, limit: number = 100): Promise<CandleData[]> {
+async function fetchCandles(symbol: string, limit: number = 100): Promise<CandleWithProvenance> {
   const cacheKey = `${symbol}_${limit}`;
   const cached = candleCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CANDLE_CACHE_TTL) {
-    return cached.candles;
+    return cached.result;
   }
 
-  let candles: CandleData[] | null = null;
+  const demoProvenance: CandleProvenance = { environment: 'demo', isSynthetic: true, source: 'fovi-demo-generator' };
+  const liveProvenance: CandleProvenance = { environment: 'live', isSynthetic: false, source: '' };
 
+  // Try real sources
   if (isCryptoSymbol(symbol)) {
-    candles = await fetchCoinGeckoOHLC(symbol, limit);
+    const cg = await fetchCoinGeckoOHLC(symbol, limit);
+    if (cg && cg.length >= 10) {
+      const result: CandleWithProvenance = { candles: cg, provenance: { ...liveProvenance, source: 'coingecko' } };
+      candleCache.set(cacheKey, { result, ts: Date.now() });
+      return result;
+    }
   }
 
-  if (!candles || candles.length < 10) {
-    candles = await fetchNextJSCandles(symbol, limit);
+  const nj = await fetchNextJSCandles(symbol, limit);
+  if (nj && nj.length >= 10) {
+    const result: CandleWithProvenance = { candles: nj, provenance: { ...liveProvenance, source: 'nextjs-market-api' } };
+    candleCache.set(cacheKey, { result, ts: Date.now() });
+    return result;
   }
 
-  if (!candles || candles.length < 10) {
-    candles = generateDemoCandles(symbol, limit);
-  }
-
-  candleCache.set(cacheKey, { candles, ts: Date.now() });
-  return candles;
+  // Demo fallback
+  const demoCandles = generateDemoCandles(symbol, limit);
+  const result: CandleWithProvenance = { candles: demoCandles, provenance: demoProvenance };
+  candleCache.set(cacheKey, { result, ts: Date.now() });
+  return result;
 }
 
 async function fetchCoinGeckoOHLC(symbol: string, limit: number): Promise<CandleData[] | null> {
@@ -892,9 +929,19 @@ async function processBot(config: BotRow) {
 
   for (const symbol of symbols) {
     try {
-      const candles = await fetchCandles(symbol, 100);
+      const { candles, provenance: candleProvenance } = await fetchCandles(symbol, 100);
       if (candles.length < 10) {
         console.log(`${tag} [${symbol}] Not enough candles (${candles.length}) — skipping`);
+        continue;
+      }
+
+      // ── CR2: Reject non-demo bots from synthetic data ──
+      if (!isBotDemo && candleProvenance.isSynthetic) {
+        console.log(`${tag} [${symbol}] Skipping: non-demo bot received synthetic candles (source: ${candleProvenance.source})`);
+        addActivity({
+          type: 'error', botId: config.id, botName: config.name,
+          symbol, error: `Non-demo bot rejected: synthetic candle data from ${candleProvenance.source}`,
+        });
         continue;
       }
 

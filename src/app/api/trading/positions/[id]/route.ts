@@ -1,13 +1,11 @@
 // ============================================================
 // PATCH/DELETE /api/trading/positions/[id]
-// Phase 1 CR1:
-//   P0-7: PATCH — reject live position modification (deferred feature)
-//   P0-6: DELETE — enforce live-trading policy before close
+// Phase 1 CR2: Strict auth, hard-block live position modifications.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
@@ -23,9 +21,9 @@ export async function PATCH(
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
   try {
+    const userId = await getUserId(req);
     const { id } = await params;
     const body = await req.json();
-    const userId = await getUserId(req);
 
     const position = await db.position.findFirst({
       where: { id, status: 'open' },
@@ -34,11 +32,12 @@ export async function PATCH(
     if (!position) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
+    // Cross-tenant check
     if (position.account.userId !== userId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // ── P0-7: Reject live position-protection modification (deferred) ──
+    // Reject live position-protection modification
     if (!isExplicitlyDemo(position.account)) {
       const correlationId = uuidv4();
       logSecurityEvent({
@@ -82,6 +81,9 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'POSITION_PATCH_ERROR',
       route: '/api/trading/positions/[id]',
@@ -100,8 +102,8 @@ export async function DELETE(
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
   try {
-    const { id } = await params;
     const userId = await getUserId(req);
+    const { id } = await params;
 
     const position = await db.position.findFirst({
       where: { id, status: 'open' },
@@ -110,24 +112,22 @@ export async function DELETE(
     if (!position) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
+    // Cross-tenant check
     if (position.account.userId !== userId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // ── P0-6: Enforce live-trading policy BEFORE createBroker/closePosition ──
+    // ── CONTAINMENT: Enforce live-trading policy BEFORE closePosition ──
     const policy = enforceLiveTradingPolicy(position.account, `position close (${position.symbol})`);
     if (policy.blocked) return policy.response;
 
-    // Close via broker
     const broker = await createBrokerFromAccount(position.account);
     const result = await broker.closePosition(position.symbol);
 
-    // Calculate realized PnL
     const closedPnl = position.side === 'long'
       ? (position.currentPrice - position.avgEntryPrice) * position.qty
       : (position.avgEntryPrice - position.currentPrice) * position.qty;
 
-    // Admin levy deduction on profitable closes
     let userPnl = closedPnl;
     let levyAmount = 0;
     let levyPercent = 0;
@@ -137,8 +137,7 @@ export async function DELETE(
         levyPercent = await getGlobalAdminLevy();
         levyAmount = closedPnl * (levyPercent / 100);
         userPnl = closedPnl - levyAmount;
-      } catch (levyErr) {
-        console.warn('[positions DELETE] admin levy calculation failed, skipping:', levyErr);
+      } catch {
         levyPercent = 0;
         levyAmount = 0;
         userPnl = closedPnl;
@@ -154,20 +153,7 @@ export async function DELETE(
     if (levyAmount > 0) {
       accountUpdateData.totalAdminLevyCollected = { increment: levyAmount };
     }
-    await db.tradingAccount.update({
-      where: { id: position.accountId }, data: accountUpdateData,
-    });
-
-    if (levyAmount > 0 && hasModel('botConfig')) {
-      try {
-        await db.botConfig.updateMany({
-          where: { accountId: position.accountId },
-          data: { adminLevyCollected: { increment: levyAmount } },
-        });
-      } catch (botErr) {
-        console.warn('[positions DELETE] botConfig levy update failed (non-critical):', botErr);
-      }
-    }
+    await db.tradingAccount.update({ where: { id: position.accountId }, data: accountUpdateData });
 
     return NextResponse.json({
       success: true, orderId: result.orderId,
@@ -175,6 +161,9 @@ export async function DELETE(
       rawPnl: closedPnl, status: result.status,
     });
   } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'POSITION_DELETE_ERROR',
       route: '/api/trading/positions/[id]',

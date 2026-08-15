@@ -1,11 +1,11 @@
 // ============================================================
 // POST /api/trading/accounts/switch — Switch default account
-// Phase 1 CR1: P0-10 DB error returns 500. P0-11 safeAccountDTO.
+// Phase 1 CR2: Strict auth (AuthRequiredError → 401), safe DTO.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { safeAccountDTO, logSecurityEvent } from '@/lib/trading-policy';
 
 export async function POST(req: NextRequest) {
@@ -16,8 +16,8 @@ export async function POST(req: NextRequest) {
     );
   }
   try {
-    const { accountId } = await req.json();
     const userId = await getUserId(req);
+    const { accountId } = await req.json();
 
     // Unset all defaults
     await db.tradingAccount.updateMany({
@@ -25,16 +25,17 @@ export async function POST(req: NextRequest) {
       data: { isDefault: false },
     });
 
-    // Set new default
+    // Set new default — scoped to this user
     const account = await db.tradingAccount.update({
       where: { id: accountId, userId },
       data: { isDefault: true },
     });
 
-    // P0-11: Return safeAccountDTO
     return NextResponse.json(safeAccountDTO(account as unknown as Record<string, unknown>));
   } catch (error) {
-    // P0-10: DB error returns 500, NOT success with x-demo
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     logSecurityEvent({
       eventType: 'ACCOUNT_SWITCH_ERROR',
       route: '/api/trading/accounts/switch',

@@ -1,12 +1,11 @@
 // ============================================================
 // GET /api/trading/positions — Open positions list
-// Phase 1 CR1: Remove DemoBroker on DB missing. Return 503.
-// Only generate demo positions for explicitly demo accounts.
+// Phase 1 CR2: Strict auth, demo provenance.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserIdSync } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getAssetType } from '@/lib/broker/demo';
 import { loadDemoPositionSLTP } from '@/lib/demo-sltp-store';
@@ -14,22 +13,22 @@ import { logSecurityEvent, isExplicitlyDemo, DEMO_PROVENANCE_HEADER } from '@/li
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
-  // No DB → return 503, NOT demo positions
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('tradingAccount')) {
     const correlationId = uuidv4();
     logSecurityEvent({
-      eventType: 'POSITIONS_DB_UNAVAILABLE',
-      correlationId,
-      route: '/api/trading/positions',
+      eventType: 'POSITIONS_DB_UNAVAILABLE', correlationId,
+      route: '/api/trading/positions', userId,
       reason: 'Database unavailable for positions query',
     });
     return NextResponse.json(
-      {
-        error: 'Position data is temporarily unavailable.',
-        code: 'SERVICE_UNAVAILABLE',
-        correlationId,
-        remediationPhase: 'containment',
-      },
+      { error: 'Position data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', correlationId, remediationPhase: 'containment' },
       { status: 503 },
     );
   }
@@ -37,7 +36,6 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-    const userId = getUserIdSync(req);
 
     const account = await db.tradingAccount.findFirst({
       where: accountId ? { id: accountId, userId } : { userId, isDefault: true },
@@ -51,10 +49,8 @@ export async function GET(req: NextRequest) {
     const broker = await createBrokerFromAccount(account);
     const brokerPositions = await broker.getPositions();
 
-    // Load in-memory SL/TP overrides for demo accounts only
     const slTpMap = isDemo ? loadDemoPositionSLTP() : new Map();
 
-    // Upsert positions to DB
     for (const bp of brokerPositions) {
       const existing = await db.position.findFirst({
         where: { accountId: account.id, symbol: bp.symbol, status: 'open' },
@@ -77,13 +73,9 @@ export async function GET(req: NextRequest) {
       } else {
         await db.position.create({
           data: {
-            accountId: account.id,
-            symbol: bp.symbol,
-            assetType: getAssetType(bp.symbol),
-            side: bp.side,
-            qty: bp.qty,
-            avgEntryPrice: bp.avgEntryPrice,
-            currentPrice: bp.currentPrice,
+            accountId: account.id, symbol: bp.symbol,
+            assetType: getAssetType(bp.symbol), side: bp.side, qty: bp.qty,
+            avgEntryPrice: bp.avgEntryPrice, currentPrice: bp.currentPrice,
             unrealizedPnl: bp.unrealizedPnl,
             ...(isDemo ? { stopLoss, takeProfit } : {}),
           },
@@ -96,7 +88,6 @@ export async function GET(req: NextRequest) {
       orderBy: { openedAt: 'desc' },
     });
 
-    // Merge in-memory SL/TP overrides for demo accounts
     if (isDemo) {
       for (const pos of positions) {
         const memSltp = slTpMap.get(pos.symbol);
@@ -114,12 +105,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(positions, { headers: responseHeaders });
   } catch (error) {
-    // Catch returns 500, NOT demo fallback
     const correlationId = uuidv4();
     logSecurityEvent({
-      eventType: 'POSITIONS_ERROR',
-      correlationId,
-      route: '/api/trading/positions',
+      eventType: 'POSITIONS_ERROR', correlationId,
+      route: '/api/trading/positions', userId,
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
 
