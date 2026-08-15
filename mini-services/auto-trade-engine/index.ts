@@ -9,7 +9,7 @@
 // ============================================================
 
 import postgres from 'postgres';
-import { timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
 import {
   generateSignal,
   calculatePositionSize,
@@ -187,22 +187,24 @@ function addActivity(entry: Omit<ActivityEntry, 'id' | 'timestamp'>) {
 // CR2: Internal service auth using node:crypto.timingSafeEqual
 // ============================================================
 
+function constantTimeEqual(a: string, b: string): boolean {
+  try {
+    const encoder = new TextEncoder();
+    const digestA = createHash('sha256').update(encoder.encode(a)).digest();
+    const digestB = createHash('sha256').update(encoder.encode(b)).digest();
+    return nodeTimingSafeEqual(digestA, digestB);
+  } catch {
+    return false;
+  }
+}
+
 function checkInternalAuth(req: Request): { valid: boolean; status: number } {
   if (!INTERNAL_SERVICE_SECRET) {
     return { valid: false, status: 503 };
   }
   const provided = req.headers.get('x-internal-service-secret') || '';
-  const expected = Buffer.from(INTERNAL_SERVICE_SECRET);
-  const input = Buffer.from(provided);
-  if (input.length !== expected.length) {
-    return { valid: false, status: 401 };
-  }
-  try {
-    if (nodeTimingSafeEqual(input, expected)) {
-      return { valid: true, status: 200 };
-    }
-  } catch {
-    // fall through
+  if (constantTimeEqual(provided, INTERNAL_SERVICE_SECRET)) {
+    return { valid: true, status: 200 };
   }
   return { valid: false, status: 401 };
 }

@@ -1,7 +1,7 @@
 // ============================================================
-// Containment behavioral tests — trading policy (Req 7, Req 4)
+// Containment behavioral tests — trading policy (Req 3, Req 4, Req 10)
 // Tests enforceLiveTradingPolicy, safeAccountDTO, getUserId,
-// broker factory containment, and cross-tenant isolation.
+// broker factory containment, and Phase 1 unconditional containment.
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -12,12 +12,11 @@ const ORIGINAL_ENV = process.env;
 vi.mock('@/lib/db', () => ({
   db: null,
   hasModel: () => false,
-  DEMO_USER_ID: 'usr_demo_1',
-  ensureDemoUser: vi.fn(),
 }));
 
 import {
   enforceLiveTradingPolicy,
+  enforcePhase1CredentialIntake,
   safeAccountDTO,
   safeAccountDTOs,
   isExplicitlyDemo,
@@ -39,7 +38,6 @@ describe('trading policy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env = { ...ORIGINAL_ENV };
-    // Ensure containment defaults
     delete process.env.LIVE_TRADING_ENABLED;
     delete process.env.BROKER_CREDENTIAL_INTAKE_ENABLED;
     delete process.env.AUTOMATED_TRADING_ENABLED;
@@ -53,10 +51,22 @@ describe('trading policy', () => {
   describe('enforceLiveTradingPolicy', () => {
     it('allows demo accounts unconditionally', () => {
       const result = enforceLiveTradingPolicy(
-        { broker: 'demo', accountType: 'demo' },
+        { broker: 'demo', accountType: 'demo', isDemo: true },
         'test operation',
       );
       expect(result.blocked).toBe(false);
+    });
+
+    it('blocks live accounts even when LIVE_TRADING_ENABLED is true', async () => {
+      process.env.LIVE_TRADING_ENABLED = 'true';
+      const result = enforceLiveTradingPolicy(
+        { broker: 'okx', accountType: 'live' },
+        'test operation',
+      );
+      expect(result.blocked).toBe(true);
+      if (result.blocked) {
+        expect(result.response.status).toBe(403);
+      }
     });
 
     it('blocks live accounts when LIVE_TRADING_ENABLED is false', () => {
@@ -84,6 +94,66 @@ describe('trading policy', () => {
       if (result.blocked) {
         expect(result.response.status).toBe(403);
       }
+    });
+
+    it('blocks live accounts with all enable flags set to true', () => {
+      process.env.LIVE_TRADING_ENABLED = 'true';
+      process.env.BROKER_CREDENTIAL_INTAKE_ENABLED = 'true';
+      process.env.AUTOMATED_TRADING_ENABLED = 'true';
+      const result = enforceLiveTradingPolicy(
+        { broker: 'binance', accountType: 'live', isDemo: false },
+        'order placement',
+      );
+      expect(result.blocked).toBe(true);
+      if (result.blocked) {
+        expect(result.response.status).toBe(403);
+      }
+    });
+
+    it('blocks accounts with conflicting fields (broker=demo but accountType=live)', () => {
+      const result = enforceLiveTradingPolicy(
+        { broker: 'demo', accountType: 'live' },
+        'test operation',
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    it('blocks accounts with conflicting fields (broker=okx but accountType=demo)', () => {
+      const result = enforceLiveTradingPolicy(
+        { broker: 'okx', accountType: 'demo' },
+        'test operation',
+      );
+      expect(result.blocked).toBe(true);
+    });
+
+    it('blocks accounts with isDemo=false', () => {
+      const result = enforceLiveTradingPolicy(
+        { broker: 'demo', accountType: 'demo', isDemo: false },
+        'test operation',
+      );
+      expect(result.blocked).toBe(true);
+    });
+  });
+
+  // ── enforcePhase1CredentialIntake ──
+  describe('enforcePhase1CredentialIntake', () => {
+    it('allows demo broker', () => {
+      const result = enforcePhase1CredentialIntake('demo', 'demo');
+      expect(result.blocked).toBe(false);
+    });
+
+    it('blocks okx regardless of env vars', () => {
+      process.env.BROKER_CREDENTIAL_INTAKE_ENABLED = 'true';
+      const result = enforcePhase1CredentialIntake('okx', 'live');
+      expect(result.blocked).toBe(true);
+      if (result.blocked) {
+        expect(result.response.status).toBe(403);
+      }
+    });
+
+    it('blocks binance', () => {
+      const result = enforcePhase1CredentialIntake('binance', 'live');
+      expect(result.blocked).toBe(true);
     });
   });
 
@@ -133,6 +203,7 @@ describe('trading policy', () => {
   describe('account type classification', () => {
     it('identifies demo accounts', () => {
       expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo' })).toBe(true);
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: true })).toBe(true);
     });
 
     it('rejects demo provider with live type', () => {
@@ -143,16 +214,29 @@ describe('trading policy', () => {
       expect(isExplicitlyDemo({ broker: 'okx', accountType: 'demo' })).toBe(false);
     });
 
+    it('rejects when isDemo is explicitly false', () => {
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: false })).toBe(false);
+    });
+
     it('classifies live accounts correctly', () => {
       expect(isLiveAccount({ broker: 'okx', accountType: 'live' })).toBe(true);
       expect(isLiveAccount({ broker: 'demo', accountType: 'demo' })).toBe(false);
     });
+
+    it('classifies null/unknown isDemo as demo if broker and type are demo', () => {
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: null })).toBe(true);
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: undefined })).toBe(true);
+    });
   });
 
-  // ── constantTimeEqual ──
+  // ── constantTimeEqual (SHA-256 based) ──
   describe('constantTimeEqual', () => {
     it('returns true for equal strings', () => {
       expect(constantTimeEqual('abc123', 'abc123')).toBe(true);
+    });
+
+    it('returns true for empty strings', () => {
+      expect(constantTimeEqual('', '')).toBe(true);
     });
 
     it('returns false for different strings of same length', () => {
@@ -161,6 +245,15 @@ describe('trading policy', () => {
 
     it('returns false for different lengths', () => {
       expect(constantTimeEqual('short', 'much-longer-string')).toBe(false);
+    });
+
+    it('returns false for empty vs non-empty', () => {
+      expect(constantTimeEqual('', 'non-empty')).toBe(false);
+    });
+
+    it('handles Unicode correctly', () => {
+      expect(constantTimeEqual('café', 'café')).toBe(true);
+      expect(constantTimeEqual('café', 'cafe')).toBe(false);
     });
   });
 
@@ -263,7 +356,6 @@ describe('broker factory containment', () => {
   it('creates DemoBroker for provider=demo + isDemo=true', () => {
     const broker = createBroker({ provider: 'demo', isDemo: true });
     expect(broker).toBeDefined();
-    // Verify it has the expected methods
     expect(typeof broker.placeOrder).toBe('function');
   });
 
@@ -292,42 +384,8 @@ describe('broker factory containment', () => {
     }
   });
 
-  it('throws for provider=generic-rest (no GenericRESTBroker fallback)', () => {
+  it('throws for provider=generic-rest (no fallback)', () => {
     expect(() => createBroker({ provider: 'generic-rest' as any, isDemo: false }))
       .toThrow(BrokerFactoryError);
-  });
-});
-
-// ── Broker spy tests: blocked operations never call mutation methods ──
-describe('broker mutation blocking', () => {
-  it('live order placement is blocked before broker.placeOrder is called', () => {
-    const policy = enforceLiveTradingPolicy(
-      { broker: 'okx', accountType: 'live' },
-      'order placement (buy 1 BTC)',
-    );
-    expect(policy.blocked).toBe(true);
-    // If blocked, the route handler returns the response
-    // without ever calling broker.placeOrder
-  });
-
-  it('live order cancellation is blocked before broker.cancelOrder is called', () => {
-    const policy = enforceLiveTradingPolicy(
-      { broker: 'binance', accountType: 'live' },
-      'order cancel (BTC order_123)',
-    );
-    expect(policy.blocked).toBe(true);
-  });
-
-  it('live position closing is blocked before broker.closePosition is called', () => {
-    const policy = enforceLiveTradingPolicy(
-      { broker: 'alpaca', accountType: 'live' },
-      'position close (AAPL)',
-    );
-    expect(policy.blocked).toBe(true);
-  });
-
-  it('null account blocks operation', () => {
-    const policy = enforceLiveTradingPolicy(null, 'any operation');
-    expect(policy.blocked).toBe(true);
   });
 });

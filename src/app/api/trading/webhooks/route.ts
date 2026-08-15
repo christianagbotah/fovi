@@ -102,7 +102,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   if (!db || !hasModel('webhookConfig')) {
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ error: 'Webhook deletion is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' }, { status: 503 });
   }
 
   try {

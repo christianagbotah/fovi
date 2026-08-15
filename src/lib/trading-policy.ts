@@ -1,14 +1,17 @@
 // ============================================================
 // trading-policy.ts — Central server-side trading policy
-// Phase 1: Emergency Containment (Correction Round 1)
+// Phase 1: Emergency Containment (Correction Round 3)
+//   - UNCONDITIONAL paper/demo-only: no env var can override
+//   - Genuine timing-safe comparison: SHA-256 + timingSafeEqual
 // ============================================================
 
 import { NextResponse } from 'next/server';
+import { createHash, timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
 
 // ── Environment controls ──
-// Both default to false. Missing, empty, or unrecognized values → false.
+// All default to false. These variables EXIST for future Phase 2+ use.
+// During Phase 1, they CANNOT override containment.
 
 function envBool(name: string): boolean {
   const raw = process.env[name];
@@ -18,21 +21,21 @@ function envBool(name: string): boolean {
 }
 
 /**
- * Master kill-switch for all live-money order placement.
- * When false (default), every order-producing code path must reject
- * live accounts with CONTAINMENT_LIVE_BLOCKED.
+ * @deprecated Phase 1: This variable is read but NEVER consulted for
+ * containment decisions. Live trading is unconditionally blocked.
+ * Kept only for forward-compatibility and to avoid breaking imports.
  */
 export const LIVE_TRADING_ENABLED = envBool('LIVE_TRADING_ENABLED');
 
 /**
- * Separate control for broker credential intake.
- * When false (default), connecting non-demo accounts is blocked.
+ * @deprecated Phase 1: This variable is read but NEVER consulted for
+ * containment decisions. Credential intake is unconditionally blocked.
  */
 export const BROKER_CREDENTIAL_INTAKE_ENABLED = envBool('BROKER_CREDENTIAL_INTAKE_ENABLED');
 
 /**
- * Separate control for automated trading (bot engine execution).
- * When false (default), the auto-trade engine skips cycle execution.
+ * @deprecated Phase 1: This variable is read but NEVER consulted for
+ * containment decisions. Automated trading is unconditionally blocked.
  */
 export const AUTOMATED_TRADING_ENABLED = envBool('AUTOMATED_TRADING_ENABLED');
 
@@ -44,6 +47,7 @@ export const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET || ''
 
 // ── Error codes ──
 export const CONTAINMENT_CODES = {
+  PHASE1_LIVE_TRADING_DISABLED: 'PHASE1_LIVE_TRADING_DISABLED',
   LIVE_BLOCKED: 'LIVE_TRADING_DISABLED',
   CREDENTIAL_INTAKE_DISABLED: 'CREDENTIAL_INTAKE_DISABLED',
   AUTH_REQUIRED: 'AUTH_REQUIRED',
@@ -54,6 +58,7 @@ export const CONTAINMENT_CODES = {
   BROKER_CONFIG_INCOMPLETE: 'BROKER_CONFIG_INCOMPLETE',
   WEBHOOK_DISABLED: 'WEBHOOK_INGRESS_DISABLED',
   CONFIGURATION_REQUIRED: 'CONFIGURATION_REQUIRED',
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
 } as const;
 
 // ── Containment response helpers ──
@@ -76,13 +81,27 @@ function containmentBody(code: string, message: string, correlationId: string): 
 
 /**
  * Check if an account is explicitly a demo account.
- * ONLY accounts where BOTH broker='demo' AND accountType='demo' are demo.
+ * ALL of the following must be true:
+ *   - broker === 'demo'
+ *   - accountType === 'demo'
+ *   - isDemo === true (if the field exists)
+ *
+ * Null, missing, unknown, conflicting, or non-demo accounts
+ * fail closed (return false).
  */
 export function isExplicitlyDemo(account: {
   broker: string;
   accountType: string;
+  isDemo?: boolean | null;
 }): boolean {
-  return account.broker === 'demo' && account.accountType === 'demo';
+  if (!account) return false;
+  const brokerDemo = account.broker === 'demo';
+  const typeDemo = account.accountType === 'demo';
+  // If isDemo is explicitly set, it must also be true
+  const isDemoField = account.isDemo !== undefined && account.isDemo !== null
+    ? account.isDemo === true
+    : true; // If field absent, don't fail on it
+  return brokerDemo && typeDemo && isDemoField;
 }
 
 /**
@@ -91,6 +110,7 @@ export function isExplicitlyDemo(account: {
 export function isLiveAccount(account: {
   broker: string;
   accountType: string;
+  isDemo?: boolean | null;
 }): boolean {
   return !isExplicitlyDemo(account);
 }
@@ -98,12 +118,19 @@ export function isLiveAccount(account: {
 /**
  * Enforce live-trading policy. Call this before any order-producing operation.
  *
- * When account is null/undefined → CONFIGURATION_REQUIRED (fail closed).
+ * Phase 1: UNCONDITIONAL containment.
+ * - Environment variables (LIVE_TRADING_ENABLED, BROKER_CREDENTIAL_INTAKE_ENABLED,
+ *   AUTOMATED_TRADING_ENABLED) CANNOT override this.
+ * - Only explicitly demo accounts (broker=demo, accountType=demo, isDemo=true)
+ *   are permitted.
+ * - Null/undefined account → fail closed (CONFIGURATION_REQUIRED).
+ * - Any non-demo account → fail closed (PHASE1_LIVE_TRADING_DISABLED).
+ *
  * Returns null if the operation is permitted.
  * Returns a NextResponse if the operation must be blocked.
  */
 export function enforceLiveTradingPolicy(
-  account: { broker: string; accountType: string } | null | undefined,
+  account: { broker: string; accountType: string; isDemo?: boolean | null } | null | undefined,
   operation: string,
 ): { blocked: true; response: Response } | { blocked: false } {
   // If no account at all → fail closed (CONFIGURATION_REQUIRED)
@@ -133,57 +160,56 @@ export function enforceLiveTradingPolicy(
   // Demo accounts are always allowed
   if (isExplicitlyDemo(account)) return { blocked: false };
 
-  // Live account: check master switch
-  if (!LIVE_TRADING_ENABLED) {
-    const correlationId = uuidv4();
-    console.warn(
-      `[CONTAINMENT] Live ${operation} blocked. code=${CONTAINMENT_CODES.LIVE_BLOCKED} ` +
-      `cid=${correlationId} broker=${account.broker} type=${account.accountType}`
-    );
-    return {
-      blocked: true,
-      response: new Response(
-        JSON.stringify(containmentBody(
-          CONTAINMENT_CODES.LIVE_BLOCKED,
-          `Live trading is temporarily disabled. ${operation} was not executed. No funds were affected.`,
-          correlationId,
-        )),
-        {
-          status: 403,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
-    };
-  }
-
-  return { blocked: false };
+  // Phase 1: ALL non-demo operations are unconditionally blocked.
+  // No environment variable can override this during Phase 1.
+  const correlationId = uuidv4();
+  console.warn(
+    `[CONTAINMENT] Phase 1: Live ${operation} blocked. code=${CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED} ` +
+    `cid=${correlationId} broker=${account.broker} type=${account.accountType}` +
+    ` (LIVE_TRADING_ENABLED=${LIVE_TRADING_ENABLED}, BROKER_CREDENTIAL_INTAKE_ENABLED=${BROKER_CREDENTIAL_INTAKE_ENABLED})`
+  );
+  return {
+    blocked: true,
+    response: new Response(
+      JSON.stringify(containmentBody(
+        CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+        `Phase 1 containment: live trading is not permitted. ${operation} was not executed. No funds were affected.`,
+        correlationId,
+      )),
+      {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    ),
+  };
 }
 
-// ── Timing-safe comparison helpers ──
+// ── Genuine timing-safe comparison ──
 
 /**
- * Constant-time string comparison (byte-by-byte, no length leak).
- * This is the synchronous version used internally by enforceInternalAuth.
+ * Constant-time string comparison using SHA-256 digests.
+ * UTF-8 encodes each value, hashes with SHA-256 to produce fixed 32-byte
+ * digests, then compares those digests with node:crypto.timingSafeEqual.
+ *
+ * This is safe for different-length strings because we compare the
+ * fixed-length hash digests, not the raw strings.
  */
 export function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-/**
- * Timing-safe string comparison using node:crypto.timingSafeEqual.
- * Async because we import from node:crypto dynamically for compatibility.
- */
-export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   try {
-    return nodeTimingSafeEqual(Buffer.from(a), Buffer.from(b));
+    const encoder = new TextEncoder();
+    const digestA = createHash('sha256').update(encoder.encode(a)).digest();
+    const digestB = createHash('sha256').update(encoder.encode(b)).digest();
+    return nodeTimingSafeEqual(digestA, digestB);
   } catch {
     return false;
   }
+}
+
+/**
+ * @deprecated Use constantTimeEqual instead (synchronous, fixed-length SHA-256 based).
+ */
+export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+  return constantTimeEqual(a, b);
 }
 
 /**
@@ -232,6 +258,40 @@ export function enforceInternalAuth(req: Request): Response | null {
   return null;
 }
 
+// ── Phase 1 credential intake enforcement ──
+
+/**
+ * Check if credential intake is blocked during Phase 1.
+ * Phase 1: ALWAYS blocked for non-demo accounts, regardless of env vars.
+ */
+export function enforcePhase1CredentialIntake(
+  broker: string,
+  accountType: string,
+): { blocked: false } | { blocked: true; response: Response } {
+  const isRealBroker = broker !== 'demo';
+  if (!isRealBroker) return { blocked: false };
+
+  // Phase 1: unconditionally block non-demo credential intake
+  const correlationId = uuidv4();
+  logSecurityEvent({
+    eventType: 'CREDENTIAL_INTAKE_BLOCKED',
+    correlationId,
+    reason: `Phase 1: Non-demo credential intake unconditionally blocked. broker=${broker} type=${accountType}`,
+  });
+  return {
+    blocked: true,
+    response: new Response(
+      JSON.stringify({
+        error: 'Phase 1 containment: broker credential intake is not permitted.',
+        code: CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+        correlationId,
+        remediationPhase: 'containment',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
+    ),
+  };
+}
+
 // ── Safe DTO: strip credentials from account objects ──
 
 export function safeAccountDTO(account: Record<string, unknown>): Record<string, unknown> {
@@ -267,7 +327,7 @@ export const DEMO_PROVENANCE_HEADER = {
  */
 export function demoResponse(
   data: Record<string, unknown>,
-  req?: Request,
+  _req?: Request,
   statusCode?: number,
 ): NextResponse {
   const merged = { ...data, ...DEMO_PROVENANCE };
@@ -286,8 +346,7 @@ export function demoResponse(
 // ── Structured security event logging ──
 
 /**
- * TEMPORARY CONTROL: Log security events as structured JSON to console.warn.
- * This is a stopgap until durable audit logging is implemented.
+ * Log security events as structured JSON to console.warn.
  * All fields containing 'secret', 'key', 'token', or 'password'
  * (case-insensitive check on field name) will have their values redacted.
  */

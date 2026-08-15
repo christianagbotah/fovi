@@ -60,8 +60,10 @@ describe('auth token operations with test env', () => {
     const payload = await auth.verifyToken(token);
     expect(payload).not.toBeNull();
     expect(payload!.sub).toBe('user1');
-    expect(payload!.email).toBe('test@test.com');
     expect(payload!.type).toBe('access');
+    if (payload && payload.type === 'access') {
+      expect(payload.email).toBe('test@test.com');
+    }
   });
 
   it('can generate and verify refresh token', async () => {
