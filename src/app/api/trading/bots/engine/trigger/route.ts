@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
-
-// ============================================================
-// POST /api/trading/bots/engine/trigger
-// ============================================================
-// Proxies the request to the auto-trade-engine's /cycle endpoint.
-// ============================================================
+import { enforceInternalAuth } from '@/lib/trading-policy';
 
 const ENGINE_URL = 'http://localhost:3012/cycle';
 
-export async function POST() {
+export async function POST(req: Request) {
+  // ── CONTAINMENT: Require internal service auth ──
+  const authError = enforceInternalAuth(req);
+  if (authError) return authError;
+
   try {
     const res = await fetch(ENGINE_URL, {
       method: 'POST',

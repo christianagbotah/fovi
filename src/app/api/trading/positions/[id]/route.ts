@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
-import { createBrokerFromAccount } from '@/lib/broker/factory';
+import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
+import { enforceLiveTradingPolicy, isExplicitlyDemo } from '@/lib/trading-policy';
 
 // PATCH — update TP/SL or other position fields
 export async function PATCH(
@@ -16,10 +17,8 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await req.json();
-
     const userId = await getUserId(req);
 
-    // Verify position belongs to user's account
     const position = await db.position.findFirst({
       where: { id, status: 'open' },
       include: { account: true },
@@ -41,13 +40,9 @@ export async function PATCH(
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
-    const updated = await db.position.update({
-      where: { id },
-      data: updateData,
-    });
+    const updated = await db.position.update({ where: { id }, data: updateData });
 
-    // For demo positions, also update the in-memory demo-sltp-store
-    const isDemo = position.account.broker === 'demo' || position.account.accountType === 'demo';
+    const isDemo = isExplicitlyDemo(position.account);
     if (isDemo && (body.stopLoss !== undefined || body.takeProfit !== undefined)) {
       saveDemoPositionSLTP(
         position.symbol,
@@ -86,6 +81,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // ── CONTAINMENT: Enforce live-trading policy on close ──
+    const policy = enforceLiveTradingPolicy(position.account, `position close (${position.symbol})`);
+    if (policy.blocked) return policy.response;
+
     // Close via broker
     const broker = await createBrokerFromAccount(position.account);
     const result = await broker.closePosition(position.symbol);
@@ -115,24 +114,17 @@ export async function DELETE(
 
     await db.position.update({
       where: { id },
-      data: {
-        status: 'closed',
-        closedAt: new Date(),
-        realizedPnl: userPnl,
-      },
+      data: { status: 'closed', closedAt: new Date(), realizedPnl: userPnl },
     });
 
-    // Update account: sync time + admin levy collected
     const accountUpdateData: Record<string, unknown> = { lastSyncedAt: new Date() };
     if (levyAmount > 0) {
       accountUpdateData.totalAdminLevyCollected = { increment: levyAmount };
     }
     await db.tradingAccount.update({
-      where: { id: position.accountId },
-      data: accountUpdateData,
+      where: { id: position.accountId }, data: accountUpdateData,
     });
 
-    // Update BotConfig admin levy collected if it exists
     if (levyAmount > 0 && hasModel('botConfig')) {
       try {
         await db.botConfig.updateMany({
@@ -145,15 +137,18 @@ export async function DELETE(
     }
 
     return NextResponse.json({
-      success: true,
-      orderId: result.orderId,
-      realizedPnl: userPnl,
-      adminLevy: levyAmount,
-      adminLevyPercent: levyPercent,
-      rawPnl: closedPnl,
-      status: result.status,
+      success: true, orderId: result.orderId,
+      realizedPnl: userPnl, adminLevy: levyAmount, adminLevyPercent: levyPercent,
+      rawPnl: closedPnl, status: result.status,
     });
   } catch (error) {
+    // ── CONTAINMENT: Never fall back to DemoBroker ──
+    if (error instanceof BrokerFactoryError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.code === 'BROKER_CONNECTION_FAILED' ? 503 : 400 },
+      );
+    }
     console.warn('[positions DELETE] error:', error);
     return NextResponse.json({ error: 'Failed to close position' }, { status: 500 });
   }

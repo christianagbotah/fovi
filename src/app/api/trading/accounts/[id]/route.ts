@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId } from '@/lib/get-user-id';
 import { z } from 'zod/v4';
+import { safeAccountDTO } from '@/lib/trading-policy';
 
 const patchSchema = z.object({
   label: z.string().max(100).optional(),
@@ -42,7 +43,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: { ...parsed.data, updatedAt: new Date() },
     });
 
-    return NextResponse.json({ success: true, account: updated });
+    return NextResponse.json({ success: true, account: safeAccountDTO(updated as unknown as Record<string, unknown>) });
   } catch (error) {
     console.warn('[accounts/[id] PATCH] error:', error);
     return NextResponse.json({ error: 'Failed to update account' }, { status: 500 });

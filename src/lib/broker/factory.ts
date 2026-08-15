@@ -1,7 +1,7 @@
 // ============================================================
 // Broker Factory - Creates broker instances based on config
 // Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MT5
-// Falls back to GenericRESTBroker for admin-added custom brokers
+// Phase 1: NO live-to-demo fallback. Decryption failure = error.
 // ============================================================
 
 import type { BrokerConfig } from '../types';
@@ -14,6 +14,7 @@ import { BitgetBroker } from './bitget';
 import { MT5Broker } from './mt5';
 import { GenericRESTBroker } from './generic-rest';
 import { decrypt } from '@/lib/encryption';
+import { CONTAINMENT_CODES } from '@/lib/trading-policy';
 
 // Broker interface that all providers implement
 export interface IBroker {
@@ -75,14 +76,26 @@ export interface IBroker {
 
 /**
  * Built-in provider codes that have dedicated broker implementations.
- * Anything not in this list goes through GenericRESTBroker (if configured)
- * or falls back to DemoBroker.
  */
 const BUILTIN_CODES = new Set([
   'demo', 'alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5',
 ]);
 
+export class BrokerFactoryError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'BrokerFactoryError';
+    this.code = code;
+  }
+}
+
 export function createBroker(config: BrokerConfig): IBroker {
+  // DemoBroker ONLY for explicit demo provider
+  if (config.provider === 'demo') {
+    return new DemoBroker(config);
+  }
+
   // Built-in implementations
   switch (config.provider) {
     case 'alpaca':
@@ -97,20 +110,20 @@ export function createBroker(config: BrokerConfig): IBroker {
       return new BitgetBroker(config);
     case 'mt5':
       return new MT5Broker(config);
-    case 'demo':
     default:
       break;
   }
 
   // For non-built-in providers, try GenericRESTBroker
-  // This reads config from DB and connects to any REST API broker
-  // that admin configured from the UI.
   if (!BUILTIN_CODES.has(config.provider)) {
     return new GenericRESTBroker(config);
   }
 
-  // Final fallback to Demo
-  return new DemoBroker(config);
+  // Should not reach here for known providers
+  throw new BrokerFactoryError(
+    CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
+    `Unknown broker provider: ${config.provider}`,
+  );
 }
 
 export async function createBrokerFromAccount(account: {
@@ -122,31 +135,49 @@ export async function createBrokerFromAccount(account: {
   passphrase?: string | null;
   id: string;
 }): Promise<IBroker> {
-  // Decrypt credentials — if decryption fails, fall back to demo broker
-  // instead of passing garbage encrypted data as plaintext
+  // DemoBroker ONLY for explicitly demo accounts
+  const isExplicitlyDemo = account.broker === 'demo' && account.accountType === 'demo';
+  if (isExplicitlyDemo) {
+    return new DemoBroker({ provider: 'demo', isDemo: true });
+  }
+
+  // For non-demo accounts, credentials are required
+  const needsCredentials = account.broker !== 'demo';
+  if (needsCredentials && (!account.apiKey || !account.apiSecret)) {
+    throw new BrokerFactoryError(
+      CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
+      `Broker ${account.broker} account ${account.id} has no stored credentials. Reconnect in Settings.`,
+    );
+  }
+
+  // Decrypt credentials — failure is an error, NOT a fallback to DemoBroker
   let decryptedApiKey: string | undefined;
   let decryptedSecret: string | undefined;
   let decryptedPassphrase: string | undefined;
 
   if (account.apiKey) {
     const d = await decrypt(account.apiKey);
-    decryptedApiKey = d || undefined;
+    if (!d) {
+      throw new BrokerFactoryError(
+        CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
+        `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
+      );
+    }
+    decryptedApiKey = d;
   }
   if (account.apiSecret) {
     const d = await decrypt(account.apiSecret);
-    decryptedSecret = d || undefined;
+    if (!d) {
+      throw new BrokerFactoryError(
+        CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
+        `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
+      );
+    }
+    decryptedSecret = d;
   }
   if (account.passphrase) {
     const d = await decrypt(account.passphrase);
     decryptedPassphrase = d || undefined;
-  }
-
-  // If this is a linked broker but credentials couldn't be decrypted,
-  // fall back to demo broker with the stored balance
-  const needsCredentials = account.broker !== 'demo' && (account.apiKey || account.apiSecret);
-  if (needsCredentials && (!decryptedApiKey || !decryptedSecret)) {
-    console.warn(`[broker] Credentials could not be decrypted for ${account.broker} account ${account.id}. Reconnect in Settings.`);
-    return new DemoBroker({ provider: 'demo', isDemo: true });
   }
 
   const config: BrokerConfig = {
