@@ -95,13 +95,9 @@ export function isExplicitlyDemo(account: {
   isDemo?: boolean | null;
 }): boolean {
   if (!account) return false;
-  const brokerDemo = account.broker === 'demo';
-  const typeDemo = account.accountType === 'demo';
-  // If isDemo is explicitly set, it must also be true
-  const isDemoField = account.isDemo !== undefined && account.isDemo !== null
-    ? account.isDemo === true
-    : true; // If field absent, don't fail on it
-  return brokerDemo && typeDemo && isDemoField;
+    return account.broker === 'demo'
+      && account.accountType === 'demo'
+      && account.isDemo === true;
 }
 
 /**
@@ -267,16 +263,18 @@ export function enforceInternalAuth(req: Request): Response | null {
 export function enforcePhase1CredentialIntake(
   broker: string,
   accountType: string,
+  isDemo?: boolean | null | undefined,
 ): { blocked: false } | { blocked: true; response: Response } {
-  const isRealBroker = broker !== 'demo';
-  if (!isRealBroker) return { blocked: false };
+  // Only allow when ALL three conditions are met: broker==='demo' AND accountType==='demo' AND isDemo===true
+  const isExplicitlyDemoAccount = broker === 'demo' && accountType === 'demo' && isDemo === true;
+  if (isExplicitlyDemoAccount) return { blocked: false };
 
-  // Phase 1: unconditionally block non-demo credential intake
+  // Fail closed: block everything else (including broker='demo' with isDemo not true)
   const correlationId = uuidv4();
   logSecurityEvent({
     eventType: 'CREDENTIAL_INTAKE_BLOCKED',
     correlationId,
-    reason: `Phase 1: Non-demo credential intake unconditionally blocked. broker=${broker} type=${accountType}`,
+    reason: `Phase 1: Credential intake blocked (fail closed). broker=${broker} type=${accountType} isDemo=${isDemo}`,
   });
   return {
     blocked: true,

@@ -6,7 +6,7 @@
 
 import { NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { enforceInternalAuth, logSecurityEvent } from '@/lib/trading-policy';
+import { enforceInternalAuth, isExplicitlyDemo, logSecurityEvent } from '@/lib/trading-policy';
 
 export async function GET(req: Request) {
   // ── P0-4: Require internal service auth ──
@@ -38,6 +38,7 @@ export async function GET(req: Request) {
             id: true,
             broker: true,
             accountType: true,
+            isDemo: true,
             balance: true,
             isActive: true,
           },
@@ -46,8 +47,10 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Filter to only bots with active accounts
-    const active = bots.filter((b) => b.account?.isActive !== false);
+    // Filter to only bots with active accounts AND explicitly demo accounts
+    const active = bots.filter(
+      (b) => b.account?.isActive !== false && b.account && isExplicitlyDemo(b.account),
+    );
 
     return NextResponse.json(active);
   } catch (error) {

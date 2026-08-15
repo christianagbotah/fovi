@@ -118,6 +118,8 @@ export function createBroker(config: BrokerConfig): IBroker {
   }
 }
 
+const KNOWN_REAL_PROVIDERS = new Set(['alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5']);
+
 export async function createBrokerFromAccount(account: {
   broker: string;
   accountType: string;
@@ -125,52 +127,22 @@ export async function createBrokerFromAccount(account: {
   apiKey: string | null;
   apiSecret: string | null;
   passphrase?: string | null;
+  isDemo?: boolean | null;
   id: string;
 }): Promise<IBroker> {
-  // DemoBroker ONLY for explicitly demo accounts
-  const isExplicitlyDemo = account.broker === 'demo' && account.accountType === 'demo';
-  if (isExplicitlyDemo) {
+  // Check if explicitly demo (ALL THREE conditions mandatory)
+  const isExplicitlyDemoAccount = account.broker === 'demo'
+    && account.accountType === 'demo'
+    && account.isDemo === true;
+
+  if (isExplicitlyDemoAccount) {
     return new DemoBroker({ provider: 'demo', isDemo: true });
   }
 
-  // For non-demo accounts, credentials are required
-  if (!account.apiKey || !account.apiSecret) {
-    throw new BrokerFactoryError(
-      CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
-      `Broker ${account.broker} account ${account.id} has no stored credentials. Reconnect in Settings.`,
-    );
-  }
-
-  // Decrypt credentials — failure is an error, NOT a fallback
-  const decryptedApiKey = await decrypt(account.apiKey);
-  if (!decryptedApiKey) {
-    throw new BrokerFactoryError(
-      CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
-      `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
-    );
-  }
-
-  const decryptedSecret = await decrypt(account.apiSecret);
-  if (!decryptedSecret) {
-    throw new BrokerFactoryError(
-      CONTAINMENT_CODES.BROKER_CONNECTION_FAILED,
-      `Credential decryption failed for ${account.broker} account ${account.id}. Reconnect in Settings.`,
-    );
-  }
-
-  let decryptedPassphrase: string | undefined;
-  if (account.passphrase) {
-    const d = await decrypt(account.passphrase);
-    decryptedPassphrase = d || undefined;
-  }
-
-  const config: BrokerConfig = {
-    provider: (account.broker || 'demo') as BrokerConfig['provider'],
-    accountId: account.id,
-    apiKey: decryptedApiKey,
-    apiSecret: decryptedSecret,
-    passphrase: decryptedPassphrase,
-    isDemo: account.accountType === 'demo',
-  };
-  return createBroker(config);
+  // Phase 1: Block ALL non-demo broker construction before decrypting credentials
+  // or making any network request
+  throw new BrokerFactoryError(
+    CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+    'Phase 1 containment: live broker construction is not permitted. No credentials were decrypted.',
+  );
 }

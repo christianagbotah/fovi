@@ -3,7 +3,7 @@ import { db, hasModel } from '@/lib/db';
 import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
-import { logSecurityEvent } from '@/lib/trading-policy';
+import { isExplicitlyDemo, CONTAINMENT_CODES, logSecurityEvent } from '@/lib/trading-policy';
 
 const DEFAULT_CONFIG = {
   id: null, enabled: false, allocationAmount: 0, riskTolerance: 'medium',
@@ -110,6 +110,18 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'No default account found' }, { status: 404 });
     }
 
+    // Phase 1: block enabling if account is NOT explicitly demo
+    if (body.enabled === true && !isExplicitlyDemo(defaultAccount)) {
+      return NextResponse.json(
+        {
+          error: 'Phase 1 containment: live trading is not permitted.',
+          code: CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+          remediationPhase: 'containment',
+        },
+        { status: 403 },
+      );
+    }
+
     const enabled = body.enabled as boolean | undefined;
     const newStatus = enabled === true ? 'running' : 'stopped';
 
@@ -133,9 +145,8 @@ export async function PUT(request: Request) {
     if (body.stopLossPercent !== undefined) updateData.stopLossPercent = body.stopLossPercent;
     if (body.takeProfitPercent !== undefined) updateData.takeProfitPercent = body.takeProfitPercent;
     if (body.strategy !== undefined) updateData.strategy = body.strategy;
-    if (body.totalTrades !== undefined) updateData.totalTrades = body.totalTrades;
-    if (body.winTrades !== undefined) updateData.winTrades = body.winTrades;
-    if (body.totalPnl !== undefined) updateData.totalPnl = body.totalPnl;
+    // Performance fields are NEVER accepted from the client
+    // (totalTrades, winTrades, totalPnl stripped)
 
     const existingConfig = await db.botConfig.findFirst({
       where: { accountId: defaultAccount.id },
@@ -161,9 +172,10 @@ export async function PUT(request: Request) {
           takeProfitPercent: (body.takeProfitPercent as number) ?? 4.0,
           strategy: (body.strategy as string) ?? 'balanced',
           status: newStatus,
-          totalTrades: (body.totalTrades as number) ?? 0,
-          winTrades: (body.winTrades as number) ?? 0,
-          totalPnl: (body.totalPnl as number) ?? 0,
+          // Performance fields are NEVER accepted from the client
+          totalTrades: 0,
+          winTrades: 0,
+          totalPnl: 0,
         },
       });
     }

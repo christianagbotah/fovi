@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId, getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
-import { DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
+import { isExplicitlyDemo, DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
 
 // Static demo bots for read-only fallback when DB is unavailable.
 // These are NEVER persisted and carry demo provenance.
@@ -116,8 +116,8 @@ export async function POST(req: NextRequest) {
         symbols: body.symbols || 'BTC',
         timeframe: body.timeframe || '1h',
         allocationAmount: body.allocationAmount ?? 10000,
-        enabled: body.enabled ?? false,
-        status: 'stopped',
+        enabled: isExplicitlyDemo(account) ? (body.enabled ?? false) : false,
+        status: isExplicitlyDemo(account) ? (body.status ?? 'stopped') : 'stopped',
         config: body.config ? JSON.stringify(body.config) : '{}',
         positionSizing: body.positionSizing || 'fixed_fractional',
         riskPerTrade: body.riskPerTrade ?? 2.0,

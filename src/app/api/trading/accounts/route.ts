@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
-import { enforcePhase1CredentialIntake, safeAccountDTO, safeAccountDTOs, DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
+import { enforcePhase1CredentialIntake, safeAccountDTO, safeAccountDTOs, DEMO_PROVENANCE_HEADER, logSecurityEvent, CONTAINMENT_CODES } from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
 
@@ -32,10 +32,33 @@ export async function POST(req: NextRequest) {
   const id = uuidv4();
   const broker = body.broker || 'demo';
   const accountType = body.accountType || 'demo';
+  const isDemo = broker === 'demo' && accountType === 'demo' ? true : undefined;
   const dbReady = !!(db && hasModel('tradingAccount'));
 
+  // Reject conflicting classification: broker='demo' but accountType='live' or vice versa
+  if (broker === 'demo' && accountType !== 'demo') {
+    return NextResponse.json(
+      { error: 'Conflicting classification: broker is "demo" but accountType is not "demo".', code: CONTAINMENT_CODES.DEMO_ONLY, remediationPhase: 'containment' },
+      { status: 400 },
+    );
+  }
+  if (broker !== 'demo' && accountType === 'demo') {
+    return NextResponse.json(
+      { error: 'Conflicting classification: accountType is "demo" but broker is not "demo".', code: CONTAINMENT_CODES.DEMO_ONLY, remediationPhase: 'containment' },
+      { status: 400 },
+    );
+  }
+
+  // Reject broker='demo' with credentials supplied
+  if (broker === 'demo' && (body.apiKey || body.apiSecret || body.passphrase)) {
+    return NextResponse.json(
+      { error: 'Demo accounts must not have credentials (apiKey, apiSecret, or passphrase). Remove them and retry.', code: CONTAINMENT_CODES.DEMO_ONLY, remediationPhase: 'containment' },
+      { status: 400 },
+    );
+  }
+
   // ── Phase 1 CONTAINMENT: Unconditionally block non-demo credential intake ──
-  const intakeCheck = enforcePhase1CredentialIntake(broker, accountType);
+  const intakeCheck = enforcePhase1CredentialIntake(broker, accountType, isDemo);
   if (intakeCheck.blocked) return intakeCheck.response;
 
   // --------------------------------------------------------
@@ -58,6 +81,7 @@ export async function POST(req: NextRequest) {
     const account = await db!.tradingAccount.create({
       data: {
         id, userId, broker, accountType,
+        isDemo,
         isDefault: body.isDefault || false,
         balance: body.balance || 100000,
         linkedBalance: body.linkedBalance ?? body.balance ?? 100000,

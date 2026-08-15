@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
-import { logSecurityEvent } from '@/lib/trading-policy';
+import { isExplicitlyDemo, CONTAINMENT_CODES, logSecurityEvent } from '@/lib/trading-policy';
 
 export async function POST(
   req: NextRequest,
@@ -18,7 +18,10 @@ export async function POST(
 
   try {
     const userId = getUserIdSync(req);
-    const bot = await db.bot.findUnique({ where: { id } });
+    const bot = await db.bot.findUnique({
+      where: { id },
+      include: { account: true },
+    });
     if (!bot) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
     }
@@ -26,6 +29,19 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const newEnabled = !bot.enabled;
+
+    // Phase 1: block enabling if account is NOT explicitly demo
+    if (newEnabled && bot.account && !isExplicitlyDemo(bot.account)) {
+      return NextResponse.json(
+        {
+          error: 'Phase 1 containment: live trading is not permitted.',
+          code: CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+          remediationPhase: 'containment',
+        },
+        { status: 403 },
+      );
+    }
+
     const newStatus = newEnabled ? 'running' : 'stopped';
     const updated = await db.bot.update({
       where: { id },

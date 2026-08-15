@@ -268,6 +268,12 @@ Bun.serve({
     if (url.pathname === '/cycle' && req.method === 'POST') {
       const auth = checkInternalAuth(req);
       if (!auth.valid) return authErrorResponse(auth.status);
+      if (!AUTOMATED_TRADING_ENABLED) {
+        return Response.json(
+          { triggered: false, code: 'PHASE1_LIVE_TRADING_DISABLED', remediationPhase: 'containment' },
+          { status: 403 },
+        );
+      }
       runCycle().catch((e) => {
         console.error('[AutoTrade] Manual cycle error:', e);
       });
@@ -320,6 +326,7 @@ async function fetchBotTableBots(): Promise<BotTableBot[]> {
       WHERE b.enabled = true
         AND b.status = 'running'
         AND a."isActive" = true
+        AND a."isDemo" = true
     `;
     return rows;
   } catch (err) {

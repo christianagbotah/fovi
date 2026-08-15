@@ -1079,3 +1079,22 @@ Stage Summary:
 - DB connection confirmed working (`x-storage: db`)
 - One minor improvement: handleConnect now passes `dbActiveId` to `setAccounts` for consistency
 - User needs to reconnect OKX account (no `x-active-account` header = no isDefault account in DB yet)
+---
+Task ID: 10a
+Agent: phase1-test-fixer
+Task: Update existing tests to match new isExplicitlyDemo 3-condition mandate and auth-first behavior
+
+Work Log:
+- Fixed `trading-policy.test.ts`:
+  - Updated `enforcePhase1CredentialIntake` test: added 3rd `isDemo=true` arg so demo case passes.
+  - Updated `identifies demo accounts` test: removed `{ broker:'demo', accountType:'demo' }` assertion (now fails without `isDemo: true`), kept only the `isDemo: true` variant.
+  - Fixed `classifies live accounts correctly` test: `isLiveAccount({ broker:'demo', accountType:'demo' })` now returns `true` (fail-closed), changed to pass `isDemo: true` so it correctly returns `false`.
+  - Replaced `classifies null/unknown isDemo as demo if broker and type are demo` with three new tests:
+    - `rejects when isDemo is null — fail closed`
+    - `rejects when isDemo is undefined — fail closed`
+    - `rejects when isDemo is absent from object — fail closed`
+- Verified `broker-spy-blocking.test.ts`: LIVE_ACCOUNT already has `isDemo: false`, DEMO_ACCOUNT already has `isDemo: true`. Credential intake tests go through the actual route handler which now computes and passes `isDemo` correctly. No changes needed.
+- Fixed `cross-tenant-isolation.test.ts`: Replaced `forged X-User-Id is stripped by proxy` test (which was identical to the `anonymous request` test above it) with `route uses authenticated userId not arbitrary header — different users get different queries`. The new test makes requests as USER_A and USER_B and verifies the captured DB queries contain the correct userId for each.
+- Verified `credential-intake.test.ts`: Tests invoke the actual route handler which computes `isDemo` from `broker` and `accountType` and passes it to `enforcePhase1CredentialIntake`. Route correctly sets `isDemo=true` for demo, `isDemo=undefined` for non-demo. No test changes needed.
+- Verified `no-demo-identity.test.ts`: Tests mock `ensureDemoUser` from the db module. The assertions check that `ensureDemoUserSpy` was not called. No changes needed — these still pass as-is.
+- Verified `fabricated-success.test.ts`: The bots GET test already uses `authedReq('user_1', ...)` which includes a valid `x-user-id` header. No changes needed.

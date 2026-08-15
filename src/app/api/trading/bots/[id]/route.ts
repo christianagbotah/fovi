@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
-import { logSecurityEvent } from '@/lib/trading-policy';
+import { isExplicitlyDemo, CONTAINMENT_CODES, logSecurityEvent } from '@/lib/trading-policy';
 
 export async function GET(
   req: NextRequest,
@@ -55,18 +55,42 @@ export async function PUT(
 
   try {
     const userId = getUserIdSync(req);
-    const bot = await db.bot.findUnique({ where: { id } });
+    const bot = await db.bot.findUnique({
+      where: { id },
+      include: { account: true },
+    });
     if (!bot) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
     }
     if (bot.userId !== userId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-    const { id: _id, ...rest } = body;
-    const data: Record<string, unknown> = { ...rest };
-    if (rest.config && typeof rest.config === 'object') {
-      data.config = JSON.stringify(rest.config);
+
+    // Strict allowlist of updatable fields
+    const ALLOWED_FIELDS = [
+      'name', 'strategy', 'symbols', 'timeframe', 'allocationAmount',
+      'positionSizing', 'riskPerTrade', 'maxPositions', 'stopLossPercent',
+      'takeProfitPercent', 'trailingStopPct', 'tradingSessions',
+      'customSessionStart', 'customSessionEnd', 'config',
+    ];
+    const data: Record<string, unknown> = {};
+    for (const field of ALLOWED_FIELDS) {
+      if (body[field] !== undefined) {
+        data[field] = body[field];
+      }
     }
+    if (data.config && typeof data.config === 'object') {
+      data.config = JSON.stringify(data.config);
+    }
+
+    // Phase 1: if bot is enabled/running and account is NOT explicitly demo, force disabled/stopped
+    if (bot.account && !isExplicitlyDemo(bot.account)) {
+      if (bot.enabled || bot.status === 'running') {
+        data.enabled = false;
+        data.status = 'stopped';
+      }
+    }
+
     const updated = await db.bot.update({
       where: { id },
       data,

@@ -113,10 +113,22 @@ describe('cross-tenant isolation', () => {
     expect(res.status).toBe(401);
   });
 
-  it('forged X-User-Id is stripped by proxy (route rejects missing identity)', async () => {
+  it('route uses authenticated userId in account query — different users get different account lookups', async () => {
     const { GET } = await import('@/app/api/trading/orders/route');
-    const res = await GET(new NextRequest(new URL('http://localhost/api/trading/orders')));
-    expect(res.status).toBe(401);
+
+    // User A's request — verify tradingAccount.findFirst contains userId
+    capturedQueries.length = 0;
+    await GET(authedReq(USER_A, 'http://localhost/api/trading/orders'));
+    const userAAccountQuery = capturedQueries.find(q => q.model === 'tradingAccount' && q.operation === 'findFirst');
+    expect(userAAccountQuery).toBeDefined();
+    expect((userAAccountQuery!.where as Record<string, unknown>).userId).toBe(USER_A);
+
+    // User B's request
+    capturedQueries.length = 0;
+    await GET(authedReq(USER_B, 'http://localhost/api/trading/orders'));
+    const userBAccountQuery = capturedQueries.find(q => q.model === 'tradingAccount' && q.operation === 'findFirst');
+    expect(userBAccountQuery).toBeDefined();
+    expect((userBAccountQuery!.where as Record<string, unknown>).userId).toBe(USER_B);
   });
 
   it('bot toggle: user B cannot toggle user A\'s bot', async () => {

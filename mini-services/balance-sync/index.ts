@@ -43,17 +43,21 @@ interface TradingAccount {
   isActive: boolean;
 }
 
+// Phase 1 CR4: Unconditionally return empty — no non-demo sync during Phase 1.
 async function getActiveAccounts(): Promise<TradingAccount[]> {
-  if (!sql || !dbReady) return [];
-  const rows = await sql<TradingAccount[]>`
-    SELECT id, "userId", broker, "accountType", "isActive"
-    FROM "TradingAccount"
-    WHERE "accountType" != 'demo'
-      AND "isActive" = true
-      AND "apiKey" IS NOT NULL
-      AND "apiSecret" IS NOT NULL
-  `;
-  return rows;
+  // During Phase 1, no non-demo account may be synchronized.
+  return [];
+  // Original SQL commented out — restored after Phase 1.
+  // if (!sql || !dbReady) return [];
+  // const rows = await sql<TradingAccount[]>`
+  //   SELECT id, "userId", broker, "accountType", "isActive"
+  //   FROM "TradingAccount"
+  //   WHERE "accountType" != 'demo'
+  //     AND "isActive" = true
+  //     AND "apiKey" IS NOT NULL
+  //     AND "apiSecret" IS NOT NULL
+  // `;
+  // return rows;
 }
 
 // ── Internal service auth with SHA-256 + timingSafeEqual ──
@@ -168,6 +172,12 @@ const server = Bun.serve({
     if (url.pathname === '/sync' && req.method === 'POST') {
       const auth = checkInternalAuth(req);
       if (!auth.valid) return authErrorResponse(auth.status);
+      if (!BALANCE_SYNC_ENABLED) {
+        return Response.json(
+          { triggered: false, code: 'PHASE1_LIVE_TRADING_DISABLED', remediationPhase: 'containment' },
+          { status: 403 },
+        );
+      }
       runSyncCycle().catch(err => console.error('[BalanceSync] Manual sync error:', err));
       return Response.json({ message: 'Sync cycle triggered', cycle: syncCycleCount + 1 });
     }
@@ -175,10 +185,15 @@ const server = Bun.serve({
     if (url.pathname === '/status' && req.method === 'GET') {
       const auth = checkInternalAuth(req);
       if (!auth.valid) return authErrorResponse(auth.status);
-      return Response.json({
+      const statusPayload: Record<string, unknown> = {
         cyclesCompleted: syncCycleCount, intervalMs: SYNC_INTERVAL_MS,
         port: PORT, balanceSyncEnabled: BALANCE_SYNC_ENABLED,
-      });
+      };
+      if (!BALANCE_SYNC_ENABLED) {
+        statusPayload.reason = 'Phase 1: Balance sync is disabled during containment.';
+        statusPayload.remediationPhase = 'containment';
+      }
+      return Response.json(statusPayload);
     }
 
     return new Response('Not Found', { status: 404 });

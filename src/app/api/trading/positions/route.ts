@@ -9,7 +9,7 @@ import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/ge
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getAssetType } from '@/lib/broker/demo';
 import { loadDemoPositionSLTP } from '@/lib/demo-sltp-store';
-import { logSecurityEvent, isExplicitlyDemo, DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
+import { logSecurityEvent, isExplicitlyDemo, enforceLiveTradingPolicy, DEMO_PROVENANCE_HEADER, CONTAINMENT_CODES } from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
@@ -46,6 +46,11 @@ export async function GET(req: NextRequest) {
     }
 
     const isDemo = isExplicitlyDemo(account);
+
+    // Phase 1 containment: enforce live trading policy before broker construction
+    const policyCheck = enforceLiveTradingPolicy(account, 'getPositions');
+    if (policyCheck.blocked) return policyCheck.response;
+
     const broker = await createBrokerFromAccount(account);
     const brokerPositions = await broker.getPositions();
 

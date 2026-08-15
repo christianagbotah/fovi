@@ -137,8 +137,8 @@ describe('trading policy', () => {
 
   // ── enforcePhase1CredentialIntake ──
   describe('enforcePhase1CredentialIntake', () => {
-    it('allows demo broker', () => {
-      const result = enforcePhase1CredentialIntake('demo', 'demo');
+    it('allows demo broker with isDemo=true', () => {
+      const result = enforcePhase1CredentialIntake('demo', 'demo', true);
       expect(result.blocked).toBe(false);
     });
 
@@ -201,8 +201,7 @@ describe('trading policy', () => {
 
   // ── isExplicitlyDemo / isLiveAccount ──
   describe('account type classification', () => {
-    it('identifies demo accounts', () => {
-      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo' })).toBe(true);
+    it('identifies demo accounts (all three conditions required)', () => {
       expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: true })).toBe(true);
     });
 
@@ -220,12 +219,19 @@ describe('trading policy', () => {
 
     it('classifies live accounts correctly', () => {
       expect(isLiveAccount({ broker: 'okx', accountType: 'live' })).toBe(true);
-      expect(isLiveAccount({ broker: 'demo', accountType: 'demo' })).toBe(false);
+      expect(isLiveAccount({ broker: 'demo', accountType: 'demo', isDemo: true })).toBe(false);
     });
 
-    it('classifies null/unknown isDemo as demo if broker and type are demo', () => {
-      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: null })).toBe(true);
-      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: undefined })).toBe(true);
+    it('rejects when isDemo is null — fail closed', () => {
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: null })).toBe(false);
+    });
+
+    it('rejects when isDemo is undefined — fail closed', () => {
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo', isDemo: undefined })).toBe(false);
+    });
+
+    it('rejects when isDemo is absent from object — fail closed', () => {
+      expect(isExplicitlyDemo({ broker: 'demo', accountType: 'demo' } as any)).toBe(false);
     });
   });
 

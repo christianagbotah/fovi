@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
 import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
-import { logSecurityEvent, CONTAINMENT_CODES, isExplicitlyDemo, DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
+import { logSecurityEvent, CONTAINMENT_CODES, isExplicitlyDemo, enforceLiveTradingPolicy, DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(req: NextRequest) {
@@ -58,6 +58,11 @@ export async function GET(req: NextRequest) {
     }
 
     const isDemo = isExplicitlyDemo(account);
+
+    // Phase 1 containment: enforce live trading policy before broker construction
+    const policyCheck = enforceLiveTradingPolicy(account, 'getPortfolio');
+    if (policyCheck.blocked) return policyCheck.response;
+
     const broker = await createBrokerFromAccount(account);
     const info = await broker.getAccountInfo();
     const positions = await broker.getPositions();
