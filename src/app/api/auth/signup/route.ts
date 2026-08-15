@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
               currency: 'USD',
               isActive: true,
               isDefault: true,
+              isDemo: true,
             },
           });
         } catch (accErr) {
@@ -124,16 +125,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Demo mode - simulate successful signup
-    return NextResponse.json({
-      success: true,
-      user: {
-        id: 'new-user-' + Date.now(),
-        email: emailLower,
-        name: name.trim(),
-        emailVerified: false,
-      },
-    });
+    // When database or required models are unavailable, return truthful 503
+    return NextResponse.json(
+      { error: 'User registration is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+      { status: 503 },
+    );
   } catch {
     return NextResponse.json(
       { error: 'An unexpected error occurred' },

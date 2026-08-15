@@ -30,16 +30,28 @@ export async function POST(
     }
     const newEnabled = !bot.enabled;
 
-    // Phase 1: block enabling if account is NOT explicitly demo
-    if (newEnabled && bot.account && !isExplicitlyDemo(bot.account)) {
-      return NextResponse.json(
-        {
-          error: 'Phase 1 containment: live trading is not permitted.',
-          code: CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
-          remediationPhase: 'containment',
-        },
-        { status: 403 },
-      );
+    // Phase 1: block enabling if account is NOT explicitly demo or is null
+    if (newEnabled) {
+      if (!bot.account) {
+        return NextResponse.json(
+          {
+            error: 'Phase 1 containment: cannot enable bot without an account.',
+            code: CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+            remediationPhase: 'containment',
+          },
+          { status: 403 },
+        );
+      }
+      if (!isExplicitlyDemo(bot.account)) {
+        return NextResponse.json(
+          {
+            error: 'Phase 1 containment: live trading is not permitted.',
+            code: CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+            remediationPhase: 'containment',
+          },
+          { status: 403 },
+        );
+      }
     }
 
     const newStatus = newEnabled ? 'running' : 'stopped';

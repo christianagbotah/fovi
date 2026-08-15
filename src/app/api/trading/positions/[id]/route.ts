@@ -25,16 +25,13 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
 
+    // CR4.1: Tenant-scoped query — userId in predicate via account relation
     const position = await db.position.findFirst({
-      where: { id, status: 'open' },
+      where: { id, status: 'open', account: { userId } },
       include: { account: true },
     });
     if (!position) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
-    }
-    // Cross-tenant check
-    if (position.account.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Reject live position-protection modification
@@ -105,16 +102,13 @@ export async function DELETE(
     const userId = await getUserId(req);
     const { id } = await params;
 
+    // CR4.1: Tenant-scoped query — userId in predicate via account relation
     const position = await db.position.findFirst({
-      where: { id, status: 'open' },
+      where: { id, status: 'open', account: { userId } },
       include: { account: true },
     });
     if (!position) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
-    }
-    // Cross-tenant check
-    if (position.account.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // ── CONTAINMENT: Enforce live-trading policy BEFORE closePosition ──

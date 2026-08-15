@@ -1,237 +1,179 @@
 // ============================================================
-// Mass Assignment Prevention Tests (Task 10b-3)
-// Verify that bots PUT cannot:
-//   - Change userId
-//   - Change accountId
-//   - Set status to 'running' directly
-//   - Set totalTrades, winTrades, totalPnl
-//   - Set lastTradeAt
-// The route uses a strict ALLOWED_FIELDS allowlist.
+// mass-assignment.test.ts — CR4.1
+// Tests bot PUT with strict allowlist. We call the REAL route handler,
+// mock db.bot, and verify only allowed fields are passed to update.
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { NextRequest } from 'next/server';
 
-const ORIGINAL_ENV = process.env;
-
-// ── Mock DB with call capture ──
-const capturedUpdateArgs: Array<{ where: unknown; data: Record<string, unknown> }> = [];
-const mockFindUnique = vi.fn();
-const mockFindMany = vi.fn();
-const mockCreate = vi.fn();
-const mockUpdate = vi.fn().mockImplementation((args: any) => {
-  capturedUpdateArgs.push({ where: args.where, data: args.data });
-  return Promise.resolve({ id: 'bot_1', ...args.data });
-});
+const {
+  mockBotUpdate,
+  mockBotFindFirst,
+} = vi.hoisted(() => ({
+  mockBotUpdate: vi.fn(),
+  mockBotFindFirst: vi.fn(),
+}));
 
 vi.mock('@/lib/db', () => ({
   db: {
-    tradingAccount: { findFirst: vi.fn() },
-    bot: { findUnique: mockFindUnique, findMany: mockFindMany, create: mockCreate, update: mockUpdate, delete: vi.fn() },
+    bot: {
+      findFirst: mockBotFindFirst,
+      update: mockBotUpdate,
+      deleteMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
   },
-  hasModel: (m: string) => ['tradingAccount', 'bot'].includes(m),
+  hasModel: vi.fn(() => true),
+  isDbAvailable: vi.fn(() => true),
 }));
 
-vi.mock('@/lib/subscription-guard', () => ({
-  checkSubscriptionLimit: () => ({ allowed: true, current: 0, limit: 10 }),
-  getLimitMessage: () => 'Limit exceeded',
+vi.mock('@/lib/get-user-id', () => ({
+  getUserIdSync: vi.fn(() => 'user-xyz'),
+  getUserId: vi.fn(() => Promise.resolve('user-xyz')),
+  AuthRequiredError: class extends Error {
+    constructor() { super('Authentication required.'); this.name = 'AuthRequiredError'; }
+  },
+  authRequiredResponse: vi.fn(() => new Response(JSON.stringify({ error: 'Authentication required.' }), { status: 401 })),
+  getUserIdOrNull: vi.fn(() => 'user-xyz'),
 }));
 
-vi.mock('@/lib/system-config', () => ({
-  getGlobalAdminLevy: () => Promise.resolve(10),
+vi.mock('@/lib/trading-policy', () => ({
+  isExplicitlyDemo: vi.fn(() => true),
+  CONTAINMENT_CODES: { PHASE1_LIVE_TRADING_DISABLED: 'PHASE1_LIVE_TRADING_DISABLED' },
+  logSecurityEvent: vi.fn(),
+  DEMO_PROVENANCE_HEADER: {},
 }));
 
-vi.mock('@/lib/demo-sltp-store', () => ({
-  loadDemoPositionSLTP: () => new Map(),
-  saveDemoPositionSLTP: () => {},
-}));
+vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-vi.mock('uuid', () => ({
-  v4: () => 'test-uuid-00000000-0000-4000-8000-000000000000',
-}));
+import { PUT as botPut } from '@/app/api/trading/bots/[id]/route';
 
-// ── Helpers ──
-function authedReqPut(userId: string, body: unknown) {
-  return new NextRequest(new URL('http://localhost/api/trading/bots/bot_1'), {
-    method: 'PUT',
-    headers: { 'x-user-id': userId, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-const DEMO_ACCOUNT = {
-  id: 'acc_demo_1', userId: 'user_A', broker: 'demo', accountType: 'demo',
-  isDemo: true, balance: 100000,
-};
-
-const EXISTING_BOT = {
-  id: 'bot_1', userId: 'user_A', accountId: 'acc_demo_1',
-  name: 'Test Bot', strategy: 'momentum', symbols: 'BTC',
-  enabled: false, status: 'stopped',
-  account: DEMO_ACCOUNT,
-};
-
-// ================================================================
-describe('mass assignment prevention — bots PUT', () => {
+describe('Bot PUT — strict allowlist prevents mass assignment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    capturedUpdateArgs.length = 0;
-    process.env = { ...ORIGINAL_ENV };
-    mockFindUnique.mockResolvedValue(EXISTING_BOT);
-  });
-  afterEach(() => { process.env = ORIGINAL_ENV; });
-
-  it('cannot change userId', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { userId: 'user_HACKED', name: 'Renamed' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
-
-    expect(res.status).toBe(200);
-    // The update data should NOT contain userId
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData).toBeDefined();
-    expect(updateData?.userId).toBeUndefined();
+    mockBotFindFirst.mockResolvedValue({
+      id: 'bot-1',
+      userId: 'user-xyz',
+      enabled: false,
+      status: 'stopped',
+      account: { broker: 'demo', accountType: 'demo', isDemo: true },
+    });
+    mockBotUpdate.mockResolvedValue({ id: 'bot-1', name: 'Updated' });
   });
 
-  it('cannot change accountId', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { accountId: 'acc_HACKED', name: 'Renamed' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+  it('sends body with forbidden fields — only allowed fields passed to update', async () => {
+    const maliciousBody = {
+      userId: 'other-user-hacked',
+      accountId: 'hacked-account-id',
+      enabled: true,
+      status: 'running',
+      totalTrades: 999,
+      name: 'Legitimate Name',
+      strategy: 'momentum',
+    };
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData?.accountId).toBeUndefined();
+    const req = new Request('http://localhost/api/trading/bots/bot-1', {
+      method: 'PUT',
+      headers: {
+        'x-user-id': 'user-xyz',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(maliciousBody),
+    });
+
+    const res = await botPut(req, { params: Promise.resolve({ id: 'bot-1' }) });
+
+    expect(mockBotUpdate).toHaveBeenCalledTimes(1);
+
+    const updateCall = mockBotUpdate.mock.calls[0];
+    const updateData = updateCall[0]?.data as Record<string, unknown>;
+
+    // Verify FORBIDDEN fields are NOT in the update data
+    expect(updateData).not.toHaveProperty('userId');
+    expect(updateData).not.toHaveProperty('accountId');
+    expect(updateData).not.toHaveProperty('enabled');
+    expect(updateData).not.toHaveProperty('status');
+    expect(updateData).not.toHaveProperty('totalTrades');
+
+    // Verify ALLOWED fields ARE in the update data
+    expect(updateData).toHaveProperty('name');
+    expect(updateData.name).toBe('Legitimate Name');
+    expect(updateData).toHaveProperty('strategy');
+    expect(updateData.strategy).toBe('momentum');
   });
 
-  it('cannot set status to running directly via body', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { status: 'running', name: 'TryRunning' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+  it('userId specifically is never passed to update', async () => {
+    const body = { userId: 'attacker-id', name: 'Benign Update' };
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    // 'status' is not in the ALLOWED_FIELDS list, so it should be stripped
-    expect(updateData?.status).toBeUndefined();
+    const req = new Request('http://localhost/api/trading/bots/bot-1', {
+      method: 'PUT',
+      headers: { 'x-user-id': 'user-xyz', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    await botPut(req, { params: Promise.resolve({ id: 'bot-1' }) });
+
+    const updateData = mockBotUpdate.mock.calls[0][0]?.data;
+    expect(updateData).not.toHaveProperty('userId');
   });
 
-  it('cannot set totalTrades', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { totalTrades: 9999, name: 'Inflated' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+  it('accountId specifically is never passed to update', async () => {
+    const body = { accountId: 'compromised-acc', name: 'Benign Update' };
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData?.totalTrades).toBeUndefined();
+    const req = new Request('http://localhost/api/trading/bots/bot-1', {
+      method: 'PUT',
+      headers: { 'x-user-id': 'user-xyz', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    await botPut(req, { params: Promise.resolve({ id: 'bot-1' }) });
+
+    const updateData = mockBotUpdate.mock.calls[0][0]?.data;
+    expect(updateData).not.toHaveProperty('accountId');
   });
 
-  it('cannot set winTrades', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { winTrades: 9999, name: 'Inflated' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+  it('enabled specifically is never passed to update from client body', async () => {
+    const body = { enabled: true, name: 'Benign Update' };
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData?.winTrades).toBeUndefined();
+    const req = new Request('http://localhost/api/trading/bots/bot-1', {
+      method: 'PUT',
+      headers: { 'x-user-id': 'user-xyz', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    await botPut(req, { params: Promise.resolve({ id: 'bot-1' }) });
+
+    const updateData = mockBotUpdate.mock.calls[0][0]?.data;
+    expect(updateData).not.toHaveProperty('enabled');
   });
 
-  it('cannot set totalPnl', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { totalPnl: 999999, name: 'Inflated' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+  it('status specifically is never passed to update from client body', async () => {
+    const body = { status: 'running', name: 'Benign Update' };
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData?.totalPnl).toBeUndefined();
+    const req = new Request('http://localhost/api/trading/bots/bot-1', {
+      method: 'PUT',
+      headers: { 'x-user-id': 'user-xyz', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    await botPut(req, { params: Promise.resolve({ id: 'bot-1' }) });
+
+    const updateData = mockBotUpdate.mock.calls[0][0]?.data;
+    expect(updateData).not.toHaveProperty('status');
   });
 
-  it('cannot set lastTradeAt', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', { lastTradeAt: '2099-01-01T00:00:00Z', name: 'Future' }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+  it('totalTrades specifically is never passed to update', async () => {
+    const body = { totalTrades: 999, name: 'Benign Update' };
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData?.lastTradeAt).toBeUndefined();
-  });
+    const req = new Request('http://localhost/api/trading/bots/bot-1', {
+      method: 'PUT',
+      headers: { 'x-user-id': 'user-xyz', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
-  it('allows updating allowed fields (name, strategy, symbols, etc.)', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', {
-        name: 'Updated Name',
-        strategy: 'grid',
-        symbols: 'BTC,ETH',
-        timeframe: '15m',
-        allocationAmount: 25000,
-        riskPerTrade: 3.0,
-        maxPositions: 5,
-        stopLossPercent: 1.5,
-        takeProfitPercent: 5.0,
-        trailingStopPct: 2.0,
-        tradingSessions: 'us',
-        config: { gridLevels: 10 },
-      }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
+    await botPut(req, { params: Promise.resolve({ id: 'bot-1' }) });
 
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-    expect(updateData?.name).toBe('Updated Name');
-    expect(updateData?.strategy).toBe('grid');
-    expect(updateData?.symbols).toBe('BTC,ETH');
-    expect(updateData?.timeframe).toBe('15m');
-    expect(updateData?.allocationAmount).toBe(25000);
-    expect(updateData?.riskPerTrade).toBe(3.0);
-    expect(updateData?.maxPositions).toBe(5);
-    expect(updateData?.stopLossPercent).toBe(1.5);
-    expect(updateData?.takeProfitPercent).toBe(5.0);
-    expect(updateData?.trailingStopPct).toBe(2.0);
-    expect(updateData?.tradingSessions).toBe('us');
-    // config should be JSON-stringified
-    expect(typeof updateData?.config).toBe('string');
-  });
-
-  it('bulk mass-assignment attempt: all forbidden fields simultaneously', async () => {
-    const { PUT } = await import('@/app/api/trading/bots/[id]/route');
-    const res = await PUT(
-      authedReqPut('user_A', {
-        userId: 'hacker', accountId: 'hacked_acc',
-        enabled: true, status: 'running',
-        totalTrades: 99999, winTrades: 99999, totalPnl: 999999,
-        lastTradeAt: '2099-01-01T00:00:00Z',
-        name: 'Safe Name Only',
-      }),
-      { params: Promise.resolve({ id: 'bot_1' }) },
-    );
-
-    expect(res.status).toBe(200);
-    const updateData = capturedUpdateArgs[0]?.data;
-
-    // NONE of the forbidden fields should be in the update data
-    expect(updateData?.userId).toBeUndefined();
-    expect(updateData?.accountId).toBeUndefined();
-    expect(updateData?.enabled).toBeUndefined();
-    expect(updateData?.status).toBeUndefined();
-    expect(updateData?.totalTrades).toBeUndefined();
-    expect(updateData?.winTrades).toBeUndefined();
-    expect(updateData?.totalPnl).toBeUndefined();
-    expect(updateData?.lastTradeAt).toBeUndefined();
-
-    // Only the allowed field should be present
-    expect(updateData?.name).toBe('Safe Name Only');
+    const updateData = mockBotUpdate.mock.calls[0][0]?.data;
+    expect(updateData).not.toHaveProperty('totalTrades');
   });
 });

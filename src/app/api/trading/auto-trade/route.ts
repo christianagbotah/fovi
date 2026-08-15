@@ -18,13 +18,15 @@ export async function GET(req: NextRequest) {
   try {
     const globalLevy = await getGlobalAdminLevy();
 
+    // CR4.1: Auth before DB check
+    const userId = await getUserId(req);
+
     if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(
         { error: 'Auto-trade configuration is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
         { status: 503 },
       );
     }
-    const userId = await getUserId(req);
     const defaultAccount = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
     });

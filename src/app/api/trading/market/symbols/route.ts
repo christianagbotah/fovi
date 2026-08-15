@@ -1,15 +1,19 @@
 // ============================================================
 // GET /api/trading/market/symbols — Market data
-// Phase 1 CR2:
-//   Fix timeframe check (was defaulting before checking).
-//   Tag demo candle fallback with provenance.
-//   Tag real data with provenance.
+// Phase 1 CR4.1:
+//   All responses use shared provenance model from src/lib/provenance.ts.
+//   Single prices, candles, caches, and demo fallbacks carry provenance.
+//   Demo data is never represented as live.
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { getAllDemoSymbols, getDemoCandles } from '@/lib/broker/demo';
 import { fetchAllRealPrices, fetchCryptoPrices, type MarketPrice } from '@/lib/market-data';
-import { DEMO_PROVENANCE_HEADER } from '@/lib/trading-policy';
+import {
+  type Provenance,
+  provenanceHeaders,
+  DEMO_PROVENANCE,
+} from '@/lib/provenance';
 
 const COINGECKO_IDS: Record<string, string> = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
@@ -21,26 +25,33 @@ const COINGECKO_DAYS_MAP: Record<string, number> = {
   '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '1d': 30, '1w': 90,
 };
 
-const ohlcCache = new Map<string, { data: unknown; ts: number; provenance: { environment: string; isSynthetic: boolean; source: string } }>();
+// Cache stores provenance alongside data so cached data retains original provenance
+interface CacheEntry<T> {
+  data: T;
+  provenance: Provenance;
+  ts: number;
+}
+
+const ohlcCache = new Map<string, CacheEntry<unknown>>();
 const OHLC_CACHE_TTL = 30_000;
 
-function getCached<T>(key: string): { data: T; provenance: { environment: string; isSynthetic: boolean; source: string } } | null {
+function getCached<T>(key: string): { data: T; provenance: Provenance } | null {
   const entry = ohlcCache.get(key);
   if (entry && Date.now() - entry.ts < OHLC_CACHE_TTL) return { data: entry.data as T, provenance: entry.provenance };
   return null;
 }
 
-function setCache(key: string, data: unknown, provenance: { environment: string; isSynthetic: boolean; source: string }) {
-  ohlcCache.set(key, { data, ts: Date.now(), provenance });
+function setCache(key: string, data: unknown, provenance: Provenance) {
+  ohlcCache.set(key, { data, provenance, ts: Date.now() });
 }
 
 async function fetchCryptoCandles(
   symbol: string,
   timeframe: string,
   limit: number,
-): Promise<{ candles: ReturnType<typeof getDemoCandles> | null; provenance: { environment: string; isSynthetic: boolean; source: string } }> {
+): Promise<{ candles: ReturnType<typeof getDemoCandles> | null; provenance: Provenance }> {
   const coinId = COINGECKO_IDS[symbol];
-  if (!coinId) return { candles: null, provenance: { environment: 'demo', isSynthetic: true, source: 'fovi-demo-generator' } };
+  if (!coinId) return { candles: null, provenance: { ...DEMO_PROVENANCE } };
 
   const cacheKey = `candles_${symbol}_${timeframe}`;
   const cached = getCached<ReturnType<typeof getDemoCandles>>(cacheKey);
@@ -61,16 +72,19 @@ async function fetchCryptoCandles(
     }));
 
     if (candles.length === 0) {
-      const provenance = { environment: 'demo' as const, isSynthetic: true as const, source: 'fovi-demo-generator' as const };
-      return { candles: null, provenance };
+      return { candles: null, provenance: { ...DEMO_PROVENANCE } };
     }
 
-    const provenance = { environment: 'live', isSynthetic: false, source: 'coingecko' };
+    const provenance: Provenance = {
+      environment: 'live',
+      isSynthetic: false,
+      source: 'coingecko',
+      observedAt: new Date().toISOString(),
+    };
     setCache(cacheKey, candles, provenance);
     return { candles, provenance };
   } catch {
-    const provenance = { environment: 'demo' as const, isSynthetic: true as const, source: 'fovi-demo-generator' as const };
-    return { candles: null, provenance };
+    return { candles: null, provenance: { ...DEMO_PROVENANCE } };
   }
 }
 
@@ -84,23 +98,31 @@ export async function GET(req: globalThis.Request) {
   if (symbol && !timeframeParam) {
     const { getSinglePrice } = await import('@/lib/market-data');
     const price = await getSinglePrice(symbol);
-    return NextResponse.json(price);
+    const provenance: Provenance = price._realData
+      ? { environment: 'live', isSynthetic: false, source: 'market-data-service', observedAt: new Date().toISOString() }
+      : { ...DEMO_PROVENANCE };
+    return NextResponse.json(
+      { ...price, provenance },
+      { headers: provenanceHeaders(provenance) },
+    );
   }
 
   // --- Candles for a specific symbol ---
   if (symbol && timeframeParam) {
     const { candles: cryptoCandles, provenance } = await fetchCryptoCandles(symbol, timeframeParam, limit);
     if (cryptoCandles && cryptoCandles.length > 0) {
-      const headers: Record<string, string> = {
-        'x-environment': provenance.environment,
-        'x-synthetic': String(provenance.isSynthetic),
-        'x-data-source': provenance.source,
-      };
-      return NextResponse.json(cryptoCandles, { headers });
+      return NextResponse.json(
+        { candles: cryptoCandles, provenance },
+        { headers: provenanceHeaders(provenance) },
+      );
     }
-    // Demo fallback — tag with provenance
+    // Demo fallback — tagged with demo provenance, never live
     const demoCandles = getDemoCandles(symbol, timeframeParam, limit);
-    return NextResponse.json(demoCandles, { headers: DEMO_PROVENANCE_HEADER });
+    const demoProv: Provenance = { ...DEMO_PROVENANCE };
+    return NextResponse.json(
+      { candles: demoCandles, provenance: demoProv },
+      { headers: provenanceHeaders(demoProv) },
+    );
   }
 
   // --- Full symbol list (merged real data + demo fallback) ---
@@ -112,14 +134,21 @@ export async function GET(req: globalThis.Request) {
   const enrichedSymbols = demoSymbols.map((sym) => {
     const real = realPricesMap.get(sym.symbol);
     if (real) {
+      const prov: Provenance = {
+        environment: 'live',
+        isSynthetic: false,
+        source: 'market-data-service',
+        observedAt: new Date().toISOString(),
+      };
       return {
         ...sym,
         price: real.price, change: real.change, changePercent: real.changePercent,
         volume: real.volume, high24h: real.high24h, low24h: real.low24h,
-        environment: 'live', isSynthetic: false, source: 'market-data-service',
+        provenance: prov,
       };
     }
-    return { ...sym, environment: 'demo', isSynthetic: true, source: 'fovi-demo-generator' };
+    const prov: Provenance = { ...DEMO_PROVENANCE };
+    return { ...sym, provenance: prov };
   });
 
   return NextResponse.json(enrichedSymbols);

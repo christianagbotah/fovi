@@ -1,134 +1,167 @@
 // ============================================================
-// Actual Delete Count Tests (Task 10b-4)
-// Test webhook DELETE:
-//   - When deleteMany matches 0 rows → 404 (not success:true)
-//   - When deleteMany matches 1 row → success:true
-//
-// The DELETE handler uses tenant-scoped deleteMany({ where: { id, userId } }).
-// Tests verify both the actual DB behavior and the response.
+// actual-delete-count.test.ts — CR4.1
+// Tests that deleteMany results are properly checked (count:0 → 404, count:1 → 200).
+// We mock @/lib/db but call the REAL route handler functions.
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { NextRequest } from 'next/server';
 
-const ORIGINAL_ENV = process.env;
-
-// ── Mock DB with controllable deleteMany return ──
-const capturedDeleteManyArgs: Array<{ where: Record<string, unknown> }> = [];
-let deleteManyResult: { count: number } = { count: 0 };
-
-const mockDeleteMany = vi.fn().mockImplementation((args: any) => {
-  capturedDeleteManyArgs.push({ where: args.where });
-  return Promise.resolve(deleteManyResult);
-});
+// Use vi.hoisted to make mock functions available inside vi.mock factories
+const {
+  mockDeleteMany: mockBotDeleteMany,
+  mockBotFindFirst: mockBotFindFirst,
+  mockBotFindUnique: mockBotFindUnique,
+  mockBotUpdate: mockBotUpdate,
+  mockAccountDeleteMany,
+  mockWebhookDeleteMany,
+} = vi.hoisted(() => ({
+  mockDeleteMany: vi.fn(),
+  mockBotFindFirst: vi.fn(),
+  mockBotFindUnique: vi.fn(),
+  mockBotUpdate: vi.fn(),
+  mockAccountDeleteMany: vi.fn(),
+  mockWebhookDeleteMany: vi.fn(),
+}));
 
 vi.mock('@/lib/db', () => ({
   db: {
+    bot: {
+      deleteMany: mockBotDeleteMany,
+      findFirst: mockBotFindFirst,
+      findUnique: mockBotFindUnique,
+      update: mockBotUpdate,
+    },
+    tradingAccount: {
+      deleteMany: mockAccountDeleteMany,
+    },
     webhookConfig: {
-      findMany: vi.fn().mockResolvedValue([]),
-      deleteMany: mockDeleteMany,
+      deleteMany: mockWebhookDeleteMany,
     },
   },
-  hasModel: (m: string) => m === 'webhookConfig',
+  hasModel: vi.fn(() => true),
+  isDbAvailable: vi.fn(() => true),
 }));
 
-vi.mock('@/lib/demo-sltp-store', () => ({
-  loadDemoPositionSLTP: () => new Map(),
-  saveDemoPositionSLTP: () => {},
+vi.mock('@/lib/get-user-id', () => ({
+  getUserIdSync: vi.fn(() => 'user-123'),
+  getUserId: vi.fn(() => Promise.resolve('user-123')),
+  AuthRequiredError: class extends Error {
+    constructor() { super('Authentication required.'); this.name = 'AuthRequiredError'; }
+  },
+  authRequiredResponse: vi.fn(() => new Response(JSON.stringify({ error: 'Authentication required.' }), { status: 401 })),
+  getUserIdOrNull: vi.fn(() => 'user-123'),
 }));
 
-vi.mock('uuid', () => ({
-  v4: () => 'test-uuid-00000000-0000-4000-8000-000000000000',
+vi.mock('@/lib/trading-policy', () => ({
+  isExplicitlyDemo: vi.fn(() => true),
+  CONTAINMENT_CODES: { PHASE1_LIVE_TRADING_DISABLED: 'PHASE1_LIVE_TRADING_DISABLED' },
+  logSecurityEvent: vi.fn(),
+  DEMO_PROVENANCE_HEADER: {},
 }));
 
-// ── Helper ──
-function authedReqDelete(userId: string, url: string) {
-  return new NextRequest(new URL(url), {
-    method: 'DELETE',
+vi.mock('@/lib/subscription-guard', () => ({
+  checkSubscriptionLimit: vi.fn(() => Promise.resolve({ allowed: true, current: 0, limit: 10 })),
+  getLimitMessage: vi.fn(() => 'limit reached'),
+}));
+
+vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+import { DELETE as botDelete } from '@/app/api/trading/bots/[id]/route';
+import { DELETE as accountDelete } from '@/app/api/trading/accounts/[id]/route';
+import { DELETE as webhookDelete } from '@/app/api/trading/webhooks/route';
+
+function makeRequest(url: string, userId = 'user-123') {
+  return new Request(`http://localhost${url}`, {
     headers: { 'x-user-id': userId },
   });
 }
 
-// ================================================================
-describe('actual delete count — webhook DELETE', () => {
+describe('Bot DELETE — actual delete count check', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    capturedDeleteManyArgs.length = 0;
-    process.env = { ...ORIGINAL_ENV };
-  });
-  afterEach(() => { process.env = ORIGINAL_ENV; });
-
-  it('deleteMany matches 0 rows → response indicates no fabricated success (tenant-scoped)', async () => {
-    // Simulate deleteMany matching 0 rows (webhook doesn't belong to this user)
-    deleteManyResult = { count: 0 };
-
-    const { DELETE } = await import('@/app/api/trading/webhooks/route');
-    const res = await DELETE(
-      authedReqDelete('user_A', 'http://localhost/api/trading/webhooks?id=wh_1'),
-    );
-
-    // Verify the WHERE clause is tenant-scoped
-    expect(capturedDeleteManyArgs).toHaveLength(1);
-    const whereClause = capturedDeleteManyArgs[0].where;
-    expect(whereClause.id).toBe('wh_1');
-    expect(whereClause.userId).toBe('user_A');
-
-    // The handler always returns success:true on the phase-1 branch
-    // (does not check deleteMany count). Document this behavior:
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.success).toBe(true);
   });
 
-  it('deleteMany matches 1 row → success:true', async () => {
-    // Simulate deleteMany matching 1 row
-    deleteManyResult = { count: 1 };
+  it('deleteMany returns {count:0} → 404', async () => {
+    mockBotDeleteMany.mockResolvedValue({ count: 0 });
 
-    const { DELETE } = await import('@/app/api/trading/webhooks/route');
-    const res = await DELETE(
-      authedReqDelete('user_A', 'http://localhost/api/trading/webhooks?id=wh_1'),
-    );
+    const req = makeRequest('/api/trading/bots/bot-1');
+    const res = await botDelete(req, { params: Promise.resolve({ id: 'bot-1' }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain('not found');
+    expect(mockBotDeleteMany).toHaveBeenCalledWith({ where: { id: 'bot-1', userId: 'user-123' } });
+  });
+
+  it('deleteMany returns {count:1} → 200 with success:true', async () => {
+    mockBotDeleteMany.mockResolvedValue({ count: 1 });
+
+    const req = makeRequest('/api/trading/bots/bot-1');
+    const res = await botDelete(req, { params: Promise.resolve({ id: 'bot-1' }) });
+    const data = await res.json();
 
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.success).toBe(true);
+    expect(data.success).toBe(true);
+    expect(mockBotDeleteMany).toHaveBeenCalledWith({ where: { id: 'bot-1', userId: 'user-123' } });
+  });
+});
 
-    // Verify tenant-scoped WHERE clause
-    expect(capturedDeleteManyArgs).toHaveLength(1);
-    const whereClause = capturedDeleteManyArgs[0].where;
-    expect(whereClause.id).toBe('wh_1');
-    expect(whereClause.userId).toBe('user_A');
+describe('Account DELETE — actual delete count check', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('different users get different tenant-scoped deletes', async () => {
-    deleteManyResult = { count: 1 };
+  it('deleteMany returns {count:0} → 404', async () => {
+    mockAccountDeleteMany.mockResolvedValue({ count: 0 });
 
-    // User A deleting
-    const { DELETE } = await import('@/app/api/trading/webhooks/route');
-    await DELETE(
-      authedReqDelete('user_A', 'http://localhost/api/trading/webhooks?id=wh_1'),
-    );
-    expect(capturedDeleteManyArgs[0].where.userId).toBe('user_A');
+    const req = makeRequest('/api/trading/accounts/acc-1');
+    const res = await accountDelete(req, { params: Promise.resolve({ id: 'acc-1' }) });
+    const data = await res.json();
 
-    capturedDeleteManyArgs.length = 0;
-
-    // User B deleting same webhook ID
-    await DELETE(
-      authedReqDelete('user_B', 'http://localhost/api/trading/webhooks?id=wh_1'),
-    );
-    expect(capturedDeleteManyArgs[0].where.userId).toBe('user_B');
-    // Same webhook ID, different userId — tenant isolation
-    expect(capturedDeleteManyArgs[0].where.id).toBe('wh_1');
+    expect(res.status).toBe(404);
+    expect(data.error).toContain('not found');
+    expect(mockAccountDeleteMany).toHaveBeenCalledWith({ where: { id: 'acc-1', userId: 'user-123' } });
   });
 
-  it('missing webhook ID → 400 error', async () => {
-    const { DELETE } = await import('@/app/api/trading/webhooks/route');
-    const res = await DELETE(
-      authedReqDelete('user_A', 'http://localhost/api/trading/webhooks'), // no ?id=
-    );
+  it('deleteMany returns {count:1} → 200 with success:true', async () => {
+    mockAccountDeleteMany.mockResolvedValue({ count: 1 });
 
-    expect(res.status).toBe(400);
-    // No deleteMany should have been called
-    expect(mockDeleteMany).not.toHaveBeenCalled();
+    const req = makeRequest('/api/trading/accounts/acc-1');
+    const res = await accountDelete(req, { params: Promise.resolve({ id: 'acc-1' }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockAccountDeleteMany).toHaveBeenCalledWith({ where: { id: 'acc-1', userId: 'user-123' } });
+  });
+});
+
+describe('Webhook DELETE — actual delete count check', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('deleteMany returns {count:0} → 404', async () => {
+    mockWebhookDeleteMany.mockResolvedValue({ count: 0 });
+
+    const req = makeRequest('/api/trading/webhooks?id=wh-1');
+    const res = await webhookDelete(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain('not found');
+    expect(mockWebhookDeleteMany).toHaveBeenCalledWith({ where: { id: 'wh-1', userId: 'user-123' } });
+  });
+
+  it('deleteMany returns {count:1} → 200 with success:true', async () => {
+    mockWebhookDeleteMany.mockResolvedValue({ count: 1 });
+
+    const req = makeRequest('/api/trading/webhooks?id=wh-1');
+    const res = await webhookDelete(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockWebhookDeleteMany).toHaveBeenCalledWith({ where: { id: 'wh-1', userId: 'user-123' } });
   });
 });

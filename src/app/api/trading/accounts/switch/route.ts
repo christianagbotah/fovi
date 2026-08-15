@@ -1,6 +1,9 @@
 // ============================================================
 // POST /api/trading/accounts/switch — Switch default account
-// Phase 1 CR2: Strict auth (AuthRequiredError → 401), safe DTO.
+// Phase 1 CR4.1:
+//   Auth before DB check.
+//   Validate target account belongs to tenant BEFORE clearing defaults.
+//   Use transaction for atomicity.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -9,29 +12,44 @@ import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-us
 import { safeAccountDTO, logSecurityEvent } from '@/lib/trading-policy';
 
 export async function POST(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(
       { error: 'Database unavailable.' },
       { status: 503 },
     );
   }
+
   try {
-    const userId = await getUserId(req);
     const { accountId } = await req.json();
 
-    // Unset all defaults
-    await db.tradingAccount.updateMany({
-      where: { userId },
-      data: { isDefault: false },
-    });
-
-    // Set new default — scoped to this user
-    const account = await db.tradingAccount.update({
+    // CR4.1: Validate target account belongs to this tenant BEFORE clearing defaults
+    const targetAccount = await db.tradingAccount.findFirst({
       where: { id: accountId, userId },
-      data: { isDefault: true },
     });
+    if (!targetAccount) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
 
-    return NextResponse.json(safeAccountDTO(account as unknown as Record<string, unknown>));
+    // Atomic: unset all defaults, then set new default
+    await db.$transaction([
+      db.tradingAccount.updateMany({
+        where: { userId },
+        data: { isDefault: false },
+      }),
+      db.tradingAccount.update({
+        where: { id: accountId },
+        data: { isDefault: true },
+      }),
+    ]);
+
+    return NextResponse.json(safeAccountDTO(targetAccount as unknown as Record<string, unknown>));
   } catch (error) {
     if (error instanceof AuthRequiredError) {
       return authRequiredResponse();

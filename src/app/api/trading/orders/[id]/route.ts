@@ -22,17 +22,12 @@ export async function DELETE(
     const { id } = await params;
 
     const order = await db.order.findFirst({
-      where: { id },
+      where: { id, account: { userId } },
       include: { account: true },
     });
 
     if (!order) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
-    }
-
-    // Cross-tenant check
-    if (order.account.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     if (!['pending', 'partially_filled'].includes(order.status)) {

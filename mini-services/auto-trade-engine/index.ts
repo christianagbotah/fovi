@@ -17,6 +17,12 @@ import {
   type CandleData,
   type TradeSignal,
 } from './strategies';
+import {
+  parseSinglePriceResponse,
+  parseCandleResponse,
+  validateEngineProvenance,
+  type PriceWithProvenance,
+} from './market-provenance';
 
 // ============================================================
 // Configuration
@@ -78,8 +84,12 @@ interface BotRow {
     id: string;
     broker: string;
     accountType: string;
+    isDemo: boolean | null;
     balance: number;
     isActive: boolean;
+    apiKey: string | null;
+    apiSecret: string | null;
+    passphrase: string | null;
   } | null;
 }
 
@@ -126,8 +136,12 @@ interface BotTableBot {
   lastError: string | null;
   accountBroker: string;
   accountType: string;
+  accountIsDemo: boolean | null;
   accountBalance: number;
   accountIsActive: boolean;
+  accountApiKey: string | null;
+  accountApiSecret: string | null;
+  accountPassphrase: string | null;
 }
 
 interface ActivityEntry {
@@ -150,13 +164,13 @@ interface ActivityEntry {
 interface PriceResult {
   price: number;
   isDemoData: boolean;
-  environment: 'live' | 'demo';
+  environment: 'live' | 'demo' | 'unknown';
   source: string;
 }
 
 // ── CR2: Candle provenance ──
 interface CandleProvenance {
-  environment: 'live' | 'demo';
+  environment: 'live' | 'demo' | 'unknown';
   isSynthetic: boolean;
   source: string;
 }
@@ -319,14 +333,23 @@ async function fetchBotTableBots(): Promise<BotTableBot[]> {
         b."lastTradeAt", b."lastError",
         a.broker AS "accountBroker",
         a."accountType",
+        a."isDemo" AS "accountIsDemo",
         a.balance AS "accountBalance",
-        a."isActive" AS "accountIsActive"
+        a."isActive" AS "accountIsActive",
+        a."apiKey" AS "accountApiKey",
+        a."apiSecret" AS "accountApiSecret",
+        a."passphrase" AS "accountPassphrase"
       FROM "Bot" b
       LEFT JOIN "TradingAccount" a ON a.id = b."accountId"
       WHERE b.enabled = true
         AND b.status = 'running'
         AND a."isActive" = true
+        AND a.broker = 'demo'
+        AND a."accountType" = 'demo'
         AND a."isDemo" = true
+        AND a."apiKey" IS NULL
+        AND a."apiSecret" IS NULL
+        AND a."passphrase" IS NULL
     `;
     return rows;
   } catch (err) {
@@ -416,7 +439,7 @@ function getDemoPrice(symbol: string): number {
  * demo data for non-demo accounts.
  */
 async function fetchMarketPrice(symbol: string): Promise<PriceResult> {
-  // Layer 1: Next.js market API (real data)
+  // Layer 1: Next.js market API with provenance parsing
   try {
     const res = await fetch(
       `${NEXTJS_API}/api/trading/market/symbols?symbol=${encodeURIComponent(symbol)}`,
@@ -424,12 +447,25 @@ async function fetchMarketPrice(symbol: string): Promise<PriceResult> {
     );
     if (res.ok) {
       const data = await res.json() as Record<string, unknown>;
-      const price = data.price ?? data.currentPrice;
-      if (typeof price === 'number' && price > 0) return { price, isDemoData: false, environment: 'live', source: 'nextjs-market-api' };
+      const parsed = parseSinglePriceResponse(res.headers, data);
+      if (parsed && parsed.price > 0) {
+        // Validate provenance for engine consumption
+        const validation = validateEngineProvenance(parsed);
+        if (validation.valid) {
+          return {
+            price: parsed.price,
+            isDemoData: parsed.environment === 'demo',
+            environment: parsed.environment,
+            source: parsed.source,
+          };
+        }
+        // Unknown/malformed/mismatched provenance — reject, fall through
+        console.log(`[AutoTrade] Price provenance rejected for ${symbol}: ${validation.reason}`);
+      }
     }
   } catch { /* fall through */ }
 
-  // Layer 2: CoinGecko for crypto (real data)
+  // Layer 2: CoinGecko for crypto (direct live source, no provenance headers)
   if (isCryptoSymbol(symbol)) {
     try {
       const id = COINGECKO_IDS[symbol.toUpperCase()];
@@ -520,11 +556,25 @@ async function fetchNextJSCandles(symbol: string, limit: number): Promise<Candle
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
 
-    const data = await res.json() as CandleData[];
-    if (!Array.isArray(data) || data.length === 0) return null;
+    const data = await res.json() as Record<string, unknown>;
+    const parsed = parseCandleResponse(res.headers, data);
+    if (!parsed || parsed.candles.length === 0) return null;
 
-    console.log(`[AutoTrade] Fetched ${data.length} candles for ${symbol} from Next.js API`);
-    return data;
+    // Validate provenance — reject unknown/malformed
+    const validation = validateEngineProvenance(parsed.provenance);
+    if (!validation.valid) {
+      console.log(`[AutoTrade] Candle provenance rejected for ${symbol}: ${validation.reason}`);
+      return null;
+    }
+
+    // Only accept live candles (demo candles come from our own fallback below)
+    if (parsed.provenance.environment !== 'live') {
+      console.log(`[AutoTrade] Next.js candles for ${symbol} are ${parsed.provenance.environment}, not live — skipping`);
+      return null;
+    }
+
+    console.log(`[AutoTrade] Fetched ${parsed.candles.length} live candles for ${symbol} from Next.js API`);
+    return parsed.candles;
   } catch (err) {
     console.warn(`[AutoTrade] Next.js candle fetch failed for ${symbol}:`, err instanceof Error ? err.message : err);
     return null;
@@ -606,7 +656,9 @@ async function callNextJSApi(
 // ============================================================
 
 function isExplicitlyDemoAccount(config: BotRow): boolean {
-  return config.account?.broker === 'demo' && config.account?.accountType === 'demo';
+  const a = config.account;
+  if (!a) return false;
+  return a.broker === 'demo' && a.accountType === 'demo' && a.isDemo === true;
 }
 
 // ============================================================
@@ -721,8 +773,12 @@ async function runCycle() {
             id: bot.accountId,
             broker: bot.accountBroker,
             accountType: bot.accountType,
+            isDemo: bot.accountIsDemo,
             balance: bot.accountBalance,
             isActive: bot.accountIsActive,
+            apiKey: bot.accountApiKey,
+            apiSecret: bot.accountApiSecret,
+            passphrase: bot.accountPassphrase,
           } : null,
         };
 
@@ -845,6 +901,26 @@ async function processBot(config: BotRow) {
   const maxPos = config.maxPositions || 5;
   const isBotDemo = isExplicitlyDemoAccount(config);
 
+  // ── CR4.1: Reject null, missing, false, or conflicting account fields ──
+  if (!isBotDemo) {
+    if (!config.account) {
+      console.log(`${tag} Skipping: no account attached`);
+      addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: 'No account attached — cannot process' });
+      return;
+    }
+    const a = config.account;
+    if (a.broker !== 'demo' || a.accountType !== 'demo' || a.isDemo !== true) {
+      console.log(`${tag} Skipping: non-demo account (broker=${a.broker}, type=${a.accountType}, isDemo=${a.isDemo})`);
+      addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: `Non-demo account rejected: broker=${a.broker}, type=${a.accountType}, isDemo=${a.isDemo}` });
+      return;
+    }
+    if (a.apiKey || a.apiSecret || a.passphrase) {
+      console.log(`${tag} Skipping: demo account has credential fields populated`);
+      addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: 'Demo account has credential fields — data invariant violation' });
+      return;
+    }
+  }
+
   console.log(`${tag} Processing "${config.name}" (strategy: ${strategy}, account: ${config.accountId}, isDemo: ${isBotDemo})`);
 
   // ── Step 1: Check SL/TP on in-memory positions ──
@@ -944,8 +1020,17 @@ async function processBot(config: BotRow) {
         continue;
       }
 
-      // ── CR2: Reject non-demo bots from synthetic data ──
-      if (!isBotDemo && candleProvenance.isSynthetic) {
+      // ── CR4.1: Reject non-demo bots from non-live data with validated provenance ──
+      const candleValidation = validateEngineProvenance(candleProvenance);
+      if (!candleValidation.valid) {
+        console.log(`${tag} [${symbol}] Skipping: candle provenance invalid: ${candleValidation.reason}`);
+        addActivity({
+          type: 'error', botId: config.id, botName: config.name,
+          symbol, error: `Candle provenance invalid: ${candleValidation.reason}`,
+        });
+        continue;
+      }
+      if (!isBotDemo && (candleProvenance.environment === 'demo' || candleProvenance.isSynthetic)) {
         console.log(`${tag} [${symbol}] Skipping: non-demo bot received synthetic candles (source: ${candleProvenance.source})`);
         addActivity({
           type: 'error', botId: config.id, botName: config.name,
@@ -978,10 +1063,10 @@ async function processBot(config: BotRow) {
   }
 
   // ── Step 5: Fetch live price with provenance ──
-  // P0-15: Reject demo data for non-demo bots
+  // P0-15: Reject demo/unknown data for non-demo bots
   const priceResult = await fetchMarketPrice(bestSignal.symbol);
-  if (!isBotDemo && priceResult.isDemoData) {
-    console.log(`${tag} [${bestSignal.symbol}] Skipping — only demo price data available for non-demo bot`);
+  if (!isBotDemo && (priceResult.environment === 'demo' || priceResult.environment === 'unknown')) {
+    console.log(`${tag} [${bestSignal.symbol}] Skipping — only ${priceResult.environment} price data available for non-demo bot`);
     addActivity({
       type: 'signal_generated',
       botId: config.id,

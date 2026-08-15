@@ -1,19 +1,14 @@
 // ============================================================
 // Broker Factory - Creates broker instances based on config
-// Phase 1 CR2: Unknown/unapproved providers ALWAYS throw.
-//   DemoBroker ONLY when provider==='demo' AND isDemo===true.
-//   No GenericRESTBroker fallback for any provider.
+// Phase 1 CR4.1:
+//   createBroker() ONLY returns a broker for provider='demo' with isDemo=true.
+//   ALL other providers throw PHASE1_LIVE_TRADING_DISABLED before
+//   adapter construction, decryption, or network activity.
+//   createBrokerFromAccount() enforces the same rule.
 // ============================================================
 
 import type { BrokerConfig } from '../types';
 import { DemoBroker } from './demo';
-import { AlpacaBroker } from './alpaca';
-import { BinanceBroker } from './binance';
-import { OkxBroker } from './okx';
-import { BybitBroker } from './bybit';
-import { BitgetBroker } from './bitget';
-import { MT5Broker } from './mt5';
-import { decrypt } from '@/lib/encryption';
 import { CONTAINMENT_CODES } from '@/lib/trading-policy';
 
 export interface IBroker {
@@ -82,43 +77,32 @@ export class BrokerFactoryError extends Error {
   }
 }
 
+/**
+ * Phase 1: createBroker() ONLY returns a broker for provider='demo' with isDemo=true.
+ * ALL other providers — alpaca, binance, okx, bybit, bitget, mt5, generic-rest,
+ * unknown, and incomplete configurations — throw PHASE1_LIVE_TRADING_DISABLED
+ * BEFORE adapter construction, decryption, or network activity.
+ */
 export function createBroker(config: BrokerConfig): IBroker {
   // DemoBroker ONLY when provider==='demo' AND isDemo===true
   if (config.provider === 'demo') {
     if (config.isDemo !== true) {
       throw new BrokerFactoryError(
-        CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
-        'DemoBroker requires both provider="demo" and isDemo=true.',
+        CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+        'DemoBroker requires both provider="demo" and isDemo=true. No credentials were decrypted.',
       );
     }
     return new DemoBroker(config);
   }
 
-  // Built-in implementations — switch, no fallback
-  switch (config.provider) {
-    case 'alpaca':
-      return new AlpacaBroker(config);
-    case 'binance':
-      return new BinanceBroker(config);
-    case 'okx':
-      return new OkxBroker(config);
-    case 'bybit':
-      return new BybitBroker(config);
-    case 'bitget':
-      return new BitgetBroker(config);
-    case 'mt5':
-      return new MT5Broker(config);
-    default:
-      // CR2: Unknown/unapproved providers ALWAYS throw.
-      // No GenericRESTBroker fallback.
-      throw new BrokerFactoryError(
-        CONTAINMENT_CODES.BROKER_CONFIG_INCOMPLETE,
-        `Unknown or unapproved broker provider: "${config.provider}". Reconnect in Settings.`,
-      );
-  }
+  // Phase 1: ALL non-demo providers are unconditionally blocked.
+  // This covers alpaca, binance, okx, bybit, bitget, mt5, generic-rest,
+  // unknown, and incomplete configurations.
+  throw new BrokerFactoryError(
+    CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
+    `Phase 1 containment: broker construction for provider "${config.provider}" is not permitted. No credentials were decrypted.`,
+  );
 }
-
-const KNOWN_REAL_PROVIDERS = new Set(['alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5']);
 
 export async function createBrokerFromAccount(account: {
   broker: string;

@@ -40,6 +40,7 @@ const mockDb = {
     findUnique: captureWhere('bot', 'findUnique'),
     findFirst: captureWhere('bot', 'findFirst'),
     findMany: captureWhere('bot', 'findMany'),
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
   webhookConfig: {
     findMany: captureWhere('webhookConfig', 'findMany'),
@@ -146,9 +147,8 @@ describe('cross-tenant isolation', () => {
   });
 
   it('bot update: user B cannot update user A\'s bot', async () => {
-    mockDb.bot.findUnique.mockResolvedValueOnce({
-      id: 'bot_1', userId: USER_A, name: 'Old Name',
-    } as any);
+    // CR4.1: Now uses tenant-scoped findFirst — wrong tenant returns 404
+    mockDb.bot.findFirst.mockResolvedValueOnce(null);
 
     const { PUT } = await import('@/app/api/trading/bots/[id]/route');
     const res = await PUT(
@@ -156,13 +156,12 @@ describe('cross-tenant isolation', () => {
       { params: Promise.resolve({ id: 'bot_1' }) },
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it('bot delete: user B cannot delete user A\'s bot', async () => {
-    mockDb.bot.findUnique.mockResolvedValueOnce({
-      id: 'bot_1', userId: USER_A,
-    } as any);
+    // CR4.1: Now uses tenant-scoped deleteMany — wrong tenant returns 404
+    mockDb.bot.deleteMany.mockResolvedValueOnce({ count: 0 });
 
     const { DELETE } = await import('@/app/api/trading/bots/[id]/route');
     const res = await DELETE(
@@ -170,7 +169,7 @@ describe('cross-tenant isolation', () => {
       { params: Promise.resolve({ id: 'bot_1' }) },
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it('webhook delete: DB query contains authenticated userId (tenant-scoped)', async () => {

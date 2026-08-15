@@ -53,18 +53,14 @@ describe('no fabricated success on DB unavailable', () => {
     expect(body.id).toBeUndefined();
   });
 
-  it('bots GET returns static demo data when db is null (read-only, no fake user ID)', async () => {
+  it('bots GET returns 503 (not demo fallback) when db is null', async () => {
     const { GET } = await import('@/app/api/trading/bots/route');
     const res = await GET(authedReq('user_1', 'http://localhost/api/trading/bots'));
-    // GET falls back to static demo data (read-only, no persistence)
-    expect(res.status).toBe(200);
+    // CR4.1: Auth-gated 503, NOT demo fallback data
+    expect(res.status).toBe(503);
     const body = await res.json();
-    // Static demo data has demo IDs but they are read-only, not fabricated per-user
-    expect(Array.isArray(body)).toBe(true);
-    // Verify no user-scoped userId in the demo data
-    if (body.length > 0) {
-      expect(body[0].userId).toBeUndefined();
-    }
+    expect(body.error).toBeDefined();
+    expect(body.code).toBe('SERVICE_UNAVAILABLE');
   });
 
   it('bots toggle returns 503 when db is null (not enabled:true)', async () => {

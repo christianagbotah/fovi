@@ -37,8 +37,17 @@ const DEMO_ENTRIES = [
 const DB_MODEL = 'tradeJournal';
 
 export async function GET(req: NextRequest) {
+  // CR4.1: Auth before fallback — require auth even when DB is unavailable
   if (!db || !hasModel(DB_MODEL)) {
-    return NextResponse.json(DEMO_ENTRIES, { headers: DEMO_PROVENANCE_HEADER });
+    try {
+      getUserIdSync(req);
+    } catch {
+      return authRequiredResponse();
+    }
+    return NextResponse.json(
+      { error: 'Journal data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+      { status: 503 },
+    );
   }
   try {
     const userId = getUserIdSync(req);

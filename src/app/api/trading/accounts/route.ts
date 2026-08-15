@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const id = uuidv4();
   const broker = body.broker || 'demo';
   const accountType = body.accountType || 'demo';
-  const isDemo = broker === 'demo' && accountType === 'demo' ? true : undefined;
+  const isDemo = broker === 'demo' && accountType === 'demo' ? true : false;
   const dbReady = !!(db && hasModel('tradingAccount'));
 
   // Reject conflicting classification: broker='demo' but accountType='live' or vice versa

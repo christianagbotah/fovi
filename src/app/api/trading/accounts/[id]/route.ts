@@ -71,8 +71,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     const { id } = await params;
     const userId = await getUserId(req);
-    // Tenant-scoped: only delete accounts belonging to this user
-    await db.tradingAccount.deleteMany({ where: { id, userId } });
+    // CR4.1: Tenant-scoped delete — userId in predicate, check count
+    const { count } = await db.tradingAccount.deleteMany({ where: { id, userId } });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof AuthRequiredError) {

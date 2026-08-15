@@ -43,8 +43,16 @@ const DEMO_BOTS = [
 
 export async function GET(req: NextRequest) {
   if (!db || !hasModel('bot')) {
-    // No DB — return static demo data with provenance (read-only)
-    return NextResponse.json(DEMO_BOTS, { headers: DEMO_PROVENANCE_HEADER });
+    // CR4.1: Auth before fallback — require auth even when DB is unavailable
+    try {
+      getUserIdSync(req);
+    } catch {
+      return authRequiredResponse();
+    }
+    return NextResponse.json(
+      { error: 'Bot data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+      { status: 503 },
+    );
   }
   try {
     const userId = getUserIdSync(req);
@@ -104,6 +112,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'No trading account found. Create a demo account first.' },
         { status: 404 },
+      );
+    }
+
+    // CR4.1: Reject non-demo, unknown, null, or conflicting accounts for bot creation
+    if (!isExplicitlyDemo(account)) {
+      return NextResponse.json(
+        {
+          error: 'Phase 1 containment: bot creation requires an explicitly demo account.',
+          code: 'PHASE1_LIVE_TRADING_DISABLED',
+          remediationPhase: 'containment',
+        },
+        { status: 403 },
       );
     }
 

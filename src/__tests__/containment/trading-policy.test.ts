@@ -386,7 +386,8 @@ describe('broker factory containment', () => {
       expect.unreachable('Should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(BrokerFactoryError);
-      expect((e as BrokerFactoryError).code).toBe('BROKER_CONFIG_INCOMPLETE');
+      // CR4.1: All non-demo providers now throw PHASE1_LIVE_TRADING_DISABLED
+      expect((e as BrokerFactoryError).code).toBe('PHASE1_LIVE_TRADING_DISABLED');
     }
   });
 

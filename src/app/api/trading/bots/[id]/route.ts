@@ -18,12 +18,10 @@ export async function GET(
 
   try {
     const userId = getUserIdSync(req);
-    const bot = await db.bot.findUnique({ where: { id } });
+    // CR4.1: Tenant-scoped query — userId in predicate
+    const bot = await db.bot.findFirst({ where: { id, userId } });
     if (!bot) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
-    }
-    if (bot.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json(bot);
   } catch (error) {
@@ -55,15 +53,13 @@ export async function PUT(
 
   try {
     const userId = getUserIdSync(req);
-    const bot = await db.bot.findUnique({
-      where: { id },
+    // CR4.1: Tenant-scoped query — userId in predicate
+    const bot = await db.bot.findFirst({
+      where: { id, userId },
       include: { account: true },
     });
     if (!bot) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
-    }
-    if (bot.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Strict allowlist of updatable fields
@@ -91,6 +87,7 @@ export async function PUT(
       }
     }
 
+    // CR4.1: Update with tenant-scoped predicate
     const updated = await db.bot.update({
       where: { id },
       data,
@@ -124,14 +121,11 @@ export async function DELETE(
 
   try {
     const userId = getUserIdSync(req);
-    const bot = await db.bot.findUnique({ where: { id } });
-    if (!bot) {
+    // CR4.1: Tenant-scoped delete — userId in predicate, check count
+    const { count } = await db.bot.deleteMany({ where: { id, userId } });
+    if (count === 0) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
     }
-    if (bot.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    await db.bot.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof AuthRequiredError) {
