@@ -5,18 +5,21 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 const {
   mockBotCreate,
   mockBotFindFirst,
   mockBotFindUnique,
   mockBotUpdate,
+  mockBotUpdateMany,
   mockTradingAccountFindFirst,
 } = vi.hoisted(() => ({
   mockBotCreate: vi.fn(),
   mockBotFindFirst: vi.fn(),
   mockBotFindUnique: vi.fn(),
   mockBotUpdate: vi.fn(),
+  mockBotUpdateMany: vi.fn(),
   mockTradingAccountFindFirst: vi.fn(),
 }));
 
@@ -27,6 +30,7 @@ vi.mock('@/lib/db', () => ({
       findFirst: mockBotFindFirst,
       findUnique: mockBotFindUnique,
       update: mockBotUpdate,
+      updateMany: mockBotUpdateMany,
       deleteMany: vi.fn(),
     },
     tradingAccount: {
@@ -69,7 +73,7 @@ import { POST as botPost } from '@/app/api/trading/bots/route';
 import { POST as botToggle } from '@/app/api/trading/bots/[id]/toggle/route';
 
 function makeRequest(url: string, userId = 'user-123') {
-  return new Request(`http://localhost${url}`, {
+  return new NextRequest(`http://localhost${url}`, {
     headers: { 'x-user-id': userId },
   });
 }
@@ -100,7 +104,7 @@ describe('Bot POST — Phase 1 containment', () => {
       .mockResolvedValueOnce(null) // isDefault: true
       .mockResolvedValueOnce(liveAccount); // any account
 
-    const req = new Request('http://localhost/api/trading/bots', {
+    const req = new NextRequest('http://localhost/api/trading/bots', {
       method: 'POST',
       headers: { 'x-user-id': 'user-123', 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'Test Bot' }),
@@ -118,7 +122,7 @@ describe('Bot POST — Phase 1 containment', () => {
       .mockResolvedValueOnce(null) // isDefault: true
       .mockResolvedValueOnce(null); // any account
 
-    const req = new Request('http://localhost/api/trading/bots', {
+    const req = new NextRequest('http://localhost/api/trading/bots', {
       method: 'POST',
       headers: { 'x-user-id': 'user-123', 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'Test Bot' }),
@@ -140,7 +144,7 @@ describe('Bot POST — Phase 1 containment', () => {
       strategy: 'signal_based',
     });
 
-    const req = new Request('http://localhost/api/trading/bots', {
+    const req = new NextRequest('http://localhost/api/trading/bots', {
       method: 'POST',
       headers: { 'x-user-id': 'user-123', 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'Test Bot' }),
@@ -156,7 +160,7 @@ describe('Bot Toggle — Phase 1 containment', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('enable with null account → 403', async () => {
-    mockBotFindUnique.mockResolvedValue({
+    mockBotFindFirst.mockResolvedValue({
       id: 'bot-1',
       userId: 'user-123',
       enabled: false,
@@ -173,7 +177,7 @@ describe('Bot Toggle — Phase 1 containment', () => {
   });
 
   it('enable with non-demo account → 403', async () => {
-    mockBotFindUnique.mockResolvedValue({
+    mockBotFindFirst.mockResolvedValue({
       id: 'bot-1',
       userId: 'user-123',
       enabled: false,
@@ -190,18 +194,14 @@ describe('Bot Toggle — Phase 1 containment', () => {
   });
 
   it('enable with demo account → 200 (positive control)', async () => {
-    mockBotFindUnique.mockResolvedValue({
+    mockBotFindFirst.mockResolvedValue({
       id: 'bot-1',
       userId: 'user-123',
       enabled: false,
       status: 'stopped',
       account: demoAccount,
     });
-    mockBotUpdate.mockResolvedValue({
-      id: 'bot-1',
-      enabled: true,
-      status: 'running',
-    });
+    mockBotUpdateMany.mockResolvedValue({ count: 1 });
 
     const req = makeRequest('/api/trading/bots/bot-1/toggle');
     const res = await botToggle(req, { params: Promise.resolve({ id: 'bot-1' }) });
@@ -210,27 +210,23 @@ describe('Bot Toggle — Phase 1 containment', () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.enabled).toBe(true);
-    expect(mockBotUpdate).toHaveBeenCalledWith(
+    expect(mockBotUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'bot-1' },
+        where: { id: 'bot-1', userId: 'user-123' },
         data: { enabled: true, status: 'running' },
       }),
     );
   });
 
   it('disable with non-demo account → 200 (allowed safe containment action)', async () => {
-    mockBotFindUnique.mockResolvedValue({
+    mockBotFindFirst.mockResolvedValue({
       id: 'bot-2',
       userId: 'user-123',
       enabled: true,
       status: 'running',
       account: liveAccount,
     });
-    mockBotUpdate.mockResolvedValue({
-      id: 'bot-2',
-      enabled: false,
-      status: 'stopped',
-    });
+    mockBotUpdateMany.mockResolvedValue({ count: 1 });
 
     const req = makeRequest('/api/trading/bots/bot-2/toggle');
     const res = await botToggle(req, { params: Promise.resolve({ id: 'bot-2' }) });

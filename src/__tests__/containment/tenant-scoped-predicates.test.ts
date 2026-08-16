@@ -6,6 +6,7 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // Use vi.hoisted to define mock functions accessible inside vi.mock
 const {
@@ -97,7 +98,7 @@ import { DELETE as orderDelete } from '@/app/api/trading/orders/[id]/route';
 import { PATCH as positionPatch } from '@/app/api/trading/positions/[id]/route';
 
 function makeRequest(url: string, userId = 'user-abc') {
-  return new Request(`http://localhost${url}`, {
+  return new NextRequest(`http://localhost${url}`, {
     headers: { 'x-user-id': userId },
   });
 }
@@ -136,7 +137,7 @@ describe('Bot PUT — tenant-scoped predicate', () => {
     mockBotFindFirst.mockResolvedValue({ id: 'bot-1', userId: 'user-abc', enabled: false, status: 'stopped', account: null });
     mockBotUpdate.mockResolvedValue({ id: 'bot-1', userId: 'user-abc', name: 'Updated' });
 
-    const jsonReq = new Request('http://localhost/api/trading/bots/bot-1', {
+    const jsonReq = new NextRequest('http://localhost/api/trading/bots/bot-1', {
       headers: { 'x-user-id': 'user-abc', 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'Updated Bot' }),
       method: 'PUT',
@@ -215,7 +216,7 @@ describe('Position PATCH — tenant-scoped predicate via account relation', () =
       account: { userId: 'user-abc', broker: 'demo', accountType: 'demo', isDemo: true },
     });
 
-    const jsonReq = new Request('http://localhost/api/trading/positions/pos-1', {
+    const jsonReq = new NextRequest('http://localhost/api/trading/positions/pos-1', {
       headers: { 'x-user-id': 'user-abc', 'content-type': 'application/json' },
       body: JSON.stringify({ stopLoss: 60000 }),
       method: 'PATCH',
@@ -232,7 +233,7 @@ describe('Position PATCH — tenant-scoped predicate via account relation', () =
   it('wrong tenant → 404', async () => {
     mockPositionFindFirst.mockResolvedValue(null);
 
-    const jsonReq = new Request('http://localhost/api/trading/positions/pos-1', {
+    const jsonReq = new NextRequest('http://localhost/api/trading/positions/pos-1', {
       headers: { 'x-user-id': 'user-other', 'content-type': 'application/json' },
       body: JSON.stringify({ stopLoss: 60000 }),
       method: 'PATCH',

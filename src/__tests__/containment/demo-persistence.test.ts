@@ -5,6 +5,7 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // vi.hoisted ensures variables are available inside vi.mock factories
 const {
@@ -125,7 +126,7 @@ describe('Signup route — demo account created with isDemo:true', () => {
   });
 
   it('signup creates trading account with isDemo:true in data', async () => {
-    const req = new Request('http://localhost/api/auth/signup', {
+    const req = new NextRequest('http://localhost/api/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'test@example.com', password: 'password123' }),
@@ -174,7 +175,7 @@ describe('Account POST for demo — create includes isDemo:true', () => {
       isDemo: true,
     });
 
-    const req = new Request('http://localhost/api/trading/accounts', {
+    const req = new NextRequest('http://localhost/api/trading/accounts', {
       method: 'POST',
       headers: { 'x-user-id': 'user-123', 'content-type': 'application/json' },
       body: JSON.stringify({ broker: 'demo', accountType: 'demo' }),
@@ -201,7 +202,7 @@ describe('Signup without DB — returns 503, not a fake user', () => {
     mockIsDbAvailable.mockReturnValue(false);
     mockHasModel.mockReturnValue(false);
 
-    const req = new Request('http://localhost/api/auth/signup', {
+    const req = new NextRequest('http://localhost/api/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'test@example.com', password: 'password123' }),

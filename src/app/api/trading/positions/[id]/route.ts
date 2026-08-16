@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
@@ -17,11 +17,17 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('position')) {
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
   try {
-    const userId = await getUserId(req);
     const { id } = await params;
     const body = await req.json();
 
@@ -66,13 +72,18 @@ export async function PATCH(
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
-    const updated = await db.position.update({ where: { id }, data: updateData });
+    // CR4.1: Tenant-scoped update — userId in predicate via account relation
+    const { count } = await db.position.updateMany({ where: { id, account: { userId } }, data: updateData });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Position not found' }, { status: 404 });
+    }
+    const updated = await db.position.findFirst({ where: { id } });
 
     if (body.stopLoss !== undefined || body.takeProfit !== undefined) {
       saveDemoPositionSLTP(
         position.symbol,
-        body.stopLoss ?? updated.stopLoss,
-        body.takeProfit ?? updated.takeProfit,
+        body.stopLoss ?? updated?.stopLoss,
+        body.takeProfit ?? updated?.takeProfit,
       );
     }
 
@@ -95,11 +106,17 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('position')) {
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
   try {
-    const userId = await getUserId(req);
     const { id } = await params;
 
     // CR4.1: Tenant-scoped query — userId in predicate via account relation
@@ -138,10 +155,14 @@ export async function DELETE(
       }
     }
 
-    await db.position.update({
-      where: { id },
+    // CR4.1: Tenant-scoped update — userId in predicate via account relation
+    const { count } = await db.position.updateMany({
+      where: { id, account: { userId } },
       data: { status: 'closed', closedAt: new Date(), realizedPnl: userPnl },
     });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Position not found' }, { status: 404 });
+    }
 
     const accountUpdateData: Record<string, unknown> = { lastSyncedAt: new Date() };
     if (levyAmount > 0) {

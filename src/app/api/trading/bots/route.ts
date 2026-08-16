@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
 import { isExplicitlyDemo, DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
 
@@ -75,6 +75,13 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const body = await req.json().catch(() => ({}));
 
   if (!db || !hasModel('bot')) {
@@ -82,13 +89,6 @@ export async function POST(req: NextRequest) {
       { error: 'Bot creation is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
       { status: 503 },
     );
-  }
-
-  let userId: string;
-  try {
-    userId = await getUserId(req);
-  } catch {
-    return authRequiredResponse();
   }
 
   try {

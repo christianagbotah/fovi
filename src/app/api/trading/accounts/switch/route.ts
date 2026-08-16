@@ -43,8 +43,11 @@ export async function POST(req: NextRequest) {
         where: { userId },
         data: { isDefault: false },
       }),
-      db.tradingAccount.update({
-        where: { id: accountId },
+      // Defense-in-depth: userId predicate ensures tenant isolation even inside tx.
+      // The prior findFirst({ where: { id: accountId, userId } }) already validated ownership,
+      // so this updateMany is guaranteed to match.
+      db.tradingAccount.updateMany({
+        where: { id: accountId, userId },
         data: { isDefault: true },
       }),
     ]);

@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { enforceLiveTradingPolicy, logSecurityEvent } from '@/lib/trading-policy';
 
@@ -13,12 +13,18 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('order')) {
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
 
   try {
-    const userId = await getUserId(req);
     const { id } = await params;
 
     const order = await db.order.findFirst({
@@ -44,7 +50,14 @@ export async function DELETE(
     const broker = await createBrokerFromAccount(order.account);
     await broker.cancelOrder(order.symbol, order.brokerOrderId || order.id);
 
-    await db.order.update({ where: { id }, data: { status: 'cancelled' } });
+    // CR4.1: Tenant-scoped update — userId in predicate via account relation
+    const { count } = await db.order.updateMany({
+      where: { id, account: { userId } },
+      data: { status: 'cancelled' },
+    });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    }
 
     return NextResponse.json({ success: true, orderId: id, status: 'cancelled' });
   } catch (error) {

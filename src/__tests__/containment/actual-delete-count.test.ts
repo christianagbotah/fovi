@@ -5,6 +5,7 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // Use vi.hoisted to make mock functions available inside vi.mock factories
 const {
@@ -71,7 +72,7 @@ import { DELETE as accountDelete } from '@/app/api/trading/accounts/[id]/route';
 import { DELETE as webhookDelete } from '@/app/api/trading/webhooks/route';
 
 function makeRequest(url: string, userId = 'user-123') {
-  return new Request(`http://localhost${url}`, {
+  return new NextRequest(`http://localhost${url}`, {
     headers: { 'x-user-id': userId },
   });
 }

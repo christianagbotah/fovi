@@ -58,9 +58,31 @@ export function parseResponseProvenance(
   const bodySource = bodyProv?.source as string | undefined;
   const bodyObserved = bodyProv?.observedAt as string | undefined;
 
-  // Missing provenance entirely → unknown
+  // CR4.2: Reject string isSynthetic (e.g. "true"/"false")
+  if (typeof bodySynth === 'string') {
+    return { environment: 'unknown', isSynthetic: true, source: 'string-isSynthetic' };
+  }
+  // CR4.2: Reject missing isSynthetic entirely when nested body provenance exists
+  if (bodyProv !== body && bodySynth === undefined && !headerSynth) {
+    return { environment: 'unknown', isSynthetic: true, source: 'missing-isSynthetic' };
+  }
+
+  // Missing provenance entirely → unknown (before empty-source check)
   if (!headerEnv && !bodyEnv) {
     return { environment: 'unknown', isSynthetic: true, source: 'missing' };
+  }
+
+  // CR4.2: Reject empty/whitespace-only source (provenance IS present but no source)
+  const effectiveSource = bodySource || headerSource || '';
+  if (!effectiveSource.trim()) {
+    return { environment: 'unknown', isSynthetic: true, source: 'empty-source' };
+  }
+  // CR4.2: Validate observedAt is a valid timestamp when provided
+  if (bodyObserved) {
+    const ts = new Date(bodyObserved).getTime();
+    if (isNaN(ts) || ts <= 0) {
+      return { environment: 'unknown', isSynthetic: true, source: 'invalid-observedAt' };
+    }
   }
 
   // Disagreement between headers and body → unknown (fail closed)
@@ -96,6 +118,11 @@ export function parseResponseProvenance(
 export function validateEngineProvenance(
   prov: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string },
 ): { valid: boolean; reason?: string } {
+  // CR4.2: Explicitly reject known-bad CR4.2 sources
+  const CR42_REJECT_SOURCES = new Set(['string-isSynthetic', 'missing-isSynthetic', 'empty-source', 'invalid-observedAt']);
+  if (CR42_REJECT_SOURCES.has(prov.source)) {
+    return { valid: false, reason: `Provenance rejected by CR4.2 strict validation (source: ${prov.source})` };
+  }
   if (prov.environment === 'unknown') {
     return { valid: false, reason: `Provenance is unknown (source: ${prov.source}) — cannot determine data origin` };
   }

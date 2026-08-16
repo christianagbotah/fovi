@@ -7,6 +7,13 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const { id } = await params;
 
   if (!db || !hasModel('bot')) {
@@ -17,7 +24,6 @@ export async function GET(
   }
 
   try {
-    const userId = getUserIdSync(req);
     // CR4.1: Tenant-scoped query — userId in predicate
     const bot = await db.bot.findFirst({ where: { id, userId } });
     if (!bot) {
@@ -41,6 +47,13 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
 
@@ -52,7 +65,6 @@ export async function PUT(
   }
 
   try {
-    const userId = getUserIdSync(req);
     // CR4.1: Tenant-scoped query — userId in predicate
     const bot = await db.bot.findFirst({
       where: { id, userId },
@@ -88,10 +100,14 @@ export async function PUT(
     }
 
     // CR4.1: Update with tenant-scoped predicate
-    const updated = await db.bot.update({
-      where: { id },
+    const { count } = await db.bot.updateMany({
+      where: { id, userId },
       data,
     });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
+    }
+    const updated = await db.bot.findFirst({ where: { id } });
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof AuthRequiredError) {
@@ -110,6 +126,13 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const { id } = await params;
 
   if (!db || !hasModel('bot')) {
@@ -120,7 +143,6 @@ export async function DELETE(
   }
 
   try {
-    const userId = getUserIdSync(req);
     // CR4.1: Tenant-scoped delete — userId in predicate, check count
     const { count } = await db.bot.deleteMany({ where: { id, userId } });
     if (count === 0) {

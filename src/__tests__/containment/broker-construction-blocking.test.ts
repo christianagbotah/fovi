@@ -7,6 +7,7 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { BrokerConfig } from '@/lib/types';
 import {
   createBroker,
   createBrokerFromAccount,
@@ -38,9 +39,11 @@ describe('createBroker — Phase 1 containment', () => {
 
   // ── Fail closed: demo with isDemo=undefined ──
   it('provider=demo, isDemo=undefined → throws PHASE1_LIVE_TRADING_DISABLED', () => {
+    // @ts-expect-error — intentionally missing required isDemo to test fail-closed behavior
     expect(() => createBroker({ provider: 'demo' }))
       .toThrow(BrokerFactoryError);
     try {
+      // @ts-expect-error — intentionally missing required isDemo to test fail-closed behavior
       createBroker({ provider: 'demo' });
     } catch (e) {
       expect((e as BrokerFactoryError).code).toBe(PHASE1_CODE);
@@ -51,10 +54,11 @@ describe('createBroker — Phase 1 containment', () => {
   const blockedProviders = ['alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5', 'generic-rest', 'unknown'];
   for (const provider of blockedProviders) {
     it(`provider=${provider} → throws PHASE1_LIVE_TRADING_DISABLED (no adapter constructed)`, () => {
-      expect(() => createBroker({ provider }))
+      const cfg = { provider } as unknown as BrokerConfig;
+      expect(() => createBroker(cfg))
         .toThrow(BrokerFactoryError);
       try {
-        createBroker({ provider });
+        createBroker(cfg);
       } catch (e) {
         expect(e).toBeInstanceOf(BrokerFactoryError);
         expect((e as BrokerFactoryError).code).toBe(PHASE1_CODE);

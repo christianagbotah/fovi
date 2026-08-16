@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { enforcePhase1CredentialIntake, safeAccountDTO, safeAccountDTOs, DEMO_PROVENANCE_HEADER, logSecurityEvent, CONTAINMENT_CODES } from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
@@ -23,7 +23,7 @@ const HEADERS_DB = { 'x-demo': 'false', 'x-storage': 'db' };
 export async function POST(req: NextRequest) {
   let userId: string;
   try {
-    userId = await getUserId(req);
+    userId = getUserIdSync(req);
   } catch {
     return authRequiredResponse();
   }
@@ -111,6 +111,13 @@ export async function POST(req: NextRequest) {
 // GET — List all trading accounts (safe DTOs only)
 // ============================================================
 export async function GET(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   try {
     if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(
@@ -118,8 +125,6 @@ export async function GET(req: NextRequest) {
         { status: 503 },
       );
     }
-
-    const userId = await getUserId(req);
 
     const accounts = await db!.tradingAccount.findMany({
       where: { userId },

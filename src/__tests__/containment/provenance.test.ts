@@ -208,8 +208,8 @@ describe('Engine parseResponseProvenance — matching headers+body', () => {
   });
 
   it('mismatched header vs body → environment=unknown', () => {
-    const headers = new Headers({ 'x-environment': 'live' });
-    const body = { environment: 'demo', isSynthetic: true };
+    const headers = new Headers({ 'x-environment': 'live', 'x-data-source': 'header-src' });
+    const body = { environment: 'demo', isSynthetic: true, source: 'body-src' };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('unknown');
     expect(result.source).toBe('mismatch');
@@ -223,8 +223,8 @@ describe('Engine parseResponseProvenance — matching headers+body', () => {
   });
 
   it('accepts plain Record headers (not only Headers instance)', () => {
-    const headers = { 'x-environment': 'live', 'x-synthetic': 'false' };
-    const body = { environment: 'live', isSynthetic: false };
+    const headers = { 'x-environment': 'live', 'x-synthetic': 'false', 'x-data-source': 'record-src' };
+    const body = { environment: 'live', isSynthetic: false, source: 'record-src' };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('live');
   });

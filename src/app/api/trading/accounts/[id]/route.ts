@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { z } from 'zod/v4';
 import { safeAccountDTO, logSecurityEvent } from '@/lib/trading-policy';
 
@@ -17,9 +17,14 @@ const patchSchema = z.object({
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
   try {
     const { id } = await params;
-    const userId = await getUserId(req);
     const raw = await req.json();
     const parsed = patchSchema.safeParse(raw);
 
@@ -42,10 +47,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    const updated = await db.tradingAccount.update({
-      where: { id },
+    // CR4.1: Tenant-scoped update — userId in predicate, check count
+    const { count } = await db.tradingAccount.updateMany({
+      where: { id, userId },
       data: { ...parsed.data, updatedAt: new Date() },
     });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
+    const updated = await db.tradingAccount.findFirst({ where: { id } });
 
     return NextResponse.json({ success: true, account: safeAccountDTO(updated as unknown as Record<string, unknown>) });
   } catch (error) {
@@ -62,6 +72,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
   if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(
       { error: 'Database unavailable.' },
@@ -70,7 +86,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   }
   try {
     const { id } = await params;
-    const userId = await getUserId(req);
     // CR4.1: Tenant-scoped delete — userId in predicate, check count
     const { count } = await db.tradingAccount.deleteMany({ where: { id, userId } });
     if (count === 0) {
