@@ -75,7 +75,7 @@ export async function ensureDemoUser(): Promise<string | null> {
     if (hasModel('tradingAccount')) {
       await db.tradingAccount.upsert({
         where: { id: DEMO_ACCOUNT_ID },
-        create: { id: DEMO_ACCOUNT_ID, userId: DEMO_USER_ID, broker: 'demo', accountType: 'demo', isDemo: true, isDefault: true, balance: 100000, currency: 'USD', isActive: true },
+        create: { id: DEMO_ACCOUNT_ID, userId: DEMO_USER_ID, broker: 'demo', accountType: 'demo', isDefault: true, balance: 100000, currency: 'USD', isActive: true },
         update: {},
       });
     }

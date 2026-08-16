@@ -1,29 +1,10 @@
-// ============================================================
-// proxy.ts — Next.js 16 Request Boundary
-// Phase 1 CR2: Three explicit route classes with strict partitioning.
-//   1. PUBLIC_PATHS — exact match, no auth needed
-//   2. INTERNAL_SERVICE_PATHS — exact match, internal secret only
-//   3. Everything else — requires valid access JWT
-// Admin routes require verified admin JWT.
-// ============================================================
-
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
-import { constantTimeEqual, CONTAINMENT_CODES } from '@/lib/trading-policy';
 
 /**
- * Strip ALL incoming identity/trust headers FIRST, before any auth logic.
+ * Routes that are always public (no JWT required, no header injection).
  */
-const IDENTITY_HEADERS_TO_STRIP = [
-  'x-user-id',
-  'x-user-email',
-  'x-user-role',
-  'x-user-name',
-  'x-internal-service',
-] as const;
-
-// ── CLASS 1: Public routes (exact match, no auth) ──
-const PUBLIC_PATHS: string[] = [
+const PUBLIC_PATHS = [
   '/api/auth/signin',
   '/api/auth/signup',
   '/api/auth/forgot-password',
@@ -33,41 +14,40 @@ const PUBLIC_PATHS: string[] = [
   '/api/auth/sms-otp/verify',
   '/api/auth/email-otp/send',
   '/api/auth/email-otp/verify',
-  '/api/auth/refresh',
-  '/api/auth/verify-email',
-  '/api/auth/resend-verification',
   '/api/payments/hubtel/callback',
   '/api/trading/market/symbols',
   '/api/trading/leaderboard',
-  '/api/health',
-  // /api/trading/webhook is public but ALWAYS returns 503 containment.
-  // It is intentionally listed here so unauthenticated callers get the
-  // 503 response from the route handler, not a 401 from the proxy.
-  '/api/trading/webhook',
+  '/api/trading/webhooks',
 ];
 
-// ── CLASS 2: Internal-service routes (exact match, secret only) ──
-// These routes accept ONLY internal service secret auth.
-// A valid JWT must NOT authorize these routes.
-// Caller-supplied X-User-Id is never trusted as internal-service identity.
-const INTERNAL_SERVICE_PATHS: string[] = [
-  '/api/trading/engine/report',
-  '/api/trading/engine/bots',
-  '/api/trading/bots/engine/activity',
-  '/api/trading/bots/engine/status',
-  '/api/trading/bots/engine/trigger',
+/**
+ * Routes that support optional auth — work without a token (demo mode)
+ * but if a valid JWT is present, we inject X-User-Id for the route handler.
+ */
+const OPTIONAL_AUTH_PREFIXES = [
+  '/api/trading/',
 ];
 
-// ── CLASS 3: Admin routes (prefix match, admin JWT required) ──
-const ADMIN_PREFIXES: string[] = [
+/**
+ * Routes that MUST have a valid JWT.
+ */
+const PROTECTED_PREFIXES = [
+  '/api/auth/change-password',
+  '/api/auth/two-factor/setup',
+  '/api/auth/two-factor/verify',
+  '/api/auth/two-factor/disable',
+  '/api/auth/me',
+  '/api/subscriptions/',
+];
+
+/**
+ * Admin-only path prefixes.
+ */
+const ADMIN_PREFIXES = [
   '/api/admin/',
 ];
 
-function isExactMatch(pathname: string, paths: string[]): boolean {
-  return paths.includes(pathname);
-}
-
-function matchesAnyPrefix(pathname: string, prefixes: string[]): boolean {
+function matchesAny(pathname: string, prefixes: string[]): boolean {
   return prefixes.some(p => pathname.startsWith(p));
 }
 
@@ -79,54 +59,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // ── STEP 0: Strip ALL incoming identity/trust headers FIRST ──
-  const cleanedHeaders = new Headers(request.headers);
-  for (const header of IDENTITY_HEADERS_TO_STRIP) {
-    cleanedHeaders.delete(header);
+  // Allow fully public routes through
+  if (matchesAny(pathname, PUBLIC_PATHS)) {
+    return NextResponse.next();
   }
 
-  // ── STEP 1: CLASS 1 — Public routes (no auth needed) ──
-  if (isExactMatch(pathname, PUBLIC_PATHS)) {
-    return NextResponse.next({ request: { headers: cleanedHeaders } });
-  }
-
-  // ── STEP 2: CLASS 2 — Internal service routes ──
-  if (isExactMatch(pathname, INTERNAL_SERVICE_PATHS)) {
-    const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
-
-    // Missing secret configuration → 503
-    if (!INTERNAL_SECRET) {
-      return NextResponse.json(
-        {
-          error: 'Internal service authentication not configured.',
-          code: CONTAINMENT_CODES.INTERNAL_AUTH_REQUIRED,
-          remediationPhase: 'containment',
-        },
-        { status: 503 },
-      );
-    }
-
-    const provided = request.headers.get('x-internal-service-secret') || '';
-    if (!constantTimeEqual(provided, INTERNAL_SECRET)) {
-      return NextResponse.json(
-        {
-          error: 'Invalid or missing internal service credential.',
-          code: CONTAINMENT_CODES.INTERNAL_AUTH_INVALID,
-          remediationPhase: 'containment',
-        },
-        { status: 401 },
-      );
-    }
-
-    // Valid internal service — set marker AFTER verification
-    cleanedHeaders.set('X-Internal-Service', 'true');
-    // Do NOT set X-User-Id from the request. Internal services must
-    // resolve user context server-side (e.g., from DB by accountId).
-    return NextResponse.next({ request: { headers: cleanedHeaders } });
-  }
-
-  // ── STEP 3: CLASS 3 — All remaining routes require JWT ──
-
+  // Try to extract and verify token
   const token = extractBearerToken(request);
   let payload: Awaited<ReturnType<typeof verifyToken>> = null;
 
@@ -134,37 +72,83 @@ export async function proxy(request: NextRequest) {
     payload = await verifyToken(token);
   }
 
-  // 3a. No valid JWT → 401
-  if (!payload || payload.type !== 'access') {
+  // If token is present but invalid, and this is a protected route, reject
+  const isProtected = matchesAny(pathname, PROTECTED_PREFIXES);
+  const isAdmin = matchesAny(pathname, ADMIN_PREFIXES);
+
+  if (isProtected && !payload) {
     return NextResponse.json(
-      {
-        error: 'Authentication required.',
-        code: CONTAINMENT_CODES.AUTH_REQUIRED,
-        remediationPhase: 'containment',
-      },
-      { status: 401 },
+      { error: 'Authentication required. Please sign in.' },
+      { status: 401 }
     );
   }
 
-  // 3b. Valid access token — inject verified user headers
-  cleanedHeaders.set('X-User-Id', payload.sub);
-  cleanedHeaders.set('X-User-Email', payload.email || '');
-  if (payload.role) cleanedHeaders.set('X-User-Role', payload.role);
-  if (payload.name) cleanedHeaders.set('X-User-Name', payload.name);
+  if (isProtected && payload && payload.type !== 'access') {
+    return NextResponse.json(
+      { error: 'Invalid or expired token. Please sign in again.' },
+      { status: 401 }
+    );
+  }
 
-  // 3c. Admin routes require admin role
-  if (matchesAnyPrefix(pathname, ADMIN_PREFIXES)) {
-    if (payload.role !== 'admin') {
+  // Admin access check — require valid admin JWT (reject unauthenticated too)
+  if (isAdmin) {
+    if (!payload) {
       return NextResponse.json(
-        {
-          error: 'Admin access required.',
-          code: 'FORBIDDEN',
-          remediationPhase: 'containment',
-        },
-        { status: 403 },
+        { error: 'Admin authentication required.' },
+        { status: 401 }
+      );
+    }
+    if (payload.type !== 'access' || payload.role !== 'admin') {
+      return NextResponse.json(
+        { error: 'Admin access required.' },
+        { status: 403 }
       );
     }
   }
 
-  return NextResponse.next({ request: { headers: cleanedHeaders } });
+  // If we have a valid payload, inject user info headers for downstream routes
+  if (payload && payload.type === 'access') {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('X-User-Id', payload.sub);
+    requestHeaders.set('X-User-Email', payload.email || '');
+    if (payload.role) {
+      requestHeaders.set('X-User-Role', payload.role);
+    }
+    if (payload.name) {
+      requestHeaders.set('X-User-Name', payload.name);
+    }
+
+    return NextResponse.next({
+      request: { headers: requestHeaders },
+    });
+  }
+
+  // Internal service auth: mini-services (balance-sync, auto-trade-engine)
+  // pass X-Internal-Service-Secret to bypass JWT. They also pass X-User-Id.
+  // We validate the secret and inject a trusted marker.
+  const internalSecret = request.headers.get('x-internal-service-secret');
+  const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
+  if (internalSecret && INTERNAL_SECRET && internalSecret === INTERNAL_SECRET) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('X-Internal-Service', 'true');
+    // Preserve the X-User-Id that the mini-service set
+    if (requestHeaders.get('X-User-Id')) {
+      return NextResponse.next({ request: { headers: requestHeaders } });
+    }
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
+  // No valid token — allow through for optional-auth routes (demo mode)
+  // For routes that received X-User-Id without JWT, strip it to prevent spoofing
+  const userIdHeader = request.headers.get('x-user-id');
+  if (userIdHeader && matchesAny(pathname, OPTIONAL_AUTH_PREFIXES)) {
+    // Strip the spoofed X-User-Id header
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.delete('X-User-Id');
+    requestHeaders.delete('X-User-Email');
+    requestHeaders.delete('X-User-Role');
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
+  return NextResponse.next();
 }

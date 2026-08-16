@@ -1,82 +1,38 @@
-// ============================================================
-// auth.ts — JWT & password utilities
-// Phase 1 CR2: Production fails closed when JWT_SECRET or AUTH_PEPPER
-// are absent. Repository-known defaults are NEVER used in production.
-// Test mode (NODE_ENV=test) still works with explicit env vars.
-// ============================================================
-
 import { createHash, randomBytes, pbkdf2Sync } from 'crypto';
 import { SignJWT, jwtVerify } from 'jose';
 import { NextRequest } from 'next/server';
 
-// ── Production-safe secret loading ──
-// In test mode, we allow explicit env vars (set by vitest setup).
-// In production (NODE_ENV=production or any non-test env), missing
-// secrets cause immediate failure — no fallback to repository-known values.
-
-const PEPPER_RAW = process.env.AUTH_PEPPER;
-const JWT_SECRET_RAW = process.env.JWT_SECRET;
-
-let _pepper: string;
-let _jwtSecret: string;
-
-if (!PEPPER_RAW || PEPPER_RAW.length < 16) {
-  if (process.env.NODE_ENV === 'test') {
-    // In tests, we only accept explicitly set env vars.
-    // Tests that need auth must set AUTH_PEPPER in their setup.
-    _pepper = PEPPER_RAW || '';
-  } else {
-    // Production: fail closed. Do not log the secret value.
-    throw new Error(
-      'AUTH_PEPPER is not configured or too short (min 16 chars). ' +
-      'Set this environment variable before starting the application.'
-    );
-  }
-} else {
-  _pepper = PEPPER_RAW;
-}
-
-if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
-  if (process.env.NODE_ENV === 'test') {
-    _jwtSecret = JWT_SECRET_RAW || '';
-  } else {
-    throw new Error(
-      'JWT_SECRET is not configured or too short (min 32 chars). ' +
-      'Set this environment variable before starting the application.'
-    );
-  }
-} else {
-  _jwtSecret = JWT_SECRET_RAW;
-}
-
+const PEPPER = process.env.AUTH_PEPPER || 'fovi-ai-pepper-2024';
 const KEY_LENGTH = 64;
 const ITERATIONS = 100000;
 const DIGEST = 'sha512';
 
+const JWT_SECRET = process.env.JWT_SECRET || 'fovi-dev-jwt-secret-change-in-production';
+
 // Encode the secret as Uint8Array for jose
 function getSecretKey(): Uint8Array {
-  return new TextEncoder().encode(_jwtSecret);
+  return new TextEncoder().encode(JWT_SECRET);
 }
 
 // ============================================================
-// Password utilities
+// Password utilities (unchanged)
 // ============================================================
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
-  const hash = pbkdf2Sync(password, salt + _pepper, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
+  const hash = pbkdf2Sync(password, salt + PEPPER, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
   return `${salt}:${hash}`;
 }
 
 export function verifyPassword(password: string, storedHash: string): boolean {
   const [salt, hash] = storedHash.split(':');
   if (!salt || !hash) return false;
-  const computedHash = pbkdf2Sync(password, salt + _pepper, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
+  const computedHash = pbkdf2Sync(password, salt + PEPPER, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
   return hash === computedHash;
 }
 
 // ============================================================
-// Token utilities
+// Token utilities (unchanged)
 // ============================================================
 
 export function generateResetToken(): string {
@@ -88,7 +44,7 @@ export function hashToken(token: string): string {
 }
 
 // ============================================================
-// JWT utilities
+// JWT utilities (replacing random hex generateToken)
 // ============================================================
 
 export interface AccessTokenPayload {

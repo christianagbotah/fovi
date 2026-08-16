@@ -1,16 +1,21 @@
 // ============================================================
 // Broker Factory - Creates broker instances based on config
-// Phase 1 CR4.1:
-//   createBroker() ONLY returns a broker for provider='demo' with isDemo=true.
-//   ALL other providers throw PHASE1_LIVE_TRADING_DISABLED before
-//   adapter construction, decryption, or network activity.
-//   createBrokerFromAccount() enforces the same rule.
+// Supports: Demo, Alpaca, Binance, OKX, Bybit, Bitget, MT5
+// Falls back to GenericRESTBroker for admin-added custom brokers
 // ============================================================
 
 import type { BrokerConfig } from '../types';
 import { DemoBroker } from './demo';
-import { CONTAINMENT_CODES } from '@/lib/trading-policy';
+import { AlpacaBroker } from './alpaca';
+import { BinanceBroker } from './binance';
+import { OkxBroker } from './okx';
+import { BybitBroker } from './bybit';
+import { BitgetBroker } from './bitget';
+import { MT5Broker } from './mt5';
+import { GenericRESTBroker } from './generic-rest';
+import { decrypt } from '@/lib/encryption';
 
+// Broker interface that all providers implement
 export interface IBroker {
   getAccountInfo(): Promise<{
     accountId: string;
@@ -68,40 +73,44 @@ export interface IBroker {
   cancelOrder(symbol: string, orderId: string): Promise<void>;
 }
 
-export class BrokerFactoryError extends Error {
-  code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = 'BrokerFactoryError';
-    this.code = code;
-  }
-}
-
 /**
- * Phase 1: createBroker() ONLY returns a broker for provider='demo' with isDemo=true.
- * ALL other providers — alpaca, binance, okx, bybit, bitget, mt5, generic-rest,
- * unknown, and incomplete configurations — throw PHASE1_LIVE_TRADING_DISABLED
- * BEFORE adapter construction, decryption, or network activity.
+ * Built-in provider codes that have dedicated broker implementations.
+ * Anything not in this list goes through GenericRESTBroker (if configured)
+ * or falls back to DemoBroker.
  */
+const BUILTIN_CODES = new Set([
+  'demo', 'alpaca', 'binance', 'okx', 'bybit', 'bitget', 'mt5',
+]);
+
 export function createBroker(config: BrokerConfig): IBroker {
-  // DemoBroker ONLY when provider==='demo' AND isDemo===true
-  if (config.provider === 'demo') {
-    if (config.isDemo !== true) {
-      throw new BrokerFactoryError(
-        CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
-        'DemoBroker requires both provider="demo" and isDemo=true. No credentials were decrypted.',
-      );
-    }
-    return new DemoBroker(config);
+  // Built-in implementations
+  switch (config.provider) {
+    case 'alpaca':
+      return new AlpacaBroker(config);
+    case 'binance':
+      return new BinanceBroker(config);
+    case 'okx':
+      return new OkxBroker(config);
+    case 'bybit':
+      return new BybitBroker(config);
+    case 'bitget':
+      return new BitgetBroker(config);
+    case 'mt5':
+      return new MT5Broker(config);
+    case 'demo':
+    default:
+      break;
   }
 
-  // Phase 1: ALL non-demo providers are unconditionally blocked.
-  // This covers alpaca, binance, okx, bybit, bitget, mt5, generic-rest,
-  // unknown, and incomplete configurations.
-  throw new BrokerFactoryError(
-    CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
-    `Phase 1 containment: broker construction for provider "${config.provider}" is not permitted. No credentials were decrypted.`,
-  );
+  // For non-built-in providers, try GenericRESTBroker
+  // This reads config from DB and connects to any REST API broker
+  // that admin configured from the UI.
+  if (!BUILTIN_CODES.has(config.provider)) {
+    return new GenericRESTBroker(config);
+  }
+
+  // Final fallback to Demo
+  return new DemoBroker(config);
 }
 
 export async function createBrokerFromAccount(account: {
@@ -111,22 +120,42 @@ export async function createBrokerFromAccount(account: {
   apiKey: string | null;
   apiSecret: string | null;
   passphrase?: string | null;
-  isDemo?: boolean | null;
   id: string;
 }): Promise<IBroker> {
-  // Check if explicitly demo (ALL THREE conditions mandatory)
-  const isExplicitlyDemoAccount = account.broker === 'demo'
-    && account.accountType === 'demo'
-    && account.isDemo === true;
+  // Decrypt credentials — if decryption fails, fall back to demo broker
+  // instead of passing garbage encrypted data as plaintext
+  let decryptedApiKey: string | undefined;
+  let decryptedSecret: string | undefined;
+  let decryptedPassphrase: string | undefined;
 
-  if (isExplicitlyDemoAccount) {
+  if (account.apiKey) {
+    const d = await decrypt(account.apiKey);
+    decryptedApiKey = d || undefined;
+  }
+  if (account.apiSecret) {
+    const d = await decrypt(account.apiSecret);
+    decryptedSecret = d || undefined;
+  }
+  if (account.passphrase) {
+    const d = await decrypt(account.passphrase);
+    decryptedPassphrase = d || undefined;
+  }
+
+  // If this is a linked broker but credentials couldn't be decrypted,
+  // fall back to demo broker with the stored balance
+  const needsCredentials = account.broker !== 'demo' && (account.apiKey || account.apiSecret);
+  if (needsCredentials && (!decryptedApiKey || !decryptedSecret)) {
+    console.warn(`[broker] Credentials could not be decrypted for ${account.broker} account ${account.id}. Reconnect in Settings.`);
     return new DemoBroker({ provider: 'demo', isDemo: true });
   }
 
-  // Phase 1: Block ALL non-demo broker construction before decrypting credentials
-  // or making any network request
-  throw new BrokerFactoryError(
-    CONTAINMENT_CODES.PHASE1_LIVE_TRADING_DISABLED,
-    'Phase 1 containment: live broker construction is not permitted. No credentials were decrypted.',
-  );
+  const config: BrokerConfig = {
+    provider: (account.broker || 'demo') as BrokerConfig['provider'],
+    accountId: account.id,
+    apiKey: decryptedApiKey,
+    apiSecret: decryptedSecret,
+    passphrase: decryptedPassphrase,
+    isDemo: account.accountType === 'demo',
+  };
+  return createBroker(config);
 }

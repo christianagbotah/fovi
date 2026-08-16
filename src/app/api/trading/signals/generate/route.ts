@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
+import { db, hasModel, ensureDemoUser } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { generateSignals } from '@/lib/ai/signals';
 import { getDemoCandles, getAssetType, getDemoPrice } from '@/lib/broker/demo';
@@ -122,8 +122,22 @@ async function getCandlesForSymbol(symbol: string, timeframe: string, limit: num
   const cgCandles = await fetchCoinGeckoCandles(symbol, timeframe, limit);
   if (cgCandles && cgCandles.length >= 30) return cgCandles;
 
-  // Phase 1: Skip broker candle lookup. Use CoinGecko or demo candles.
-  // 2. Last resort: demo candles
+  // 2. Try broker via DB account
+  if (db && hasModel('tradingAccount')) {
+    try {
+      const userId = await ensureDemoUser();
+      if (userId) {
+        const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
+        if (account) {
+          const broker = await createBrokerFromAccount(account);
+          const brokerCandles = await broker.getCandles(symbol, timeframe, limit);
+          if (brokerCandles && brokerCandles.length >= 30) return brokerCandles;
+        }
+      }
+    } catch { /* broker unavailable */ }
+  }
+
+  // 3. Last resort: demo candles
   return getDemoCandles(symbol, timeframe, limit);
 }
 
@@ -135,7 +149,20 @@ async function getPriceForSymbol(symbol: string): Promise<number> {
   const cgPrice = await fetchCoinGeckoPrice(symbol);
   if (cgPrice) return cgPrice;
 
-  // Phase 1: Skip broker price lookup. Use CoinGecko or demo price.
+  // Try broker
+  if (db && hasModel('tradingAccount')) {
+    try {
+      const userId = await ensureDemoUser();
+      if (userId) {
+        const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
+        if (account) {
+          const broker = await createBrokerFromAccount(account);
+          return await broker.getPrice(symbol);
+        }
+      }
+    } catch { /* broker unavailable */ }
+  }
+
   // Fallback
   return getDemoPrice(symbol);
 }
@@ -192,12 +219,31 @@ async function generateRealSignals(
 
 // ============================================================
 // Persist signals to database
-// Phase 1: Signals are NOT persisted because the generate endpoint
-// does not have authenticated user context. Returns signals
-// directly without DB persistence.
 // ============================================================
-async function persistSignalsToDb(_signals: SignalOutput[]): Promise<void> {
-  // Phase 1: no-op. Signal persistence requires authenticated user context.
+async function persistSignalsToDb(signals: SignalOutput[]): Promise<void> {
+  if (!db || !hasModel('tradingAccount') || !hasModel('tradingSignal')) return;
+  try {
+    const userId = await ensureDemoUser();
+    if (!userId) return;
+    const account = await db.tradingAccount.findFirst({ where: { userId, isDefault: true } });
+    if (!account) return;
+
+    for (const s of signals) {
+      await db.tradingSignal.create({
+        data: {
+          id: uuidv4(), accountId: account.id, symbol: s.symbol,
+          assetType: s.assetType, direction: s.direction,
+          confidence: s.confidence, signalType: s.signalType,
+          timeframe: s.timeframe, entryPrice: s.entryPrice,
+          stopLoss: s.stopLoss, takeProfit: s.takeProfit,
+          reasoning: s.reasoning, status: 'active',
+          expiresAt: new Date(s.expiresAt),
+        },
+      }).catch(() => {}); // ignore duplicate errors
+    }
+  } catch (err) {
+    console.warn('[signals/generate] DB persist error:', err);
+  }
 }
 
 // ============================================================

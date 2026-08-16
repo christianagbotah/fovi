@@ -16,13 +16,11 @@ type JsonValue =
  * Works for both objects and arrays.
  */
 export function demoResponse<T extends JsonValue>(data: T, status?: number) {
-  const body = Array.isArray(data)
-    ? { data, _demo: true }
-    : { ...(data as Record<string, JsonValue>), _demo: true };
-  if (status !== undefined) {
-    return NextResponse.json(body, { status });
+  const init = status !== undefined ? { status } : undefined;
+  if (Array.isArray(data)) {
+    return NextResponse.json({ data, _demo: true } as any, init);
   }
-  return NextResponse.json(body);
+  return NextResponse.json({ ...(data as Record<string, JsonValue>), _demo: true } as any, init);
 }
 
 /**
