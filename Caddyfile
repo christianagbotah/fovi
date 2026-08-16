@@ -1,23 +1,34 @@
+# ============================================================
+# Caddy Configuration — Phase 1: Emergency Containment
+# ============================================================
+#
+# REMOVED: The previous ?XTransformPort=* handler that allowed
+# any request parameter to select an upstream proxy target.
+# This was a critical security vulnerability allowing access to
+# internal services (e.g., the auto-trade engine on port 3012).
+#
+# REQUIRED NETWORK RESTRICTIONS:
+# - Internal mini-services (ports 3011, 3012, etc.) MUST bind to
+#   127.0.0.1 only, NOT 0.0.0.0
+# - Firewall rules MUST block external access to all ports except 80/443
+# - The Caddy process MUST be the only public-facing listener
+#
+# REQUIRED FIREWALL RULES (iptables example):
+#   iptables -A INPUT -p tcp --dport 3002 -s 127.0.0.1 -j ACCEPT
+#   iptables -A INPUT -p tcp --dport 3002 -j DROP
+#   iptables -A INPUT -p tcp --dport 3011 -s 127.0.0.1 -j ACCEPT
+#   iptables -A INPUT -p tcp --dport 3011 -j DROP
+#   iptables -A INPUT -p tcp --dport 3012 -s 127.0.0.1 -j ACCEPT
+#   iptables -A INPUT -p tcp --dport 3012 -j DROP
+#   iptables -A INPUT -p tcp --dport 3013 -s 127.0.0.1 -j ACCEPT
+#   iptables -A INPUT -p tcp --dport 3013 -j DROP
+# ============================================================
+
 :81 {
-        @transform_port_query {
-                query XTransformPort=*
-        }
-
-        handle @transform_port_query {
-                reverse_proxy localhost:{query.XTransformPort} {
-                        header_up Host {host}
-                        header_up X-Forwarded-For {remote_host}
-                        header_up X-Forwarded-Proto {scheme}
-                        header_up X-Real-IP {remote_host}
-                }
-        }
-
-        handle {
-                reverse_proxy localhost:3002 {
-                        header_up Host {host}
-                        header_up X-Forwarded-For {remote_host}
-                        header_up X-Forwarded-Proto {scheme}
-                        header_up X-Real-IP {remote_host}
-                }
-        }
+	reverse_proxy localhost:3002 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
 }

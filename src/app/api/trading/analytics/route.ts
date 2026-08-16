@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { authFirst } from '@/lib/auth-first';
+import { getUserIdSync } from '@/lib/get-user-id';
 
 // Generate demo analytics data when db is unavailable
 function buildDemoAnalytics() {
@@ -72,11 +72,11 @@ function buildDemoAnalytics() {
 }
 
 export async function GET(req: NextRequest) {
-  const userId = authFirst(req);
   if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
   }
   try {
+    const userId = getUserIdSync(req);
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
     });

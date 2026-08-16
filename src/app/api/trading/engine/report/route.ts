@@ -1,12 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel } from '@/lib/db';
-
 // ============================================================
 // POST /api/trading/engine/report
+// Phase 1 CR1: P0-4 — enforceInternalAuth, remove no-DB success fallback.
 // ============================================================
-// Called by the auto-trade-engine to report trade results and update bot stats.
-// Body: { botId, tradeType: 'opened'|'closed', pnl?, isWin?, reason? }
-// ============================================================
+
+import { NextRequest, NextResponse } from 'next/server';
+import { db, hasModel } from '@/lib/db';
+import { enforceInternalAuth, logSecurityEvent } from '@/lib/trading-policy';
 
 interface ReportPayload {
   botId: string;
@@ -21,6 +20,10 @@ interface ReportPayload {
 }
 
 export async function POST(req: NextRequest) {
+  // ── P0-4: Require internal service auth ──
+  const authError = enforceInternalAuth(req);
+  if (authError) return authError;
+
   const body: ReportPayload = await req.json().catch(() => ({}));
   const { botId, tradeType, pnl, isWin, reason, symbol, side, qty, price } = body;
 
@@ -28,13 +31,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'botId is required' }, { status: 400 });
   }
 
-  // No DB — accept report but don't persist
+  // P0-4: No DB → return 503, NOT success with persisted:false
   if (!db || !hasModel('bot')) {
-    return NextResponse.json({ success: true, persisted: false });
+    return NextResponse.json(
+      {
+        error: 'Engine reporting is temporarily unavailable.',
+        code: 'SERVICE_UNAVAILABLE',
+        remediationPhase: 'containment',
+      },
+      { status: 503 },
+    );
   }
 
   try {
-    // Update bot stats
     const updateData: Record<string, unknown> = {
       lastTradeAt: new Date(),
       updatedAt: new Date(),
@@ -51,24 +60,21 @@ export async function POST(req: NextRequest) {
       updateData.lastError = reason;
     }
 
-    // Look up the bot to get its userId for tenant isolation
-    const bot = await db.bot.findUnique({ where: { id: botId } });
-    if (!bot) {
-      return NextResponse.json({ success: true, persisted: false });
-    }
-
-    const { count } = await db.bot.updateMany({
-      where: { id: botId, userId: bot.userId },
+    const updated = await db.bot.update({
+      where: { id: botId },
       data: updateData,
     });
 
-    if (count === 0) {
-      return NextResponse.json({ success: true, persisted: false });
-    }
-
-    return NextResponse.json({ success: true, persisted: true, botId });
+    return NextResponse.json({ success: true, persisted: true, botId: updated.id });
   } catch (error) {
-    console.warn('[engine/report POST] error:', error);
-    return NextResponse.json({ success: true, persisted: false });
+    logSecurityEvent({
+      eventType: 'ENGINE_REPORT_ERROR',
+      route: '/api/trading/engine/report',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json(
+      { error: 'Failed to persist engine report.' },
+      { status: 500 },
+    );
   }
 }

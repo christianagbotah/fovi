@@ -1,31 +1,70 @@
+// ============================================================
+// POST /api/trading/accounts/switch — Switch default account
+// Phase 1 CR4.1:
+//   Auth before DB check.
+//   Validate target account belongs to tenant BEFORE clearing defaults.
+//   Use transaction for atomicity.
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { safeAccountDTO, logSecurityEvent } from '@/lib/trading-policy';
 
 export async function POST(req: NextRequest) {
-  if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
   }
+
+  if (!db || !hasModel('tradingAccount')) {
+    return NextResponse.json(
+      { error: 'Database unavailable.' },
+      { status: 503 },
+    );
+  }
+
   try {
     const { accountId } = await req.json();
-    const userId = await getUserId(req);
 
-    // Unset all defaults
-    await db.tradingAccount.updateMany({
-      where: { userId },
-      data: { isDefault: false },
-    });
-
-    // Set new default
-    const account = await db.tradingAccount.update({
+    // CR4.1: Validate target account belongs to this tenant BEFORE clearing defaults
+    const targetAccount = await db.tradingAccount.findFirst({
       where: { id: accountId, userId },
-      data: { isDefault: true },
     });
+    if (!targetAccount) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
 
-    return NextResponse.json(account);
+    // Atomic: unset all defaults, then set new default
+    await db.$transaction([
+      db.tradingAccount.updateMany({
+        where: { userId },
+        data: { isDefault: false },
+      }),
+      // Defense-in-depth: userId predicate ensures tenant isolation even inside tx.
+      // The prior findFirst({ where: { id: accountId, userId } }) already validated ownership,
+      // so this updateMany is guaranteed to match.
+      db.tradingAccount.updateMany({
+        where: { id: accountId, userId },
+        data: { isDefault: true },
+      }),
+    ]);
+
+    return NextResponse.json(safeAccountDTO(targetAccount as unknown as Record<string, unknown>));
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[accounts/switch POST] DB error, using fallback:', error);
-    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
+    logSecurityEvent({
+      eventType: 'ACCOUNT_SWITCH_ERROR',
+      route: '/api/trading/accounts/switch',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json(
+      { error: 'Failed to switch account.' },
+      { status: 500 },
+    );
   }
 }

@@ -54,6 +54,8 @@ model TradingAccount {
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   broker          String
   accountType     String   @default("demo")
+  label           String?
+  isDemo          Boolean  @default(false)
   accountId       String?
   apiKey          String?
   apiSecret       String?

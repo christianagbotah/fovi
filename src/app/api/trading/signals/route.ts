@@ -1,25 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
+import { db, hasModel } from '@/lib/db';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { logSecurityEvent } from '@/lib/trading-policy';
 
 export async function GET(req: NextRequest) {
   try {
-    // Require database for reading stored signals
     if (!db || !hasModel('tradingAccount') || !hasModel('tradingSignal')) {
-      return NextResponse.json([], { headers: { 'x-demo': 'true' } });
+      return NextResponse.json(
+        { error: 'Signal data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+        { status: 503 },
+      );
     }
 
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
 
-    // Ensure demo user exists for FK constraints
-    await ensureDemoUser();
     const userId = await getUserId(req);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
-    if (!account) return NextResponse.json([], { headers: { 'x-demo': 'true' } });
+    if (!account) return NextResponse.json([]);
 
     const signals = await db.tradingSignal.findMany({
       where: { accountId: account.id, status: 'active' },
@@ -27,15 +28,21 @@ export async function GET(req: NextRequest) {
       take: 30,
     });
 
-    // Normalize direction field for frontend
-    const normalized = signals.map((s: any) => ({
+    const normalized = signals.map((s: Record<string, unknown>) => ({
       ...s,
       direction: s.direction === 'long' ? 'bullish' : s.direction === 'short' ? 'bearish' : s.direction,
     }));
 
     return NextResponse.json(normalized);
   } catch (error) {
-    console.warn('[signals GET] Error:', error);
-    return NextResponse.json([], { headers: { 'x-demo': 'true' } });
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
+    logSecurityEvent({
+      eventType: 'SIGNALS_GET_ERROR',
+      route: '/api/trading/signals',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json({ error: 'Failed to fetch signals' }, { status: 500 });
   }
 }

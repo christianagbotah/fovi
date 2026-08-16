@@ -1,153 +1,92 @@
+// ============================================================
+// GET/POST/DELETE /api/trading/webhooks
+// Phase 1 CR2:
+//   GET: requires auth (JWT from proxy), returns user-owned configs
+//   POST: ALWAYS returns 503 containment. Never creates executable webhook.
+//   DELETE: requires auth, tenant-scoped
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
+import { v4 as uuidv4 } from 'uuid';
 
-// Demo webhook configs (persisted in-memory for this session)
-const demoWebhooks: Array<{
-  id: string;
-  name: string;
-  secret: string;
-  autoExecute: boolean;
-  defaultStrategy: string;
-  createdAt: string;
-}> = [
-  {
-    id: 'wh_1a2b3c',
-    name: 'TradingView Alerts',
-    secret: 'sk_live_8f2c9a1b',
-    autoExecute: true,
-    defaultStrategy: 'breakout',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
-  },
-  {
-    id: 'wh_4d5e6f',
-    name: 'Pine Script Bot',
-    secret: 'sk_live_3d7e2c9f',
-    autoExecute: false,
-    defaultStrategy: 'manual',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-  },
-];
-
-// Demo webhook calls log
-const demoCalls: Array<{
-  id: string;
-  webhookId: string;
-  timestamp: string;
-  symbol: string;
-  action: string;
-  status: string;
-}> = [
-  { id: 'c1', webhookId: 'wh_1a2b3c', timestamp: new Date(Date.now() - 1000 * 60 * 2).toISOString(), symbol: 'BTC', action: 'buy', status: 'success' },
-  { id: 'c2', webhookId: 'wh_1a2b3c', timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(), symbol: 'NVDA', action: 'sell', status: 'success' },
-  { id: 'c3', webhookId: 'wh_4d5e6f', timestamp: new Date(Date.now() - 1000 * 60 * 47).toISOString(), symbol: 'ETH', action: 'short', status: 'pending' },
-  { id: 'c4', webhookId: 'wh_1a2b3c', timestamp: new Date(Date.now() - 1000 * 60 * 95).toISOString(), symbol: 'TSLA', action: 'buy', status: 'failed' },
-  { id: 'c5', webhookId: 'wh_4d5e6f', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(), symbol: 'AAPL', action: 'cover', status: 'success' },
-];
-
-function randomId(len = 12): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let out = '';
-  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
+function maskSecret(secret: string): string {
+  if (secret.length <= 8) return '****';
+  return secret.slice(0, 4) + '****' + secret.slice(-4);
 }
 
-// GET: list all webhook configs + recent calls
-export async function GET() {
+// GET: list user-owned webhook configs (secrets masked)
+export async function GET(req: NextRequest) {
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('webhookConfig')) {
-    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls }, { headers: { 'x-demo': 'true' } });
+    // No DB — return empty synthetic read-only response with provenance
+    return NextResponse.json(
+      {
+        webhooks: [],
+        calls: [],
+        environment: 'demo', isSynthetic: true, source: 'fovi-demo-generator',
+      },
+      { headers: { ...DEMO_PROVENANCE_HEADER, 'x-demo': 'true' } },
+    );
   }
 
   try {
     const configs = await db.webhookConfig.findMany({
-      where: { userId: DEMO_USER_ID },
+      where: { userId },
       orderBy: { createdAt: 'desc' },
     });
 
     const webhooks = configs.map((c) => ({
       id: c.id,
       name: c.name,
-      secret: c.secret ?? '',
+      secret: maskSecret(c.secret ?? ''),
       autoExecute: c.autoExecute,
       defaultStrategy: c.defaultStrategy,
       createdAt: c.createdAt.toISOString(),
     }));
 
-    return NextResponse.json({ webhooks, calls: demoCalls });
+    return NextResponse.json({ webhooks, calls: [] });
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[webhooks GET] DB error, using fallback:', error);
-    return NextResponse.json({ webhooks: demoWebhooks, calls: demoCalls }, { headers: { 'x-demo': 'true' } });
+    logSecurityEvent({
+      eventType: 'WEBHOOKS_GET_ERROR',
+      route: '/api/trading/webhooks', userId,
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json({ error: 'Failed to fetch webhooks' }, { status: 500 });
   }
 }
 
-// POST: create a new webhook config
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { name, autoExecute, defaultStrategy } = body;
-    const trimmed = (name || '').trim();
-    if (!trimmed) {
-      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
-    }
-
-    const id = `wh_${randomId(8)}`;
-    const secret = `sk_live_${randomId(10)}`;
-
-    if (!db || !hasModel('webhookConfig')) {
-      const item = {
-        id,
-        name: trimmed,
-        secret,
-        autoExecute: !!autoExecute,
-        defaultStrategy: defaultStrategy || 'manual',
-        createdAt: new Date().toISOString(),
-      };
-      demoWebhooks.unshift(item);
-      return NextResponse.json(item, { status: 201, headers: { 'x-demo': 'true' } });
-    }
-
-    try {
-      const userId = await ensureDemoUser();
-      if (!userId) {
-        const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
-        demoWebhooks.unshift(item);
-        return NextResponse.json(item, { status: 201, headers: { 'x-demo': 'true' } });
-      }
-      const created = await db.webhookConfig.create({
-        data: {
-          userId,
-          name: trimmed,
-          url: `/api/trading/webhook?token=${id}`,
-          secret,
-          enabled: true,
-          autoExecute: !!autoExecute,
-          defaultStrategy: defaultStrategy || 'manual',
-        },
-      });
-      return NextResponse.json(
-        {
-          id: created.id,
-          name: created.name,
-          secret: created.secret ?? '',
-          autoExecute: created.autoExecute,
-          defaultStrategy: created.defaultStrategy,
-          createdAt: created.createdAt.toISOString(),
-        },
-        { status: 201 },
-      );
-    } catch (error) {
-      // ANY database error falls back to demo
-      console.warn('[webhooks POST] DB error, using fallback:', error);
-      const item = { id, name: trimmed, secret, autoExecute: !!autoExecute, defaultStrategy: defaultStrategy || 'manual', createdAt: new Date().toISOString() };
-      demoWebhooks.unshift(item);
-      return NextResponse.json(item, { status: 201, headers: { 'x-demo': 'true' } });
-    }
-  } catch {
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
-  }
+// POST: ALWAYS returns 503. Webhook creation disabled during containment.
+// Never accepts autoExecute: true.
+export async function POST() {
+  const correlationId = uuidv4();
+  logSecurityEvent({
+    eventType: 'WEBHOOKS_POST_BLOCKED',
+    correlationId,
+    route: '/api/trading/webhooks',
+    reason: 'Webhook creation is disabled during platform containment.',
+  });
+  return NextResponse.json(
+    {
+      error: 'Webhook creation is temporarily disabled during platform remediation.',
+      code: CONTAINMENT_CODES.WEBHOOK_DISABLED,
+      correlationId,
+      remediationPhase: 'containment',
+      deferred: 'Webhook security redesign.',
+    },
+    { status: 503 },
+  );
 }
 
-// DELETE: remove a webhook config (query param: id)
+// DELETE: remove a webhook config — requires auth, tenant-scoped
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
@@ -155,20 +94,30 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Webhook ID required' }, { status: 400 });
   }
 
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('webhookConfig')) {
-    const idx = demoWebhooks.findIndex((w) => w.id === id);
-    if (idx >= 0) demoWebhooks.splice(idx, 1);
-    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+    return NextResponse.json({ error: 'Webhook deletion is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' }, { status: 503 });
   }
 
   try {
-    await db.webhookConfig.deleteMany({ where: { id, userId: DEMO_USER_ID } });
+    // CR4.1: Tenant-scoped delete — check count
+    const { count } = await db.webhookConfig.deleteMany({ where: { id, userId } });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Webhook not found' }, { status: 404 });
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[webhooks DELETE] DB error, using fallback:', error);
-    const idx = demoWebhooks.findIndex((w) => w.id === id);
-    if (idx >= 0) demoWebhooks.splice(idx, 1);
-    return NextResponse.json({ success: true }, { headers: { 'x-demo': 'true' } });
+    logSecurityEvent({
+      eventType: 'WEBHOOKS_DELETE_ERROR',
+      route: '/api/trading/webhooks', userId,
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json({ error: 'Failed to delete webhook' }, { status: 500 });
   }
 }

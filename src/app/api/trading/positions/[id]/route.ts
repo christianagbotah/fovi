@@ -1,15 +1,29 @@
+// ============================================================
+// PATCH/DELETE /api/trading/positions/[id]
+// Phase 1 CR2: Strict auth, hard-block live position modifications.
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserId } from '@/lib/get-user-id';
-import { createBrokerFromAccount } from '@/lib/broker/factory';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
 import { getGlobalAdminLevy } from '@/lib/system-config';
 import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
+import { enforceLiveTradingPolicy, isExplicitlyDemo, CONTAINMENT_CODES, logSecurityEvent } from '@/lib/trading-policy';
+import { v4 as uuidv4 } from 'uuid';
 
 // PATCH — update TP/SL or other position fields
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('position')) {
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
@@ -17,18 +31,35 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
 
-    const userId = await getUserId(req);
-
-    // Verify position belongs to user's account
+    // CR4.1: Tenant-scoped query — userId in predicate via account relation
     const position = await db.position.findFirst({
-      where: { id, status: 'open' },
+      where: { id, status: 'open', account: { userId } },
       include: { account: true },
     });
     if (!position) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
-    if (position.account.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // Reject live position-protection modification
+    if (!isExplicitlyDemo(position.account)) {
+      const correlationId = uuidv4();
+      logSecurityEvent({
+        eventType: 'POSITION_PROTECTION_BLOCKED',
+        correlationId,
+        route: '/api/trading/positions/[id]',
+        userId,
+        identifier: id,
+        reason: 'Live position-protection modification is deferred pending audit. Use broker directly.',
+      });
+      return NextResponse.json(
+        {
+          error: 'Live position-protection modification is temporarily disabled pending platform audit.',
+          code: CONTAINMENT_CODES.LIVE_BLOCKED,
+          correlationId,
+          remediationPhase: 'containment',
+        },
+        { status: 403 },
+      );
     }
 
     const updateData: Record<string, unknown> = {};
@@ -41,24 +72,31 @@ export async function PATCH(
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
-    await db.position.updateMany({
-      where: { id, accountId: position.accountId },
-      data: updateData,
-    });
+    // CR4.1: Tenant-scoped update — userId in predicate via account relation
+    const { count } = await db.position.updateMany({ where: { id, account: { userId } }, data: updateData });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Position not found' }, { status: 404 });
+    }
+    const updated = await db.position.findFirst({ where: { id } });
 
-    // For demo positions, also update the in-memory demo-sltp-store
-    const isDemo = position.account.broker === 'demo' || position.account.accountType === 'demo';
-    if (isDemo && (body.stopLoss !== undefined || body.takeProfit !== undefined)) {
+    if (body.stopLoss !== undefined || body.takeProfit !== undefined) {
       saveDemoPositionSLTP(
         position.symbol,
-        body.stopLoss ?? position.stopLoss,
-        body.takeProfit ?? position.takeProfit,
+        body.stopLoss ?? updated?.stopLoss,
+        body.takeProfit ?? updated?.takeProfit,
       );
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json(updated);
   } catch (error) {
-    console.warn('[positions PATCH] error:', error);
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
+    logSecurityEvent({
+      eventType: 'POSITION_PATCH_ERROR',
+      route: '/api/trading/positions/[id]',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
     return NextResponse.json({ error: 'Failed to update position' }, { status: 500 });
   }
 }
@@ -68,34 +106,39 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('position')) {
     return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
   }
   try {
     const { id } = await params;
-    const userId = await getUserId(req);
 
+    // CR4.1: Tenant-scoped query — userId in predicate via account relation
     const position = await db.position.findFirst({
-      where: { id, status: 'open' },
+      where: { id, status: 'open', account: { userId } },
       include: { account: true },
     });
     if (!position) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
-    if (position.account.userId !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
-    // Close via broker
+    // ── CONTAINMENT: Enforce live-trading policy BEFORE closePosition ──
+    const policy = enforceLiveTradingPolicy(position.account, `position close (${position.symbol})`);
+    if (policy.blocked) return policy.response;
+
     const broker = await createBrokerFromAccount(position.account);
     const result = await broker.closePosition(position.symbol);
 
-    // Calculate realized PnL
     const closedPnl = position.side === 'long'
       ? (position.currentPrice - position.avgEntryPrice) * position.qty
       : (position.avgEntryPrice - position.currentPrice) * position.qty;
 
-    // Admin levy deduction on profitable closes
     let userPnl = closedPnl;
     let levyAmount = 0;
     let levyPercent = 0;
@@ -105,56 +148,49 @@ export async function DELETE(
         levyPercent = await getGlobalAdminLevy();
         levyAmount = closedPnl * (levyPercent / 100);
         userPnl = closedPnl - levyAmount;
-      } catch (levyErr) {
-        console.warn('[positions DELETE] admin levy calculation failed, skipping:', levyErr);
+      } catch {
         levyPercent = 0;
         levyAmount = 0;
         userPnl = closedPnl;
       }
     }
 
-    await db.position.updateMany({
-      where: { id, accountId: position.accountId },
-      data: {
-        status: 'closed',
-        closedAt: new Date(),
-        realizedPnl: userPnl,
-      },
+    // CR4.1: Tenant-scoped update — userId in predicate via account relation
+    const { count } = await db.position.updateMany({
+      where: { id, account: { userId } },
+      data: { status: 'closed', closedAt: new Date(), realizedPnl: userPnl },
     });
+    if (count === 0) {
+      return NextResponse.json({ error: 'Position not found' }, { status: 404 });
+    }
 
-    // Update account: sync time + admin levy collected
     const accountUpdateData: Record<string, unknown> = { lastSyncedAt: new Date() };
     if (levyAmount > 0) {
       accountUpdateData.totalAdminLevyCollected = { increment: levyAmount };
     }
-    await db.tradingAccount.update({
-      where: { id: position.accountId },
-      data: accountUpdateData,
-    });
-
-    // Update BotConfig admin levy collected if it exists
-    if (levyAmount > 0 && hasModel('botConfig')) {
-      try {
-        await db.botConfig.updateMany({
-          where: { accountId: position.accountId },
-          data: { adminLevyCollected: { increment: levyAmount } },
-        });
-      } catch (botErr) {
-        console.warn('[positions DELETE] botConfig levy update failed (non-critical):', botErr);
-      }
-    }
+    await db.tradingAccount.update({ where: { id: position.accountId }, data: accountUpdateData });
 
     return NextResponse.json({
-      success: true,
-      orderId: result.orderId,
-      realizedPnl: userPnl,
-      adminLevy: levyAmount,
-      adminLevyPercent: levyPercent,
-      rawPnl: closedPnl,
-      status: result.status,
+      success: true, orderId: result.orderId,
+      realizedPnl: userPnl, adminLevy: levyAmount, adminLevyPercent: levyPercent,
+      rawPnl: closedPnl, status: result.status,
     });
   } catch (error) {
-    console.warn('[positions DELETE] error:', error);
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
+    logSecurityEvent({
+      eventType: 'POSITION_DELETE_ERROR',
+      route: '/api/trading/positions/[id]',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    if (error instanceof BrokerFactoryError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, remediationPhase: 'containment' },
+        { status: error.code === 'BROKER_CONNECTION_FAILED' ? 503 : 400 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to close position' }, { status: 500 });
   }
 }

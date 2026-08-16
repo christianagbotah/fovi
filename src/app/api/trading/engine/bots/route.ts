@@ -1,76 +1,31 @@
-import { NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
-
 // ============================================================
 // GET /api/trading/engine/bots
-// ============================================================
-// Returns all active (running + enabled) bots with their account info.
-// Called by the auto-trade-engine mini-service (port 3012) internally.
-// No auth required — engine is a trusted internal service.
+// Phase 1 CR1: P0-4 — enforceInternalAuth, remove demo bot fallback.
+// No DEMO_USER_ID / ensureDemoUser.
 // ============================================================
 
-export async function GET() {
+import { NextResponse } from 'next/server';
+import { db, hasModel } from '@/lib/db';
+import { enforceInternalAuth, isExplicitlyDemo, logSecurityEvent } from '@/lib/trading-policy';
+
+export async function GET(req: Request) {
+  // ── P0-4: Require internal service auth ──
+  const authError = enforceInternalAuth(req);
+  if (authError) return authError;
+
   if (!db || !hasModel('bot')) {
-    // Return demo bots that the engine can process
-    return NextResponse.json([
+    // P0-4: Return 503, NOT demo bots
+    return NextResponse.json(
       {
-        id: 'bot_demo_1',
-        userId: 'usr_demo_1',
-        accountId: 'acc_demo_1',
-        name: 'Momentum Hunter',
-        strategy: 'balanced',
-        symbols: 'BTC,ETH,SOL,NVDA,AAPL,TSLA,GOOGL,MSFT,META,AMD',
-        timeframe: '1h',
-        allocationAmount: 25000,
-        enabled: true,
-        status: 'running',
-        riskPerTrade: 2.0,
-        maxPositions: 5,
-        stopLossPercent: 2.0,
-        takeProfitPercent: 4.0,
-        totalTrades: 0,
-        winTrades: 0,
-        totalPnl: 0,
-        account: {
-          id: 'acc_demo_1',
-          broker: 'demo',
-          accountType: 'demo',
-          balance: 100000,
-          isActive: true,
-        },
+        error: 'Bot data is temporarily unavailable.',
+        code: 'SERVICE_UNAVAILABLE',
+        remediationPhase: 'containment',
       },
-      {
-        id: 'bot_demo_2',
-        userId: 'usr_demo_1',
-        accountId: 'acc_demo_1',
-        name: 'Grid Master BTC',
-        strategy: 'grid',
-        symbols: 'BTC,ETH',
-        timeframe: '15m',
-        allocationAmount: 15000,
-        enabled: true,
-        status: 'running',
-        riskPerTrade: 1.5,
-        maxPositions: 8,
-        stopLossPercent: 3.0,
-        takeProfitPercent: 2.0,
-        totalTrades: 0,
-        winTrades: 0,
-        totalPnl: 0,
-        account: {
-          id: 'acc_demo_1',
-          broker: 'demo',
-          accountType: 'demo',
-          balance: 100000,
-          isActive: true,
-        },
-      },
-    ]);
+      { status: 503 },
+    );
   }
 
   try {
-    await ensureDemoUser();
-
     // Fetch all running+enabled bots with their account info
     const bots = await db.bot.findMany({
       where: {
@@ -83,6 +38,7 @@ export async function GET() {
             id: true,
             broker: true,
             accountType: true,
+            isDemo: true,
             balance: true,
             isActive: true,
           },
@@ -91,12 +47,21 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Filter to only bots with active accounts
-    const active = bots.filter((b) => b.account?.isActive !== false);
+    // Filter to only bots with active accounts AND explicitly demo accounts
+    const active = bots.filter(
+      (b) => b.account?.isActive !== false && b.account && isExplicitlyDemo(b.account),
+    );
 
     return NextResponse.json(active);
   } catch (error) {
-    console.warn('[engine/bots GET] DB error:', error);
-    return NextResponse.json([]);
+    logSecurityEvent({
+      eventType: 'ENGINE_BOTS_ERROR',
+      route: '/api/trading/engine/bots',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json(
+      { error: 'Failed to fetch bots.' },
+      { status: 500 },
+    );
   }
 }

@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser, DEMO_USER_ID } from '@/lib/db';
-import { authFirst } from '@/lib/auth-first';
+import { db, hasModel } from '@/lib/db';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { checkSubscriptionLimit, getLimitMessage } from '@/lib/subscription-guard';
+import { isExplicitlyDemo, DEMO_PROVENANCE_HEADER, logSecurityEvent } from '@/lib/trading-policy';
 
+// Static demo bots for read-only fallback when DB is unavailable.
+// These are NEVER persisted and carry demo provenance.
 const DEMO_BOTS = [
   {
     id: 'bot_demo_1',
-    userId: 'usr_demo_1',
-    accountId: 'acc_demo_1',
     name: 'Momentum Hunter',
     strategy: 'momentum',
     symbols: 'NVDA,AAPL,TSLA',
@@ -15,32 +16,15 @@ const DEMO_BOTS = [
     allocationAmount: 25000,
     enabled: true,
     status: 'running',
-    config: '{}',
-    positionSizing: 'fixed_fractional',
-    riskPerTrade: 2.0,
-    maxPositions: 3,
-    stopLossPercent: 2.0,
-    takeProfitPercent: 4.0,
-    trailingStopPct: 1.5,
-    tradingSessions: 'all',
-    customSessionStart: null,
-    customSessionEnd: null,
     totalTrades: 142,
     winTrades: 86,
     lossTrades: 56,
     totalPnl: 3245.75,
-    bestTrade: 845.20,
-    worstTrade: -312.40,
-    currentStreak: 4,
-    lastTradeAt: new Date(Date.now() - 3600000).toISOString(),
-    lastError: null,
     createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
     updatedAt: new Date().toISOString(),
   },
   {
     id: 'bot_demo_2',
-    userId: 'usr_demo_1',
-    accountId: 'acc_demo_1',
     name: 'Grid Master BTC',
     strategy: 'grid',
     symbols: 'BTC,ETH',
@@ -48,142 +32,66 @@ const DEMO_BOTS = [
     allocationAmount: 15000,
     enabled: true,
     status: 'running',
-    config: '{"gridLevels":8,"gridSpacing":1.5}',
-    positionSizing: 'fixed',
-    riskPerTrade: 1.5,
-    maxPositions: 8,
-    stopLossPercent: 3.0,
-    takeProfitPercent: 2.0,
-    trailingStopPct: 0,
-    tradingSessions: 'all',
-    customSessionStart: null,
-    customSessionEnd: null,
     totalTrades: 528,
     winTrades: 312,
     lossTrades: 216,
     totalPnl: 1875.40,
-    bestTrade: 220.10,
-    worstTrade: -180.50,
-    currentStreak: 2,
-    lastTradeAt: new Date(Date.now() - 1800000).toISOString(),
-    lastError: null,
     createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'bot_demo_3',
-    userId: 'usr_demo_1',
-    accountId: 'acc_demo_1',
-    name: 'DCA Steady ETH',
-    strategy: 'dca',
-    symbols: 'ETH',
-    timeframe: '1d',
-    allocationAmount: 10000,
-    enabled: false,
-    status: 'stopped',
-    config: '{"dcaTotalBuys":10,"dcaInterval":1440}',
-    positionSizing: 'fixed',
-    riskPerTrade: 1.0,
-    maxPositions: 1,
-    stopLossPercent: 5.0,
-    takeProfitPercent: 10.0,
-    trailingStopPct: 0,
-    tradingSessions: 'all',
-    customSessionStart: null,
-    customSessionEnd: null,
-    totalTrades: 47,
-    winTrades: 28,
-    lossTrades: 19,
-    totalPnl: 642.30,
-    bestTrade: 245.80,
-    worstTrade: -120.10,
-    currentStreak: 0,
-    lastTradeAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    lastError: null,
-    createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
     updatedAt: new Date().toISOString(),
   },
 ];
 
 export async function GET(req: NextRequest) {
-  const userId = authFirst(req);
   if (!db || !hasModel('bot')) {
-    return NextResponse.json(DEMO_BOTS, { headers: { 'x-demo': 'true' } });
+    // CR4.1: Auth before fallback — require auth even when DB is unavailable
+    try {
+      getUserIdSync(req);
+    } catch {
+      return authRequiredResponse();
+    }
+    return NextResponse.json(
+      { error: 'Bot data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+      { status: 503 },
+    );
   }
   try {
+    const userId = getUserIdSync(req);
     const bots = await db.bot.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
     return NextResponse.json(bots);
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[bots GET] DB error, using fallback:', error);
-    return NextResponse.json(DEMO_BOTS, { headers: { 'x-demo': 'true' } });
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
+    logSecurityEvent({
+      eventType: 'BOTS_GET_ERROR',
+      route: '/api/trading/bots',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json({ error: 'Failed to fetch bots' }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
-  const userId = authFirst(req);
-  const body = await req.json().catch(() => ({}));
-  if (!db || !hasModel('bot')) {
-    const created = {
-      id: `bot_demo_${Date.now()}`,
-      userId: 'usr_demo_1',
-      accountId: body.accountId || 'acc_demo_1',
-      name: body.name || 'New Bot',
-      strategy: body.strategy || 'signal_based',
-      symbols: body.symbols || 'BTC',
-      timeframe: body.timeframe || '1h',
-      allocationAmount: body.allocationAmount ?? 10000,
-      enabled: body.enabled ?? false,
-      status: 'stopped',
-      config: body.config ? JSON.stringify(body.config) : '{}',
-      positionSizing: body.positionSizing || 'fixed_fractional',
-      riskPerTrade: body.riskPerTrade ?? 2.0,
-      maxPositions: body.maxPositions ?? 3,
-      stopLossPercent: body.stopLossPercent ?? 2.0,
-      takeProfitPercent: body.takeProfitPercent ?? 4.0,
-      trailingStopPct: body.trailingStopPct ?? 0,
-      tradingSessions: body.tradingSessions || 'all',
-      customSessionStart: body.customSessionStart ?? null,
-      customSessionEnd: body.customSessionEnd ?? null,
-      totalTrades: 0,
-      winTrades: 0,
-      lossTrades: 0,
-      totalPnl: 0,
-      bestTrade: 0,
-      worstTrade: 0,
-      currentStreak: 0,
-      lastTradeAt: null,
-      lastError: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    return NextResponse.json(created, { headers: { 'x-demo': 'true' } });
-  }
+  let userId: string;
   try {
-    await ensureDemoUser();
-    if (!userId) {
-      // Fallback to demo response if DB or user unavailable
-      const fallback1 = {
-        id: `bot_demo_${Date.now()}`,
-        userId: DEMO_USER_ID,
-        accountId: 'acc_demo_1',
-        name: body.name || 'New Bot',
-        strategy: body.strategy || 'signal_based',
-        symbols: body.symbols || 'BTC',
-        timeframe: body.timeframe || '1h',
-        allocationAmount: body.allocationAmount ?? 10000,
-        enabled: body.enabled ?? false,
-        status: 'stopped',
-        config: body.config ? JSON.stringify(body.config) : '{}',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      return NextResponse.json(fallback1, { headers: { 'x-demo': 'true' } });
-    }
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
 
+  const body = await req.json().catch(() => ({}));
+
+  if (!db || !hasModel('bot')) {
+    return NextResponse.json(
+      { error: 'Bot creation is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+      { status: 503 },
+    );
+  }
+
+  try {
     // --- Subscription limit check ---
     const botCheck = await checkSubscriptionLimit(userId, 'maxBots');
     if (!botCheck.allowed) {
@@ -201,23 +109,22 @@ export async function POST(req: NextRequest) {
       account = await db.tradingAccount.findFirst({ where: { userId } });
     }
     if (!account) {
-      // Fallback to demo response if no account exists
-      const fallback2 = {
-        id: `bot_demo_${Date.now()}`,
-        userId,
-        accountId: 'acc_demo_1',
-        name: body.name || 'New Bot',
-        strategy: body.strategy || 'signal_based',
-        symbols: body.symbols || 'BTC',
-        timeframe: body.timeframe || '1h',
-        allocationAmount: body.allocationAmount ?? 10000,
-        enabled: body.enabled ?? false,
-        status: 'stopped',
-        config: body.config ? JSON.stringify(body.config) : '{}',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      return NextResponse.json(fallback2, { headers: { 'x-demo': 'true' } });
+      return NextResponse.json(
+        { error: 'No trading account found. Create a demo account first.' },
+        { status: 404 },
+      );
+    }
+
+    // CR4.1: Reject non-demo, unknown, null, or conflicting accounts for bot creation
+    if (!isExplicitlyDemo(account)) {
+      return NextResponse.json(
+        {
+          error: 'Phase 1 containment: bot creation requires an explicitly demo account.',
+          code: 'PHASE1_LIVE_TRADING_DISABLED',
+          remediationPhase: 'containment',
+        },
+        { status: 403 },
+      );
     }
 
     const created = await db.bot.create({
@@ -229,8 +136,8 @@ export async function POST(req: NextRequest) {
         symbols: body.symbols || 'BTC',
         timeframe: body.timeframe || '1h',
         allocationAmount: body.allocationAmount ?? 10000,
-        enabled: body.enabled ?? false,
-        status: 'stopped',
+        enabled: isExplicitlyDemo(account) ? (body.enabled ?? false) : false,
+        status: isExplicitlyDemo(account) ? (body.status ?? 'stopped') : 'stopped',
         config: body.config ? JSON.stringify(body.config) : '{}',
         positionSizing: body.positionSizing || 'fixed_fractional',
         riskPerTrade: body.riskPerTrade ?? 2.0,
@@ -245,17 +152,15 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(created);
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[bots POST] DB error, using fallback:', error);
-    const fallback3 = {
-      id: `bot_demo_${Date.now()}`,
-      userId: 'usr_demo_1',
-      accountId: body.accountId || 'acc_demo_1',
-      name: body.name || 'New Bot',
-      strategy: body.strategy || 'signal_based',
-      symbols: body.symbols || 'BTC',
-      createdAt: new Date().toISOString(),
-    };
-    return NextResponse.json(fallback3, { headers: { 'x-demo': 'true' } });
+    logSecurityEvent({
+      eventType: 'BOTS_POST_ERROR',
+      route: '/api/trading/bots',
+      userId,
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json(
+      { error: `Failed to create bot: ${error instanceof Error ? error.message : 'Unknown error'}` },
+      { status: 500 },
+    );
   }
 }

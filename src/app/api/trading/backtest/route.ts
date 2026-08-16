@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, hasModel, ensureDemoUser } from '@/lib/db';
+import { db, hasModel } from '@/lib/db';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { runBacktest, type EngineConfig } from '@/lib/trading-engine';
 import { getDemoCandles } from '@/lib/broker/demo';
 import type { CandleData } from '@/lib/types';
@@ -58,12 +59,12 @@ export async function POST(req: NextRequest) {
     dcaTotalBuys = 10,
   } = body;
 
-  // 1) Build candles — this does NOT require db. Use getDemoCandles or inline fallback.
+  // 1) Build candles
   let candles: CandleData[] = [];
   const now = Date.now();
   const start = startDate
     ? new Date(startDate).getTime()
-    : now - 86400000 * 90; // default 90 days back
+    : now - 86400000 * 90;
   const end = endDate ? new Date(endDate).getTime() : now;
   const intervalMs: Record<string, number> = {
     '1m': 60000, '5m': 300000, '15m': 900000,
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
     avgWinLossRatio: 1.5,
   };
 
-  // 3) Run backtest (pure compute, never throws db errors)
+  // 3) Run backtest (pure compute)
   let result;
   try {
     result = runBacktest(candles, config);
@@ -123,42 +124,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
-  // 4) Persist to DB if available (non-blocking — failure here does NOT affect the response)
+  // 4) Persist to DB if available (requires authenticated user)
   if (db && hasModel('backtest')) {
     try {
-      const userId = await ensureDemoUser();
-      if (userId) {
-        await db.backtest.create({
-          data: {
-            userId,
-            name: `${strategy} ${symbol} ${timeframe}`,
-            strategy,
-            symbol,
-            timeframe,
-            startDate: new Date(start),
-            endDate: new Date(end),
-            initialBalance: Number(allocationAmount),
-            finalBalance: Number(allocationAmount) + result.stats.totalPnl,
-            totalPnl: result.stats.totalPnl,
-            pnlPercent: result.stats.pnlPercent,
-            totalTrades: result.stats.totalTrades,
-            winTrades: result.stats.winTrades,
-            lossTrades: result.stats.lossTrades,
-            maxDrawdown: result.stats.maxDrawdown,
-            sharpeRatio: result.stats.sharpeRatio,
-            sortinoRatio: result.stats.sortinoRatio,
-            profitFactor: result.stats.profitFactor,
-            avgWin: result.stats.avgWin,
-            avgLoss: result.stats.avgLoss,
-            config: JSON.stringify(config),
-            tradesJson: JSON.stringify(result.trades),
-            equityCurveJson: JSON.stringify(result.equityCurve),
-          },
-        });
-      }
+      const userId = await getUserId(req);
+      await db.backtest.create({
+        data: {
+          userId,
+          name: `${strategy} ${symbol} ${timeframe}`,
+          strategy,
+          symbol,
+          timeframe,
+          startDate: new Date(start),
+          endDate: new Date(end),
+          initialBalance: Number(allocationAmount),
+          finalBalance: Number(allocationAmount) + result.stats.totalPnl,
+          totalPnl: result.stats.totalPnl,
+          pnlPercent: result.stats.pnlPercent,
+          totalTrades: result.stats.totalTrades,
+          winTrades: result.stats.winTrades,
+          lossTrades: result.stats.lossTrades,
+          maxDrawdown: result.stats.maxDrawdown,
+          sharpeRatio: result.stats.sharpeRatio,
+          sortinoRatio: result.stats.sortinoRatio,
+          profitFactor: result.stats.profitFactor,
+          avgWin: result.stats.avgWin,
+          avgLoss: result.stats.avgLoss,
+          config: JSON.stringify(config),
+          tradesJson: JSON.stringify(result.trades),
+          equityCurveJson: JSON.stringify(result.equityCurve),
+        },
+      });
     } catch (error) {
-      // ANY DB error is non-critical — backtest result is always returned
-      console.warn('[backtest] failed to persist result:', error);
+      if (error instanceof AuthRequiredError) {
+        // No auth — skip persistence silently
+      } else {
+        console.warn('[backtest] failed to persist result:', error);
+      }
     }
   }
 
