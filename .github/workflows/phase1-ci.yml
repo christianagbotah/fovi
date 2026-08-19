@@ -43,11 +43,14 @@ jobs:
           set -euo pipefail
           for service in auto-trade-engine balance-sync market-service; do
             echo "Installing mini-services/${service}"
-            (cd "mini-services/${service}" && bun install --frozen-lockfile)
+            (cd "mini-services/${service}" && bun install --frozen-lockfile")
           done
 
       - name: Generate Prisma client
         run: bunx prisma generate
+
+      - name: Deploy script syntax check
+        run: bash -n deploy.sh
 
       - name: Determine comparison base
         id: base

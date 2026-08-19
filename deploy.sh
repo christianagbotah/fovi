@@ -66,60 +66,18 @@ setup_env() {
 }
 
 # ----------------------------- Validate environment ----------------------------
+# Delegates to the shared TypeScript validator so there is exactly ONE
+# source of truth for production env policy.
 
 validate_env() {
-  info "Validating production environment..."
+  info "Validating production environment (shared TypeScript validator)..."
   cd "${DEPLOY_PATH}"
 
-  local failures=0
-
-  # DATABASE_URL
-  if [ -z "${DATABASE_URL:-}" ]; then
-    err "DATABASE_URL is not set in .env. Production deployment requires a PostgreSQL connection string."
-  fi
-  if [[ "${DATABASE_URL:-}" != postgresql://* && "${DATABASE_URL:-}" != postgres://* ]]; then
-    err "DATABASE_URL must be a PostgreSQL connection string (postgresql://... or postgres://...)"
+  if [ ! -f "${DEPLOY_PATH}/${PM2_ECOSYSTEM}" ]; then
+    err "${PM2_ECOSYSTEM} is missing. It must be committed to the repository."
   fi
 
-  # JWT_SECRET
-  local jwt_len="${#JWT_SECRET:-0}"
-  if [ -z "${JWT_SECRET:-}" ] || [ "$jwt_len" -lt 32 ]; then
-    err "JWT_SECRET must be set and >= 32 characters (current: ${jwt_len}). Generate with: openssl rand -hex 32"
-  fi
-
-  # AUTH_PEPPER
-  local pepper_len="${#AUTH_PEPPER:-0}"
-  if [ -z "${AUTH_PEPPER:-}" ] || [ "$pepper_len" -lt 16 ]; then
-    err "AUTH_PEPPER must be set and >= 16 characters (current: ${pepper_len}). Generate with: openssl rand -hex 32"
-  fi
-
-  # ENCRYPTION_KEY
-  local enc_len="${#ENCRYPTION_KEY:-0}"
-  if [ -z "${ENCRYPTION_KEY:-}" ] || [ "$enc_len" -lt 32 ]; then
-    err "ENCRYPTION_KEY must be set and >= 32 characters (current: ${enc_len}). Generate with: openssl rand -base64 32"
-  fi
-
-  # INTERNAL_SERVICE_SECRET
-  if [ -z "${INTERNAL_SERVICE_SECRET:-}" ]; then
-    err "INTERNAL_SERVICE_SECRET must be set. Generate with: openssl rand -hex 32"
-  fi
-
-  # APP_URL / NEXT_PUBLIC_APP_URL — must be HTTPS
-  for var in APP_URL NEXT_PUBLIC_APP_URL; do
-    local val="${!var:-}"
-    if [ -n "$val" ]; then
-      case "$val" in
-        https://*) ok "${var} is HTTPS: ${val}"
-          ;;
-        *)
-          err "${var} must be a valid HTTPS URL in production (got: ${val})"
-          ;;
-      esac
-    else
-      warn "${var} is not set. Some features (email links, OAuth) may not work."
-    fi
-  done
-
+  NODE_ENV=production bun run scripts/validate-production-env.ts
   ok "Environment validation passed"
 }
 
@@ -204,14 +162,16 @@ resolve_deploy_sha() {
   DEPLOY_SHA="$sha"
 }
 
-# ----------------------------- Health checks ----------------------------------
+# ----------------------------- Health checks (FAIL-CLOSED) --------------------
+# If ANY required service fails health after retries, deployment FAILS.
+# Containment fields (automatedTradingEnabled, balanceSyncEnabled) must
+# explicitly be false — missing/malformed/true/unavailable = FATAL.
 
 health_check() {
   local max_retries=12
   local retry_delay=5
-  local all_ok=true
 
-  # Next.js
+  # --- Next.js ---
   info "Health check: Next.js (127.0.0.1:3002)..."
   local next_ok=false
   for i in $(seq 1 $max_retries); do
@@ -223,11 +183,10 @@ health_check() {
     sleep "$retry_delay"
   done
   if [ "$next_ok" = false ]; then
-    warn "Next.js health check FAILED on 127.0.0.1:3002 after ${max_retries} retries"
-    all_ok=false
+    err "DEPLOYMENT FAILED: Next.js health check FAILED on 127.0.0.1:3002 after ${max_retries} retries"
   fi
 
-  # market-service
+  # --- market-service ---
   info "Health check: market-service (127.0.0.1:3003)..."
   local market_ok=false
   for i in $(seq 1 $max_retries); do
@@ -239,61 +198,62 @@ health_check() {
     sleep "$retry_delay"
   done
   if [ "$market_ok" = false ]; then
-    warn "market-service health check FAILED on 127.0.0.1:3003 after ${max_retries} retries"
-    all_ok=false
+    err "DEPLOYMENT FAILED: market-service health check FAILED on 127.0.0.1:3003 after ${max_retries} retries"
   fi
 
-  # auto-trade-engine
+  # --- auto-trade-engine (containment verification) ---
   info "Health check: auto-trade-engine (127.0.0.1:3012)..."
   local trade_ok=false
+  local containment_ok=false
   for i in $(seq 1 $max_retries); do
     local health_resp
     health_resp=$(curl -sf http://127.0.0.1:3012/health 2>/dev/null || true)
     if echo "$health_resp" | grep -q '"status":"ok"'; then
       ok "auto-trade-engine is responding on 127.0.0.1:3012"
-      # Verify containment: automated trading must remain disabled
+      trade_ok=true
+      # Containment MUST be explicitly verified
       if echo "$health_resp" | grep -q '"automatedTradingEnabled":false'; then
         ok "auto-trade-engine containment verified: automatedTradingEnabled=false"
-      else
-        warn "auto-trade-engine: automatedTradingEnabled is not false — verify containment"
+        containment_ok=true
       fi
-      trade_ok=true
       break
     fi
     sleep "$retry_delay"
   done
   if [ "$trade_ok" = false ]; then
-    warn "auto-trade-engine health check FAILED on 127.0.0.1:3012 after ${max_retries} retries"
-    all_ok=false
+    err "DEPLOYMENT FAILED: auto-trade-engine health check FAILED on 127.0.0.1:3012 after ${max_retries} retries"
+  fi
+  if [ "$containment_ok" = false ]; then
+    err "DEPLOYMENT FAILED: auto-trade-engine containment check FAILED — automatedTradingEnabled is not explicitly false. Security boundary violation."
   fi
 
-  # balance-sync
+  # --- balance-sync (containment verification) ---
   info "Health check: balance-sync (127.0.0.1:3013)..."
   local balance_ok=false
+  local bsync_containment_ok=false
   for i in $(seq 1 $max_retries); do
     local bhealth_resp
     bhealth_resp=$(curl -sf http://127.0.0.1:3013/health 2>/dev/null || true)
     if echo "$bhealth_resp" | grep -q '"status":"ok"'; then
       ok "balance-sync is responding on 127.0.0.1:3013"
-      # Verify containment: balance sync must remain disabled
+      balance_ok=true
+      # Containment MUST be explicitly verified
       if echo "$bhealth_resp" | grep -q '"balanceSyncEnabled":false'; then
         ok "balance-sync containment verified: balanceSyncEnabled=false"
-      else
-        warn "balance-sync: balanceSyncEnabled is not false — verify containment"
+        bsync_containment_ok=true
       fi
-      balance_ok=true
       break
     fi
     sleep "$retry_delay"
   done
   if [ "$balance_ok" = false ]; then
-    warn "balance-sync health check FAILED on 127.0.0.1:3013 after ${max_retries} retries"
-    all_ok=false
+    err "DEPLOYMENT FAILED: balance-sync health check FAILED on 127.0.0.1:3013 after ${max_retries} retries"
+  fi
+  if [ "$bsync_containment_ok" = false ]; then
+    err "DEPLOYMENT FAILED: balance-sync containment check FAILED — balanceSyncEnabled is not explicitly false. Security boundary violation."
   fi
 
-  if [ "$all_ok" = false ]; then
-    warn "Some health checks failed. Check service logs above."
-  fi
+  ok "All health checks and containment verifications passed"
 }
 
 # ----------------------------- First-time deploy ------------------------------
@@ -316,12 +276,12 @@ first_deploy() {
   # Setup .env (never overwrites)
   setup_env
 
-  # Source .env for validation (without printing values)
+  # Source .env for downstream steps (without printing values)
   set -a
   source "${DEPLOY_PATH}/.env"
   set +a
 
-  # Validate production environment
+  # Validate production environment via shared TypeScript validator
   validate_env
 
   # Install dependencies with frozen lockfiles
@@ -344,8 +304,10 @@ first_deploy() {
   # Database migrations (never db push)
   db_migrate
 
-  # Create PM2 ecosystem
-  create_ecosystem
+  # Verify ecosystem.config.cjs exists (committed to repo — NOT regenerated)
+  if [ ! -f "${DEPLOY_PATH}/${PM2_ECOSYSTEM}" ]; then
+    err "${PM2_ECOSYSTEM} not found in repository. This file must be committed."
+  fi
 
   # Start all services with PM2
   info "Starting all services via PM2..."
@@ -354,7 +316,7 @@ first_deploy() {
   pm2 save
   ok "All services started"
 
-  # Health checks
+  # Health checks (FAIL-CLOSED)
   health_check
 
   info "========== DEPLOY COMPLETE =========="
@@ -404,12 +366,12 @@ update_deploy() {
   fi
   ok ".env preserved (not overwritten)"
 
-  # Source .env for validation (without printing values)
+  # Source .env for downstream steps (without printing values)
   set -a
   source "${DEPLOY_PATH}/.env"
   set +a
 
-  # Validate production environment
+  # Validate production environment via shared TypeScript validator
   validate_env
 
   # Install dependencies with frozen lockfiles
@@ -432,8 +394,10 @@ update_deploy() {
   # Database migrations (never db push)
   db_migrate
 
-  # Recreate ecosystem (in case app list changed)
-  create_ecosystem
+  # Verify ecosystem.config.cjs exists (committed to repo — NOT regenerated)
+  if [ ! -f "${DEPLOY_PATH}/${PM2_ECOSYSTEM}" ]; then
+    err "${PM2_ECOSYSTEM} not found in repository. This file must be committed."
+  fi
 
   # Restart all PM2 processes
   info "Restarting all PM2 processes..."
@@ -442,91 +406,12 @@ update_deploy() {
   pm2 save
   ok "All services restarted"
 
-  # Health checks
+  # Health checks (FAIL-CLOSED)
   health_check
 
   info "========== UPDATE COMPLETE =========="
   info "Deployed ref: ${DEPLOY_REF} (${DEPLOY_SHA})"
   pm2 list
-}
-
-# ----------------------------- PM2 Ecosystem ---------------------------------
-
-create_ecosystem() {
-  info "Creating PM2 ecosystem file at ${DEPLOY_PATH}/${PM2_ECOSYSTEM}"
-  cat > "${DEPLOY_PATH}/${PM2_ECOSYSTEM}" <<ECOSYSTEM
-const fs = require('fs');
-const path = require('path');
-
-// Load .env from project root WITHOUT printing values.
-const envPath = path.resolve(__dirname, '.env');
-const envVars = { NODE_ENV: 'production' };
-
-if (fs.existsSync(envPath)) {
-  const content = fs.readFileSync(envPath, 'utf8');
-  let count = 0;
-  for (const line of content.split('\n')) {
-    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)/);
-    if (m && m[2] !== '') {
-      let val = m[2];
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      envVars[m[1]] = val;
-      count++;
-    }
-  }
-  console.log('[ecosystem] Loaded ' + count + ' env vars from .env (values not printed)');
-} else {
-  console.warn('[ecosystem] WARNING: .env file not found at', envPath);
-}
-
-module.exports = {
-  apps: [
-    {
-      name: 'fovi-next',
-      script: 'node_modules/.bin/next',
-      args: 'start --port 3002',
-      cwd: '/home/lightworld/webapps/fovi',
-      exec_mode: 'fork',
-      autorestart: true,
-      max_memory_restart: '1G',
-      env: envVars,
-    },
-    {
-      name: 'fovi-market',
-      script: 'index.ts',
-      cwd: '/home/lightworld/webapps/fovi/mini-services/market-service',
-      exec_mode: 'fork',
-      interpreter: 'bun',
-      autorestart: true,
-      max_memory_restart: '256M',
-      env: { ...envVars, PORT: '3003' },
-    },
-    {
-      name: 'fovi-auto-trade',
-      script: 'index.ts',
-      cwd: '/home/lightworld/webapps/fovi/mini-services/auto-trade-engine',
-      exec_mode: 'fork',
-      interpreter: 'bun',
-      autorestart: true,
-      max_memory_restart: '256M',
-      env: { ...envVars, PORT: '3012' },
-    },
-    {
-      name: 'fovi-balance-sync',
-      script: 'index.ts',
-      cwd: '/home/lightworld/webapps/fovi/mini-services/balance-sync',
-      exec_mode: 'fork',
-      interpreter: 'bun',
-      autorestart: true,
-      max_memory_restart: '256M',
-      env: { ...envVars, PORT: '3013' },
-    },
-  ],
-};
-ECOSYSTEM
-  ok "Ecosystem file created"
 }
 
 # ----------------------------- Usage ------------------------------------------
@@ -553,7 +438,7 @@ Deployment order:
   1. Resolve exact authorized git ref/SHA
   2. Verify clean source state
   3. Preserve existing .env
-  4. Validate production environment
+  4. Validate production environment (shared TypeScript validator)
   5. Install dependencies with frozen lockfiles
   6. Prisma generate
   7. TypeScript gate
@@ -561,7 +446,7 @@ Deployment order:
   9. Production build
   10. Prisma migrate deploy
   11. Restart services
-  12. Health checks
+  12. Health checks (fail-closed, containment-verified)
   13. Report deployed SHA
 
 IMPORTANT:
@@ -570,6 +455,11 @@ IMPORTANT:
   - Dirty source trees are rejected.
   - The configured deploy ref is used (default: phase-1-emergency-containment).
   - main is NOT used as a deploy target.
+  - Health checks are FAIL-CLOSED: any failure aborts deployment.
+  - Containment fields (automatedTradingEnabled, balanceSyncEnabled) must
+    be explicitly false — missing/true/unavailable = FATAL.
+  - ecosystem.config.cjs is committed to the repository and is NOT
+    regenerated by this script.
 EOF
   exit 0
 }
