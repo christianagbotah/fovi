@@ -73,7 +73,7 @@ export async function encrypt(plaintext: string): Promise<string> {
       );
     } else {
       const cryptoKey = await crypto.subtle.importKey(
-        'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+        'raw', key.buffer as ArrayBuffer, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
       );
       encrypted = await crypto.subtle.encrypt(
         { name: ALGORITHM, iv },
@@ -115,7 +115,7 @@ export async function decrypt(encryptedBase64: string): Promise<string> {
       );
     } else {
       const cryptoKey = await crypto.subtle.importKey(
-        'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
+        'raw', key.buffer as ArrayBuffer, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
       );
       decrypted = await crypto.subtle.decrypt(
         { name: ALGORITHM, iv },

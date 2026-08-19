@@ -170,7 +170,7 @@ async function generateRealSignals(
           id: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           symbol,
           assetType: getAssetType(symbol),
-          direction: c.direction === 'long' ? 'bullish' : c.direction === 'short' ? 'bearish' : c.direction,
+          direction: c.direction,
           confidence: Math.round(c.confidence),
           signalType: c.signalType,
           timeframe,

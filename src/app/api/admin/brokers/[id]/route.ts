@@ -10,6 +10,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const { id } = await params;
     const body = await req.json();
 
@@ -60,6 +61,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const { id } = await params;
     await db.brokerProvider.update({
       where: { id },

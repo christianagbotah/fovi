@@ -254,11 +254,11 @@ export function PriceChart({ autoTick: autoTickProp }: PriceChartProps) {
   const priceChangePct = prevCandle ? (priceChange / prevCandle.close) * 100 : 0;
   const isUp = priceChange >= 0;
   const strokeColor = isUp ? '#10b981' : '#ef4444';
-  const candleDomain = useMemo(() => {
-    if (displayCandles.length === 0) return ['auto', 'auto'] as [number, number];
+  const candleDomain = useMemo((): [string | number, string | number] => {
+    if (displayCandles.length === 0) return ['auto', 'auto'];
     const lows = displayCandles.map(c => c.low);
     const highs = displayCandles.map(c => c.high);
-    return [Math.min(...lows) * 0.998, Math.max(...highs) * 1.002] as [number, number];
+    return [Math.min(...lows) * 0.998, Math.max(...highs) * 1.002];
   }, [displayCandles]);
 
   // Get live price for current symbol

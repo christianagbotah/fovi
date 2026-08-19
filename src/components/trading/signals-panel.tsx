@@ -96,7 +96,7 @@ export function SignalsPanel() {
   // Quick-trade from signal: auto-fills symbol, side, SL, TP into order form
   const handleQuickTrade = (sig: any, e: React.MouseEvent) => {
     e.stopPropagation(); // Don't trigger signal detail
-    const isBullish = sig.direction === 'bullish' || sig.direction === 'long';
+    const isBullish = sig.direction === 'bullish';
     setOrderSymbol(sig.symbol);
     setOrderEntryPrice(sig.entryPrice || null);
     setOrderStopLoss(sig.stopLoss ?? null);
@@ -170,7 +170,7 @@ export function SignalsPanel() {
       >
         {signals.map(sig => {
           const IconComp = SIGNAL_ICONS[sig.signalType] || Zap;
-          const isBullish = sig.direction === 'bullish' || sig.direction === 'long';
+          const isBullish = sig.direction === 'bullish';
           const confidence = typeof sig.confidence === 'number'
             ? (sig.confidence > 1 ? Math.round(sig.confidence) : Math.round(sig.confidence * 100))
             : parseInt(String(sig.confidence)) || 0;

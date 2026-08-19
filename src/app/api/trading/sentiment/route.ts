@@ -69,7 +69,8 @@ async function searchHeadlines(zai: NonNullable<Awaited<ReturnType<typeof getZAI
 
   for (const query of queries) {
     try {
-      const results = await zai.web.search({ query, limit: 5 });
+      const searchApi = (zai as unknown as Record<string, unknown>).web as { search: (opts: { query: string; limit: number }) => Promise<unknown> } | undefined;
+      const results = await searchApi?.search?.({ query, limit: 5 });
       const items = (results as unknown as { results?: { title?: string; url?: string }[] }).results;
       if (Array.isArray(items)) {
         for (const item of items.slice(0, 3)) {

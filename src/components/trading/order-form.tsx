@@ -69,7 +69,7 @@ export function OrderForm() {
     if (orderSymbol) {
       const sig = signals.find(s => s.symbol === orderSymbol);
       if (sig) {
-        if (sig.direction === 'bearish' || sig.direction === 'short') setSide('sell');
+        if (sig.direction === 'bearish') setSide('sell');
         else setSide('buy');
       }
     }

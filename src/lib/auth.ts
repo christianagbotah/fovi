@@ -104,6 +104,8 @@ export interface AccessTokenPayload {
 export interface RefreshTokenPayload {
   sub: string;
   type: 'refresh';
+  email?: string;
+  name?: string;
   iat?: number;
   exp?: number;
 }
@@ -137,8 +139,11 @@ export async function generateAccessToken(
 /**
  * Create a JWT refresh token with 7d expiry.
  */
-export async function generateRefreshToken(userId: string): Promise<string> {
-  return new SignJWT({ sub: userId, type: 'refresh' })
+export async function generateRefreshToken(userId: string, email?: string, name?: string): Promise<string> {
+  const payload: Record<string, unknown> = { sub: userId, type: 'refresh' };
+  if (email) payload.email = email;
+  if (name) payload.name = name;
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('7d')

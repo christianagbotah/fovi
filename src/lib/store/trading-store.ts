@@ -119,6 +119,7 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string | null;
+  role?: string;
 }
 
 interface TradingState {
@@ -132,7 +133,7 @@ interface TradingState {
   // Accounts
   accounts: TradingAccount[];
   activeAccountId: string | null;
-  setActiveAccount: (id: string) => void;
+  setActiveAccount: (id: string | null) => void;
   setAccounts: (accounts: TradingAccount[], dbActiveId?: string | null) => void;
 
   // Market

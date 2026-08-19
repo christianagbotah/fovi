@@ -28,7 +28,7 @@ vi.mock('@/lib/subscription-guard', () => ({
 
 // Auth mock — use vi.hoisted to avoid hoisting issues
 const { mockGetUserIdSync, mockAuthRequiredResponse, AuthRequiredErrorCls } = vi.hoisted(() => {
-  const mockGetUserIdSync = vi.fn(() => {
+  const mockGetUserIdSync = vi.fn<() => string>(() => {
     throw new Error('AuthRequiredError');
   });
   const AuthRequiredErrorCls = class extends Error {

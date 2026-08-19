@@ -247,7 +247,7 @@ export function AITradingDashboard() {
 
   // ---- Fetch global admin levy from system config (read-only, set by admin) ----
   useEffect(() => {
-    getGlobalAdminLevy().then(v => setBotConfig(p => ({ ...p, adminLevyPercent: v })));
+    getGlobalAdminLevy().then(v => setBotConfig({ adminLevyPercent: v }));
   }, []);
 
   // ---- Sync portfolio state for dashboard tab ----
@@ -1320,7 +1320,7 @@ export function AITradingDashboard() {
                 const gradId = isAbove ? 'url(#eqGrad)' : 'url(#eqGradRed)';
                 const fmt$ = (v) => { if (v >= 10000) return '$' + (v/1000).toFixed(1) + 'k'; return '$' + v.toFixed(0); };
                 const yTicks = 4;
-                const tickVals = [];
+                const tickVals: number[] = [];
                 for (let i = 0; i <= yTicks; i++) {
                   tickVals.push(minV + (range * i / yTicks));
                 }

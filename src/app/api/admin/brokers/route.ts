@@ -7,6 +7,7 @@ import { db } from '@/lib/db';
 
 export async function GET() {
   try {
+    if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const providers = await db.brokerProvider.findMany({
       where: { deleted: false },
       orderBy: { sortOrder: 'asc' },
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'code and displayName are required' }, { status: 400 });
     }
 
+    if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const provider = await db.brokerProvider.create({
       data: {
         code: code.toLowerCase().trim(),

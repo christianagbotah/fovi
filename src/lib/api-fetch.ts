@@ -32,9 +32,10 @@ export async function apiFetch<T = any>(
   const res = await fetch(url, { ...options, headers });
 
   // Detect x-demo header — two-way: can turn demo ON or OFF
+  let isDemo = false;
   const demoHeader = res.headers.get('x-demo');
   if (demoHeader === 'true' || demoHeader === 'false') {
-    const isDemo = demoHeader === 'true';
+    isDemo = demoHeader === 'true';
     if (typeof window !== 'undefined') {
       requestAnimationFrame(() => {
         const store = useTradingStore.getState();

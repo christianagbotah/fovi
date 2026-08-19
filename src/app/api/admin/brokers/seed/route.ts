@@ -89,6 +89,7 @@ const DEFAULT_BROKERS = [
 
 export async function POST() {
   try {
+    if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     let created = 0;
     let skipped = 0;
     let updated = 0;

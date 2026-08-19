@@ -117,8 +117,10 @@ export function AutoTradePanel() {
         type: 'market',
         qty,
         filledPrice,
+        filledQty: qty,
         status: 'filled',
         signalType,
+        signalDirection: side === 'buy' ? 'bullish' : 'bearish',
         signalConfidence: confidence,
         createdAt: new Date().toISOString(),
       };
@@ -130,29 +132,24 @@ export function AutoTradePanel() {
         : parseFloat((-(Math.random() * 300 + 10)).toFixed(2));
 
       const activityWithPnl = { ...newActivity, pnl };
-      setAutoTradeActivity(prev => {
-        const updated = [activityWithPnl, ...prev].slice(0, 50);
-        // Persist activity to localStorage
-        try { localStorage.setItem('fovi_autotrade_activity', JSON.stringify(updated)); } catch { /* */ }
-        return updated;
-      });
+      const updatedActivity = [activityWithPnl, ...autoTradeActivity].slice(0, 50);
+      try { localStorage.setItem('fovi_autotrade_activity', JSON.stringify(updatedActivity)); } catch { /* */ }
+      setAutoTradeActivity(updatedActivity);
 
       // Update stats and persist
-      setBotConfig(prev => {
-        const newTrades = prev.totalTrades + 1;
-        const newPnl = prev.totalPnl + pnl;
-        const wins = Math.round((prev.winRate / 100) * prev.totalTrades) + (won ? 1 : 0);
-        const newWinRate = Math.round((wins / newTrades) * 100);
-        const updated = {
-          ...prev,
-          totalTrades: newTrades,
-          totalPnl: parseFloat(newPnl.toFixed(2)),
-          winRate: newWinRate,
-          lastTradeAt: new Date().toISOString(),
-        };
-        try { localStorage.setItem('fovi_autotrade_config', JSON.stringify(updated)); } catch { /* */ }
-        return updated;
-      });
+      const newTrades = botConfig.totalTrades + 1;
+      const newPnl = botConfig.totalPnl + pnl;
+      const wins = Math.round((botConfig.winRate / 100) * botConfig.totalTrades) + (won ? 1 : 0);
+      const newWinRate = Math.round((wins / newTrades) * 100);
+      const updatedConfig = {
+        ...botConfig,
+        totalTrades: newTrades,
+        totalPnl: parseFloat(newPnl.toFixed(2)),
+        winRate: newWinRate,
+        lastTradeAt: new Date().toISOString(),
+      };
+      try { localStorage.setItem('fovi_autotrade_config', JSON.stringify(updatedConfig)); } catch { /* */ }
+      setBotConfig(updatedConfig);
 
       // Auto-open activity log on first trade
       setShowActivity(true);
@@ -564,7 +561,7 @@ export function AutoTradePanel() {
 // ============================================================
 function ActivityRow({ activity }: { activity: AutoTradeActivity & { pnl?: number } }) {
   const isBuy = activity.side === 'buy';
-  const pnl = (activity as Record<string, unknown>).pnl as number | undefined;
+  const pnl = activity.pnl;
   const pnlPositive = pnl != null && pnl >= 0;
   const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; bg: string; label: string }> = {
     filled: { icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10', label: 'Filled' },
