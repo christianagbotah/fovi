@@ -1,20 +1,21 @@
 // ============================================================
 // GET /api/trading/engine/bots
-// Phase 1 CR1: P0-4 — enforceInternalAuth, remove demo bot fallback.
-// No DEMO_USER_ID / ensureDemoUser.
+// CR4.3A R7 Task 4: Replace isExplicitlyDemo with canonical
+//   evaluateEngineAccountEligibility. Add credential fields
+//   to Prisma select for verification, strip before response.
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { enforceInternalAuth, isExplicitlyDemo, logSecurityEvent } from '@/lib/trading-policy';
+import { enforceInternalAuth, logSecurityEvent } from '@/lib/trading-policy';
+import { evaluateEngineAccountEligibility } from '@/lib/engine-eligibility';
 
 export async function GET(req: Request) {
-  // ── P0-4: Require internal service auth ──
+  // ── Require internal service auth ──
   const authError = enforceInternalAuth(req);
   if (authError) return authError;
 
   if (!db || !hasModel('bot')) {
-    // P0-4: Return 503, NOT demo bots
     return NextResponse.json(
       {
         error: 'Bot data is temporarily unavailable.',
@@ -27,6 +28,7 @@ export async function GET(req: Request) {
 
   try {
     // Fetch all running+enabled bots with their account info
+    // Include credential fields for eligibility verification
     const bots = await db.bot.findMany({
       where: {
         enabled: true,
@@ -41,18 +43,45 @@ export async function GET(req: Request) {
             isDemo: true,
             balance: true,
             isActive: true,
+            apiKey: true,
+            apiSecret: true,
+            passphrase: true,
           },
         },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    // Filter to only bots with active accounts AND explicitly demo accounts
-    const active = bots.filter(
-      (b) => b.account?.isActive !== false && b.account && isExplicitlyDemo(b.account),
-    );
+    // Filter using canonical eligibility check
+    const active = bots.filter((b) => {
+      if (!b.account) return false;
+      if (b.account.isActive !== true) return false;
+      const result = evaluateEngineAccountEligibility({
+        broker: b.account.broker,
+        accountType: b.account.accountType,
+        isDemo: b.account.isDemo,
+        isActive: b.account.isActive,
+        apiKey: b.account.apiKey,
+        apiSecret: b.account.apiSecret,
+        passphrase: b.account.passphrase,
+      });
+      return result.eligible;
+    });
 
-    return NextResponse.json(active);
+    // Strip credential fields from response — map to safe DTOs
+    const safe = active.map((b) => ({
+      ...b,
+      account: b.account ? {
+        id: b.account.id,
+        broker: b.account.broker,
+        accountType: b.account.accountType,
+        isDemo: b.account.isDemo,
+        balance: b.account.balance,
+        isActive: b.account.isActive,
+      } : null,
+    }));
+
+    return NextResponse.json(safe);
   } catch (error) {
     logSecurityEvent({
       eventType: 'ENGINE_BOTS_ERROR',

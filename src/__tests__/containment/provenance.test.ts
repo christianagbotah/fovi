@@ -1,8 +1,10 @@
 // ============================================================
-// provenance.test.ts — CR4.1 Behavioral tests for shared provenance model
+// provenance.test.ts — CR4.3A R7 Behavioral tests for shared provenance model
 // Tests parseProvenance, validateProvenanceForEngine from src/lib/provenance.ts
 // and parseResponseProvenance, parseSinglePriceResponse, parseCandleResponse,
 // validateEngineProvenance from mini-services/auto-trade-engine/market-provenance.ts
+//
+// CR4.3A R7: All tests updated for mandatory observedAt, Blocker A/B/C.
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -20,6 +22,8 @@ import {
   validateEngineProvenance,
 } from '../../../mini-services/auto-trade-engine/market-provenance';
 
+const VALID_OBSERVED_AT = '2025-01-15T12:00:00.000Z';
+
 describe('Shared Provenance Model — parseProvenance', () => {
   // ── Positive control: live headers+body match → live ──
   it('matching live headers + body → environment=live, isSynthetic=false', () => {
@@ -27,16 +31,19 @@ describe('Shared Provenance Model — parseProvenance', () => {
       'x-environment': 'live',
       'x-synthetic': 'false',
       'x-data-source': 'broker-api',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       environment: 'live',
       isSynthetic: false,
       source: 'broker-api',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseProvenance(headers, body);
     expect(result.environment).toBe('live');
     expect(result.isSynthetic).toBe(false);
     expect(result.source).toBe('broker-api');
+    expect(result.observedAt).toBe(VALID_OBSERVED_AT);
   });
 
   // ── Positive control: demo headers+body match → demo ──
@@ -45,48 +52,61 @@ describe('Shared Provenance Model — parseProvenance', () => {
       'x-environment': 'demo',
       'x-synthetic': 'true',
       'x-data-source': 'fovi-demo-generator',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       environment: 'demo',
       isSynthetic: true,
       source: 'fovi-demo-generator',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseProvenance(headers, body);
     expect(result.environment).toBe('demo');
     expect(result.isSynthetic).toBe(true);
     expect(result.source).toBe('fovi-demo-generator');
+    expect(result.observedAt).toBe(VALID_OBSERVED_AT);
   });
 
-  // ── Missing provenance entirely → unknown ──
+  // ── Missing provenance entirely → unknown (observedAt checked first) ──
   it('missing provenance (no headers, no body) → environment=unknown', () => {
     const headers = new Headers();
     const result = parseProvenance(headers);
     expect(result.environment).toBe('unknown');
+    expect(result.source).toBe('missing-observedAt');
   });
 
   // ── Mismatched headers/body → unknown (fail closed) ──
-  it('mismatched headers vs body environment → unknown', () => {
+  it('mismatched headers vs body environment → unknown (Blocker B)', () => {
     const headers = new Headers({
       'x-environment': 'live',
       'x-synthetic': 'false',
+      'x-data-source': 'broker-api',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       environment: 'demo',
       isSynthetic: true,
       source: 'fovi-demo-generator',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseProvenance(headers, body);
     expect(result.environment).toBe('unknown');
+    expect(result.source).toBe('header-body-disagreement-environment');
   });
 
   // ── Malformed environment value → unknown ──
   it('malformed environment value (e.g. "staging") → unknown', () => {
     const headers = new Headers({
       'x-environment': 'staging',
+      'x-observed-at': VALID_OBSERVED_AT,
+      'x-synthetic': 'false',
+      'x-data-source': 'test',
     });
     const body = {
       environment: 'staging',
       isSynthetic: false,
+      source: 'test',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseProvenance(headers, body);
     expect(result.environment).toBe('unknown');
@@ -97,6 +117,7 @@ describe('Shared Provenance Model — parseProvenance', () => {
     const headers = new Headers({
       'x-environment': 'live',
       'x-synthetic': 'false',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       price: 42000,
@@ -104,6 +125,7 @@ describe('Shared Provenance Model — parseProvenance', () => {
         environment: 'live',
         isSynthetic: false,
         source: 'exchange',
+        observedAt: VALID_OBSERVED_AT,
       },
     };
     const result = parseProvenance(headers, body);
@@ -112,16 +134,19 @@ describe('Shared Provenance Model — parseProvenance', () => {
     expect(result.source).toBe('exchange');
   });
 
-  // ── Mismatched nested provenance → unknown ──
+  // ── Mismatched nested provenance → unknown (Blocker B) ──
   it('mismatched header vs nested body.provenance → unknown', () => {
     const headers = new Headers({
       'x-environment': 'demo',
+      'x-synthetic': 'true',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       price: 42000,
       provenance: {
         environment: 'live',
         isSynthetic: false,
+        observedAt: VALID_OBSERVED_AT,
       },
     };
     const result = parseProvenance(headers, body);
@@ -171,11 +196,13 @@ describe('Engine parseResponseProvenance — matching headers+body', () => {
       'x-environment': 'live',
       'x-synthetic': 'false',
       'x-data-source': 'broker-api',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       environment: 'live',
       isSynthetic: false,
       source: 'broker-api',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('live');
@@ -188,43 +215,55 @@ describe('Engine parseResponseProvenance — matching headers+body', () => {
       'x-environment': 'demo',
       'x-synthetic': 'true',
       'x-data-source': 'fovi-demo-generator',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       environment: 'demo',
       isSynthetic: true,
       source: 'fovi-demo-generator',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('demo');
     expect(result.isSynthetic).toBe(true);
   });
 
-  it('missing provenance entirely → environment=unknown', () => {
+  it('missing provenance entirely → environment=unknown (missing-observedAt)', () => {
     const headers = new Headers();
     const body = { price: 42000 };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('unknown');
-    expect(result.source).toBe('missing');
+    expect(result.source).toBe('missing-observedAt');
   });
 
-  it('mismatched header vs body → environment=unknown', () => {
-    const headers = new Headers({ 'x-environment': 'live', 'x-data-source': 'header-src' });
-    const body = { environment: 'demo', isSynthetic: true, source: 'body-src' };
+  it('mismatched header vs body → environment=unknown (Blocker B)', () => {
+    const headers = new Headers({
+      'x-environment': 'live',
+      'x-data-source': 'header-src',
+      'x-synthetic': 'false',
+      'x-observed-at': VALID_OBSERVED_AT,
+    });
+    const body = { environment: 'demo', isSynthetic: true, source: 'body-src', observedAt: VALID_OBSERVED_AT };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('unknown');
-    expect(result.source).toBe('mismatch');
+    expect(result.source).toBe('header-body-disagreement-environment');
   });
 
   it('malformed environment → environment=unknown', () => {
-    const headers = new Headers({ 'x-environment': 'prod' });
-    const body = { environment: 'prod' };
+    const headers = new Headers({
+      'x-environment': 'prod',
+      'x-observed-at': VALID_OBSERVED_AT,
+      'x-synthetic': 'false',
+      'x-data-source': 'test',
+    });
+    const body = { environment: 'prod', isSynthetic: false, source: 'test', observedAt: VALID_OBSERVED_AT };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('unknown');
   });
 
   it('accepts plain Record headers (not only Headers instance)', () => {
-    const headers = { 'x-environment': 'live', 'x-synthetic': 'false', 'x-data-source': 'record-src' };
-    const body = { environment: 'live', isSynthetic: false, source: 'record-src' };
+    const headers = { 'x-environment': 'live', 'x-synthetic': 'false', 'x-data-source': 'record-src', 'x-observed-at': VALID_OBSERVED_AT };
+    const body = { environment: 'live', isSynthetic: false, source: 'record-src', observedAt: VALID_OBSERVED_AT };
     const result = parseResponseProvenance(headers, body);
     expect(result.environment).toBe('live');
   });
@@ -236,12 +275,14 @@ describe('Engine parseSinglePriceResponse', () => {
       'x-environment': 'demo',
       'x-synthetic': 'true',
       'x-data-source': 'fovi-demo-generator',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       price: 67500,
       environment: 'demo',
       isSynthetic: true,
       source: 'fovi-demo-generator',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseSinglePriceResponse(headers, body);
     expect(result).not.toBeNull();
@@ -255,12 +296,14 @@ describe('Engine parseSinglePriceResponse', () => {
       'x-environment': 'live',
       'x-synthetic': 'false',
       'x-data-source': 'exchange',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       price: 42000,
       environment: 'live',
       isSynthetic: false,
       source: 'exchange',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseSinglePriceResponse(headers, body);
     expect(result).not.toBeNull();
@@ -269,16 +312,14 @@ describe('Engine parseSinglePriceResponse', () => {
     expect(result!.isSynthetic).toBe(false);
   });
 
-  it('missing provenance on valid price → returns result with environment=unknown (price is usable but origin is unknown)', () => {
+  it('missing provenance on valid price → returns result with environment=unknown', () => {
     const headers = new Headers();
     const body = { price: 42000 };
     const result = parseSinglePriceResponse(headers, body);
-    // parseSinglePriceResponse returns null ONLY when price is null/<=0.
-    // With valid price but missing provenance, it returns the price with unknown provenance.
     expect(result).not.toBeNull();
     expect(result!.price).toBe(42000);
     expect(result!.environment).toBe('unknown');
-    expect(result!.source).toBe('missing');
+    expect(result!.source).toBe('missing-observedAt');
   });
 
   it('price <= 0 returns null regardless of provenance', () => {
@@ -295,8 +336,10 @@ describe('Engine parseSinglePriceResponse', () => {
     const headers = new Headers({
       'x-environment': 'live',
       'x-synthetic': 'false',
+      'x-data-source': 'test',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
-    const body = { currentPrice: 150.25, environment: 'live', isSynthetic: false, source: 'test' };
+    const body = { currentPrice: 150.25, environment: 'live', isSynthetic: false, source: 'test', observedAt: VALID_OBSERVED_AT };
     const result = parseSinglePriceResponse(headers, body);
     expect(result).not.toBeNull();
     expect(result!.price).toBe(150.25);
@@ -314,12 +357,14 @@ describe('Engine parseCandleResponse', () => {
       'x-environment': 'live',
       'x-synthetic': 'false',
       'x-data-source': 'exchange',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       candles: sampleCandles,
       environment: 'live',
       isSynthetic: false,
       source: 'exchange',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseCandleResponse(headers, body);
     expect(result).not.toBeNull();
@@ -333,12 +378,14 @@ describe('Engine parseCandleResponse', () => {
       'x-environment': 'demo',
       'x-synthetic': 'true',
       'x-data-source': 'fovi-demo-generator',
+      'x-observed-at': VALID_OBSERVED_AT,
     });
     const body = {
       candles: sampleCandles,
       environment: 'demo',
       isSynthetic: true,
       source: 'fovi-demo-generator',
+      observedAt: VALID_OBSERVED_AT,
     };
     const result = parseCandleResponse(headers, body);
     expect(result).not.toBeNull();
@@ -365,12 +412,10 @@ describe('Engine parseCandleResponse', () => {
     const headers = new Headers();
     const body = { candles: sampleCandles };
     const result = parseCandleResponse(headers, body);
-    // parseCandleResponse calls parseResponseProvenance on the body,
-    // and returns the candles even if provenance is unknown.
-    // The candles are returned but provenance is unknown.
     expect(result).not.toBeNull();
     expect(result!.candles).toHaveLength(2);
     expect(result!.provenance.environment).toBe('unknown');
+    expect(result!.provenance.source).toBe('missing-observedAt');
   });
 });
 
@@ -380,6 +425,7 @@ describe('Engine validateEngineProvenance', () => {
       environment: 'live',
       isSynthetic: false,
       source: 'broker-api',
+      observedAt: VALID_OBSERVED_AT,
     });
     expect(result.valid).toBe(true);
   });
@@ -389,6 +435,7 @@ describe('Engine validateEngineProvenance', () => {
       environment: 'demo',
       isSynthetic: true,
       source: 'fovi-demo-generator',
+      observedAt: VALID_OBSERVED_AT,
     });
     expect(result.valid).toBe(true);
   });
@@ -408,6 +455,7 @@ describe('Engine validateEngineProvenance', () => {
       environment: 'demo',
       isSynthetic: false,
       source: 'test',
+      observedAt: VALID_OBSERVED_AT,
     });
     expect(result.valid).toBe(false);
     expect(result.reason).toContain('synthetic');
@@ -418,6 +466,7 @@ describe('Engine validateEngineProvenance', () => {
       environment: 'live',
       isSynthetic: true,
       source: 'test',
+      observedAt: VALID_OBSERVED_AT,
     });
     expect(result.valid).toBe(false);
     expect(result.reason).toContain('synthetic');

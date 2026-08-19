@@ -1,23 +1,17 @@
 // ============================================================
 // Fovi Balance/Position Sync Service — Thin Startup Wrapper
-// Phase 1 CR4:
+// CR4.3A R7:
 //   Pure logic lives in core.ts. This file is only startup glue:
 //   DB connection, Bun.serve, env vars, signal handlers.
+//   Uses createBalanceSyncHandler from core.ts for testable routing.
 //   /sync unconditionally returns 403 during Phase 1.
 // ============================================================
 
 import postgres from 'postgres';
-import {
-  checkInternalAuth,
-  authErrorResponse,
-  getActiveAccounts,
-  runSyncCycle,
-  type SyncResult,
-} from './core';
+import { createBalanceSyncHandler } from './core';
 
 const PORT = 3013;
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
-const NEXTJS_BASE = 'http://localhost:3002';
 const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET || '';
 
 function envBool(name: string): boolean {
@@ -40,55 +34,19 @@ if (databaseUrl.startsWith('postgresql://') || databaseUrl.startsWith('postgres:
   console.warn('[BalanceSync] DATABASE_URL is not PostgreSQL — sync cycles will be skipped.');
 }
 
-// ── Thin Bun.serve — no timers, no periodic sync ──
+// ── Thin Bun.serve — uses handler from core.ts ──
+const handler = createBalanceSyncHandler({
+  internalServiceSecret: INTERNAL_SERVICE_SECRET,
+  balanceSyncEnabled: BALANCE_SYNC_ENABLED,
+  syncIntervalMs: SYNC_INTERVAL_MS,
+  port: PORT,
+  dbReady,
+});
+
 const server = Bun.serve({
   port: PORT,
   hostname: '127.0.0.1',
-  fetch(req: Request): Response {
-    const url = new URL(req.url);
-
-    if (url.pathname === '/health' && req.method === 'GET') {
-      return Response.json({
-        status: 'ok', service: 'fovi-balance-sync', port: PORT,
-        dbReady, balanceSyncEnabled: BALANCE_SYNC_ENABLED,
-        uptime: process.uptime(), timestamp: new Date().toISOString(),
-      });
-    }
-
-    if (url.pathname === '/sync' && req.method === 'POST') {
-      const auth = checkInternalAuth(
-        (name: string) => req.headers.get(name),
-        INTERNAL_SERVICE_SECRET,
-      );
-      if (!auth.valid) return authErrorResponse(auth.status);
-
-      // Phase 1: UNCONDITIONAL 403 — do NOT check BALANCE_SYNC_ENABLED, do NOT call runSyncCycle
-      return Response.json(
-        { triggered: false, code: 'PHASE1_LIVE_TRADING_DISABLED', remediationPhase: 'containment' },
-        { status: 403 },
-      );
-    }
-
-    if (url.pathname === '/status' && req.method === 'GET') {
-      const auth = checkInternalAuth(
-        (name: string) => req.headers.get(name),
-        INTERNAL_SERVICE_SECRET,
-      );
-      if (!auth.valid) return authErrorResponse(auth.status);
-
-      const statusPayload: Record<string, unknown> = {
-        cyclesCompleted: 0, intervalMs: SYNC_INTERVAL_MS,
-        port: PORT, balanceSyncEnabled: BALANCE_SYNC_ENABLED,
-      };
-      if (!BALANCE_SYNC_ENABLED) {
-        statusPayload.reason = 'Phase 1: Balance sync is disabled during containment.';
-        statusPayload.remediationPhase = 'containment';
-      }
-      return Response.json(statusPayload);
-    }
-
-    return new Response('Not Found', { status: 404 });
-  },
+  fetch: handler,
 });
 
 console.log(`[BalanceSync] Service started on 127.0.0.1:${PORT}`);

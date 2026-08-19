@@ -1,9 +1,10 @@
 // ============================================================
 // engine-core.ts — Startup-free core module for auto-trade-engine
-// Phase 1 CR4.2:
+// CR4.3A R7:
 //   Pure functions and injectable deps. No Bun.serve, no global timers,
 //   no process event handlers, no top-level side effects.
 //   Importable without triggering any server startup.
+//   isExplicitlyDemoAccount now delegates to canonical engine-eligibility.
 // ============================================================
 
 import { type CandleData, type TradeSignal } from './strategies';
@@ -13,6 +14,8 @@ import {
   validateEngineProvenance,
 } from './market-provenance';
 
+import { evaluateEngineAccountEligibility, type EngineAccountDescriptor } from '../../src/lib/engine-eligibility';
+
 export {
   parseResponseProvenance,
   validateEngineProvenance,
@@ -21,6 +24,7 @@ export {
   type PriceWithProvenance,
   type CandlesWithProvenance,
 } from './market-provenance';
+
 
 // ============================================================
 // Types
@@ -37,7 +41,7 @@ export interface FetchCandlesDeps {
 }
 
 // ============================================================
-// isExplicitlyDemoAccount — 6-field demo invariant predicate
+// isExplicitlyDemoAccount — delegates to canonical engine-eligibility
 // ============================================================
 
 export function isExplicitlyDemoAccount(
@@ -45,19 +49,26 @@ export function isExplicitlyDemoAccount(
     broker: string;
     accountType: string;
     isDemo: boolean | null;
+    isActive?: boolean | null;
     apiKey: string | null;
     apiSecret: string | null;
     passphrase: string | null;
   } | null,
 ): boolean {
-  if (!account) return false;
-  return account.broker === 'demo'
-    && account.accountType === 'demo'
-    && account.isDemo === true
-    && account.apiKey === null
-    && account.apiSecret === null
-    && account.passphrase === null;
+  const result = evaluateEngineAccountEligibility(account ? {
+    broker: account.broker,
+    accountType: account.accountType,
+    isDemo: account.isDemo,
+    isActive: account.isActive ?? null,
+    apiKey: account.apiKey,
+    apiSecret: account.apiSecret,
+    passphrase: account.passphrase,
+  } : null);
+  return result.eligible;
 }
+
+// Re-export canonical eligibility for engine modules that need it
+export { evaluateEngineAccountEligibility, type EngineAccountDescriptor, type EligibilityResult } from '../../src/lib/engine-eligibility';
 
 // ============================================================
 // Market Data Constants
@@ -113,7 +124,7 @@ export { roundPrice };
 export async function fetchMarketPrice(
   symbol: string,
   deps: FetchMarketPriceDeps,
-): Promise<{ price: number; isDemoData: boolean; environment: 'live' | 'demo' | 'unknown'; source: string }> {
+): Promise<{ price: number; isDemoData: boolean; environment: 'live' | 'demo' | 'unknown'; source: string; observedAt: string }> {
   const fetchFn = deps.fetchFn || fetch;
 
   // Layer 1: Next.js market API with provenance parsing
@@ -133,6 +144,7 @@ export async function fetchMarketPrice(
             isDemoData: parsed.environment === 'demo',
             environment: parsed.environment,
             source: parsed.source,
+            observedAt: parsed.observedAt!,
           };
         }
         // Unknown/malformed/mismatched provenance — reject, fall through
@@ -152,23 +164,26 @@ export async function fetchMarketPrice(
       if (res.ok) {
         const data = await res.json() as Record<string, { usd?: number }>;
         const price = data[id]?.usd;
-        if (price && price > 0) return { price, isDemoData: false, environment: 'live', source: 'coingecko' };
+        if (price && price > 0) {
+          const observedAt = new Date().toISOString();
+          return { price, isDemoData: false, environment: 'live', source: 'coingecko', observedAt };
+        }
       }
     } catch { /* fall through */ }
   }
 
   // Layer 3: Demo price
-  return { price: getDemoPrice(symbol), isDemoData: true, environment: 'demo', source: 'fovi-demo-generator' };
+  return { price: getDemoPrice(symbol), isDemoData: true, environment: 'demo', source: 'fovi-demo-generator', observedAt: new Date().toISOString() };
 }
 
 // ============================================================
 // fetchCandles — Candle fetch with module-level cache (TTL=45s)
 // ============================================================
 
-const candleCache = new Map<string, { result: { candles: CandleData[]; provenance: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string } }; ts: number }>();
+const candleCache = new Map<string, { result: { candles: CandleData[]; provenance: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string } }; ts: number }>();
 const CANDLE_CACHE_TTL = 45_000;
 
-export async function fetchCoinGeckoOHLC(symbol: string, limit: number, fetchFn?: typeof fetch): Promise<CandleData[] | null> {
+export async function fetchCoinGeckoOHLC(symbol: string, limit: number, fetchFn?: typeof fetch): Promise<{ candles: CandleData[]; observedAt: string } | null> {
   const coinId = COINGECKO_IDS[symbol.toUpperCase()];
   if (!coinId) return null;
   const fn = fetchFn || fetch;
@@ -185,15 +200,16 @@ export async function fetchCoinGeckoOHLC(symbol: string, limit: number, fetchFn?
       timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: 0,
     }));
 
+    const observedAt = new Date().toISOString();
     console.log(`[EngineCore] Fetched ${candles.length} real OHLC candles for ${symbol} from CoinGecko`);
-    return candles;
+    return { candles, observedAt };
   } catch (err) {
     console.warn(`[EngineCore] CoinGecko OHLC failed for ${symbol}:`, err instanceof Error ? err.message : err);
     return null;
   }
 }
 
-export async function fetchNextJSCandles(symbol: string, limit: number, nextjsApi: string, fetchFn?: typeof fetch): Promise<CandleData[] | null> {
+export async function fetchNextJSCandles(symbol: string, limit: number, nextjsApi: string, fetchFn?: typeof fetch): Promise<{ candles: CandleData[]; provenance: { environment: 'live'; isSynthetic: boolean; source: string; observedAt: string } } | null> {
   const fn = fetchFn || fetch;
 
   try {
@@ -219,14 +235,22 @@ export async function fetchNextJSCandles(symbol: string, limit: number, nextjsAp
     }
 
     console.log(`[EngineCore] Fetched ${parsed.candles.length} live candles for ${symbol} from Next.js API`);
-    return parsed.candles;
+    return {
+      candles: parsed.candles,
+      provenance: {
+        environment: parsed.provenance.environment as 'live',
+        isSynthetic: parsed.provenance.isSynthetic,
+        source: parsed.provenance.source,
+        observedAt: parsed.provenance.observedAt!,
+      },
+    };
   } catch (err) {
     console.warn(`[EngineCore] Next.js candle fetch failed for ${symbol}:`, err instanceof Error ? err.message : err);
     return null;
   }
 }
 
-export function generateDemoCandles(symbol: string, limit: number): CandleData[] {
+export function generateDemoCandles(symbol: string, limit: number): { candles: CandleData[]; provenance: { environment: 'demo'; isSynthetic: true; source: string; observedAt: string } } {
   const base = DEMO_BASE_PRICES[symbol] || 100;
   const now = Date.now();
   const candles: CandleData[] = [];
@@ -252,15 +276,19 @@ export function generateDemoCandles(symbol: string, limit: number): CandleData[]
     price = close;
   }
 
+  const observedAt = new Date().toISOString();
   console.log(`[EngineCore] Generated ${candles.length} demo candles for ${symbol} (base=${base})`);
-  return candles;
+  return {
+    candles,
+    provenance: { environment: 'demo', isSynthetic: true, source: 'fovi-demo-generator', observedAt },
+  };
 }
 
 export async function fetchCandles(
   symbol: string,
   limit: number = 100,
   deps: FetchCandlesDeps,
-): Promise<{ candles: CandleData[]; provenance: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string } }> {
+): Promise<{ candles: CandleData[]; provenance: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string } }> {
   const cacheKey = `${symbol}_${limit}`;
   const cached = candleCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CANDLE_CACHE_TTL) {
@@ -268,28 +296,27 @@ export async function fetchCandles(
   }
 
   const fetchFn = deps.fetchFn || fetch;
-  const demoProvenance = { environment: 'demo' as const, isSynthetic: true, source: 'fovi-demo-generator' };
 
   // Try real sources: CoinGecko for crypto first, then Next.js API
   if (isCryptoSymbol(symbol)) {
     const cg = await fetchCoinGeckoOHLC(symbol, limit, fetchFn);
-    if (cg && cg.length >= 10) {
-      const result = { candles: cg, provenance: { environment: 'live' as const, isSynthetic: false, source: 'coingecko' } };
+    if (cg && cg.candles.length >= 10) {
+      const result = { candles: cg.candles, provenance: { environment: 'live' as const, isSynthetic: false, source: 'coingecko', observedAt: cg.observedAt } };
       candleCache.set(cacheKey, { result, ts: Date.now() });
       return result;
     }
   }
 
   const nj = await fetchNextJSCandles(symbol, limit, deps.nextjsApi, fetchFn);
-  if (nj && nj.length >= 10) {
-    const result = { candles: nj, provenance: { environment: 'live' as const, isSynthetic: false, source: 'nextjs-market-api' } };
+  if (nj && nj.candles.length >= 10) {
+    const result = { candles: nj.candles, provenance: { environment: 'live' as const, isSynthetic: false, source: 'nextjs-market-api', observedAt: nj.provenance.observedAt } };
     candleCache.set(cacheKey, { result, ts: Date.now() });
     return result;
   }
 
   // Demo fallback
-  const demoCandles = generateDemoCandles(symbol, limit);
-  const result = { candles: demoCandles, provenance: demoProvenance };
+  const demo = generateDemoCandles(symbol, limit);
+  const result = { candles: demo.candles, provenance: demo.provenance };
   candleCache.set(cacheKey, { result, ts: Date.now() });
   return result;
 }

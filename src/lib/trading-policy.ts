@@ -1,13 +1,16 @@
 // ============================================================
 // trading-policy.ts — Central server-side trading policy
-// Phase 1: Emergency Containment (Correction Round 3)
+// CR4.3A R7:
 //   - UNCONDITIONAL paper/demo-only: no env var can override
 //   - Genuine timing-safe comparison: SHA-256 + timingSafeEqual
+//   - Demo provenance uses factory functions (fresh timestamps)
+//   - LEGACY isExplicitlyDemo unchanged (used in non-engine routes)
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { createHash, timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { createDemoProvenance, provenanceHeaders } from './provenance';
 
 // ── Environment controls ──
 // All default to false. These variables EXIST for future Phase 2+ use.
@@ -81,6 +84,9 @@ function containmentBody(code: string, message: string, correlationId: string): 
 
 /**
  * Check if an account is explicitly a demo account.
+ * LEGACY 3-field check — used in non-engine route handlers.
+ * For engine eligibility, use evaluateEngineAccountEligibility from engine-eligibility.ts.
+ *
  * ALL of the following must be true:
  *   - broker === 'demo'
  *   - accountType === 'demo'
@@ -304,14 +310,28 @@ export function safeAccountDTOs(accounts: Record<string, unknown>[]): Record<str
   return accounts.map(safeAccountDTO);
 }
 
-// ── Demo provenance marker ──
+// ── Demo provenance marker (fresh factory) ──
 
+/**
+ * Get a fresh demo provenance object with current timestamp.
+ * Replaces the stale DEMO_PROVENANCE constant.
+ */
+export function getDemoProvenance() {
+  return createDemoProvenance();
+}
+
+/**
+ * @deprecated Use getDemoProvenance() for fresh timestamps.
+ */
 export const DEMO_PROVENANCE = {
   environment: 'demo',
   isSynthetic: true,
   source: 'fovi-demo-generator',
 } as const;
 
+/**
+ * @deprecated Use provenanceHeaders(createDemoProvenance()) for fresh headers.
+ */
 export const DEMO_PROVENANCE_HEADER = {
   'x-environment': 'demo',
   'x-synthetic': 'true',
@@ -321,20 +341,17 @@ export const DEMO_PROVENANCE_HEADER = {
 
 /**
  * Create a demo-tagged JSON response.
- * Merges data with DEMO_PROVENANCE and includes provenance headers.
+ * Uses createDemoProvenance() for fresh timestamps each call.
+ * Merges data with provenance and includes provenance headers.
  */
 export function demoResponse(
   data: Record<string, unknown>,
   _req?: Request,
   statusCode?: number,
 ): NextResponse {
-  const merged = { ...data, ...DEMO_PROVENANCE };
-  const headers: Record<string, string> = {
-    'x-environment': 'demo',
-    'x-synthetic': 'true',
-    'x-data-source': 'fovi-demo-generator',
-    'x-demo': 'true',
-  };
+  const prov = createDemoProvenance();
+  const merged = { ...data, environment: prov.environment, isSynthetic: prov.isSynthetic, source: prov.source, observedAt: prov.observedAt };
+  const headers = provenanceHeaders(prov);
   if (statusCode) {
     return NextResponse.json(merged, { status: statusCode, headers });
   }

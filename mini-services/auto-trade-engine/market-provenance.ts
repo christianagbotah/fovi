@@ -1,7 +1,9 @@
 // ============================================================
 // market-provenance.ts — Startup-free provenance parsing for engine
-// Phase 1 CR4.1:
-//   Exports pure functions for parsing provenance from HTTP responses.
+// CR4.3A R7:
+//   Blocker A: differentiate absent vs malformed fields.
+//   Blocker B: header/body disagreement MUST fail closed.
+//   Blocker C: no String()/Boolean() coercion on untrusted input.
 //   No Bun.serve, no global state, importable without side effects.
 // ============================================================
 
@@ -28,15 +30,38 @@ export interface CandlesWithProvenance {
   };
 }
 
+// ============================================================
+// Helpers
+// ============================================================
+
+function isValidObservedAt(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed === '') return false;
+  const ts = new Date(trimmed).getTime();
+  if (isNaN(ts) || ts <= 0) return false;
+  return true;
+}
+
+const UNKNOWN_RESULT = { environment: 'unknown' as const, isSynthetic: true, source: 'unknown' };
+
 /**
  * Parse provenance from HTTP response headers and optional JSON body.
  * Used by the engine to determine if market data is live, demo, or unknown.
  *
- * Fail-closed rules:
- * - Missing provenance → unknown
- * - Malformed values → unknown
- * - Header/body disagreement → unknown
- * - Non-empty array without provenance → unknown (NOT live)
+ * CR4.3A R7 Blocker A — differentiate absent vs malformed:
+ * - Use Object.prototype.hasOwnProperty.call(bodyProv, field) to detect presence
+ * - If field present but wrong type → REJECT immediately (unknown), no header fallback
+ * - If field genuinely absent → fall back to header
+ * - No Boolean()/String() coercion on isSynthetic/environment/source
+ *
+ * CR4.3A R7 Blocker B — header/body disagreement must fail closed:
+ * - If BOTH header and body provide a field, they MUST agree
+ * - If they disagree → UNKNOWN
+ *
+ * CR4.3A R7 Blocker C — no input coercion:
+ * - No String(bodyObserved) on already-validated string
+ * - observedAt is MANDATORY
  */
 export function parseResponseProvenance(
   headers: Headers | Record<string, string>,
@@ -47,65 +72,159 @@ export function parseResponseProvenance(
     return (headers as Record<string, string>)[name.toLowerCase()] ?? null;
   };
 
+  const hasOwn = (obj: unknown, key: string): boolean =>
+    Object.prototype.hasOwnProperty.call(obj, key);
+
   const headerEnv = getHeader('x-environment');
   const headerSynth = getHeader('x-synthetic');
   const headerSource = getHeader('x-data-source');
+  const headerObserved = getHeader('x-observed-at');
 
   // Extract body provenance (top-level or nested under 'provenance' key)
   const bodyProv = (body?.provenance as Record<string, unknown> | undefined) || body;
-  const bodyEnv = bodyProv?.environment as string | undefined;
-  const bodySynth = bodyProv?.isSynthetic;
-  const bodySource = bodyProv?.source as string | undefined;
-  const bodyObserved = bodyProv?.observedAt as string | undefined;
 
-  // CR4.2: Reject string isSynthetic (e.g. "true"/"false")
-  if (typeof bodySynth === 'string') {
-    return { environment: 'unknown', isSynthetic: true, source: 'string-isSynthetic' };
+  // ── observedAt (MANDATORY) ──
+  let observedAt: string | undefined;
+  let observedFromBody = false;
+  if (bodyProv) {
+    if (hasOwn(bodyProv, 'observedAt')) {
+      observedFromBody = true;
+      const bodyObserved = bodyProv.observedAt;
+      if (!isValidObservedAt(bodyObserved)) {
+        return { ...UNKNOWN_RESULT, source: 'invalid-observedAt' };
+      }
+      // Blocker C: no String() coercion — bodyObserved is already validated as string
+      observedAt = bodyObserved as string;
+    }
   }
-  // CR4.2: Reject missing isSynthetic entirely when nested body provenance exists
-  if (bodyProv !== body && bodySynth === undefined && !headerSynth) {
-    return { environment: 'unknown', isSynthetic: true, source: 'missing-isSynthetic' };
+  if (observedAt === undefined) {
+    if (headerObserved !== null) {
+      // Header is PRESENT — validate strictly
+      if (!isValidObservedAt(headerObserved)) {
+        return { ...UNKNOWN_RESULT, source: 'malformed-header-observedAt' };
+      }
+      observedAt = headerObserved;
+    }
+  }
+  if (observedAt === undefined) {
+    return { ...UNKNOWN_RESULT, source: 'missing-observedAt' };
+  }
+  // R9: Validate header unconditionally when present
+  if (headerObserved !== null && !isValidObservedAt(headerObserved)) {
+    return { ...UNKNOWN_RESULT, source: 'malformed-header-observedAt' };
+  }
+  // Blocker B: If BOTH header and body provided observedAt, they must agree
+  if (observedFromBody && headerObserved !== null && observedAt !== headerObserved) {
+    return { ...UNKNOWN_RESULT, source: 'header-body-disagreement-observedAt' };
   }
 
-  // Missing provenance entirely → unknown (before empty-source check)
-  if (!headerEnv && !bodyEnv) {
-    return { environment: 'unknown', isSynthetic: true, source: 'missing' };
+  // ── environment ──
+  let env: 'live' | 'demo' | 'unknown' = 'unknown';
+  let envFromBody = false;
+  if (bodyProv) {
+    if (hasOwn(bodyProv, 'environment')) {
+      const bodyEnv = bodyProv.environment;
+      if (typeof bodyEnv !== 'string') {
+        return { ...UNKNOWN_RESULT, source: 'malformed-environment' };
+      }
+      if (bodyEnv !== 'live' && bodyEnv !== 'demo') {
+        return { ...UNKNOWN_RESULT, source: 'invalid-environment' };
+      }
+      env = bodyEnv;
+      envFromBody = true;
+    }
+  }
+  // If body didn't have it, check header
+  if (headerEnv !== null) {
+    // Header is PRESENT — validate strictly: only 'live' or 'demo'
+    if (headerEnv !== 'live' && headerEnv !== 'demo') {
+      return { ...UNKNOWN_RESULT, source: 'malformed-header-environment' };
+    }
+  }
+  // Only fall back to header if header is present AND valid
+  // (header is absent case handled by env still being 'unknown')
+  if (env === 'unknown' && headerEnv !== null && (headerEnv === 'live' || headerEnv === 'demo')) {
+    env = headerEnv as 'live' | 'demo';
+  }
+  if (env === 'unknown') {
+    return { ...UNKNOWN_RESULT, source: 'missing-environment' };
+  }
+  // Blocker B: If BOTH header and body provided environment, they must agree
+  if (envFromBody && headerEnv !== null && env !== headerEnv) {
+    return { ...UNKNOWN_RESULT, source: 'header-body-disagreement-environment' };
   }
 
-  // CR4.2: Reject empty/whitespace-only source (provenance IS present but no source)
-  const effectiveSource = bodySource || headerSource || '';
-  if (!effectiveSource.trim()) {
-    return { environment: 'unknown', isSynthetic: true, source: 'empty-source' };
+  // ── isSynthetic ──
+  let synth: boolean | null = null;
+  let synthFromBody = false;
+  if (bodyProv) {
+    if (hasOwn(bodyProv, 'isSynthetic')) {
+      const bodySynth = bodyProv.isSynthetic;
+      if (typeof bodySynth !== 'boolean') {
+        return { ...UNKNOWN_RESULT, source: 'malformed-isSynthetic' };
+      }
+      synth = bodySynth;
+      synthFromBody = true;
+    }
   }
-  // CR4.2: Validate observedAt is a valid timestamp when provided
-  if (bodyObserved) {
-    const ts = new Date(bodyObserved).getTime();
-    if (isNaN(ts) || ts <= 0) {
-      return { environment: 'unknown', isSynthetic: true, source: 'invalid-observedAt' };
+  // If body didn't have it, check header
+  if (synth === null && headerSynth !== null) {
+    // Header is PRESENT — validate strictly: only 'true' or 'false'
+    if (headerSynth !== 'true' && headerSynth !== 'false') {
+      return { ...UNKNOWN_RESULT, source: 'malformed-header-isSynthetic' };
+    }
+    synth = headerSynth === 'true';
+  }
+  if (synth === null) {
+    return { ...UNKNOWN_RESULT, source: 'missing-isSynthetic' };
+  }
+  // R9: Validate header unconditionally when present
+  if (headerSynth !== null && headerSynth !== 'true' && headerSynth !== 'false') {
+    return { ...UNKNOWN_RESULT, source: 'malformed-header-isSynthetic' };
+  }
+  // Blocker B: If BOTH header and body provided isSynthetic, they must agree
+  if (synthFromBody && headerSynth !== null) {
+    const headerBool = headerSynth === 'true';
+    if (synth !== headerBool) {
+      return { ...UNKNOWN_RESULT, source: 'header-body-disagreement-isSynthetic' };
     }
   }
 
-  // Disagreement between headers and body → unknown (fail closed)
-  if (headerEnv && bodyEnv && headerEnv !== bodyEnv) {
-    return { environment: 'unknown', isSynthetic: true, source: 'mismatch' };
+  // ── source ──
+  let source: string | null = null;
+  let sourceFromBody = false;
+  if (bodyProv) {
+    if (hasOwn(bodyProv, 'source')) {
+      const bodySource = bodyProv.source;
+      if (typeof bodySource !== 'string') {
+        return { ...UNKNOWN_RESULT, source: 'malformed-source' };
+      }
+      if (bodySource.trim() === '') {
+        return { ...UNKNOWN_RESULT, source: 'empty-source' };
+      }
+      source = bodySource;
+      sourceFromBody = true;
+    }
   }
-  if (headerSynth && bodySynth !== undefined && headerSynth !== String(bodySynth)) {
-    return { environment: 'unknown', isSynthetic: true, source: 'mismatch' };
+  // If body didn't have it, check header
+  if (source === null && headerSource !== null) {
+    // Header is PRESENT — validate strictly: non-empty after trim
+    if (headerSource.trim() === '') {
+      return { ...UNKNOWN_RESULT, source: 'malformed-header-source' };
+    }
+    source = headerSource;
   }
-  if (headerSource && bodySource && headerSource !== bodySource) {
-    return { environment: 'unknown', isSynthetic: true, source: 'mismatch' };
+  if (source === null) {
+    return { ...UNKNOWN_RESULT, source: 'missing-source' };
   }
-
-  const env = (bodyEnv || headerEnv) as 'live' | 'demo' | 'unknown';
-
-  // Only 'live' and 'demo' are valid; everything else → unknown
-  if (env !== 'live' && env !== 'demo') {
-    return { environment: 'unknown', isSynthetic: true, source: 'invalid' };
+  // R9: Validate header unconditionally when present
+  if (headerSource !== null && headerSource.trim() === '') {
+    return { ...UNKNOWN_RESULT, source: 'malformed-header-source' };
   }
-
-  const synth = bodySynth !== undefined ? Boolean(bodySynth) : headerSynth === 'true';
-  const source = bodySource || headerSource || 'unknown';
-  const observedAt = bodyObserved;
+  // Blocker B: If BOTH header and body provided source, they must agree
+  if (sourceFromBody && headerSource !== null && source !== headerSource) {
+    return { ...UNKNOWN_RESULT, source: 'header-body-disagreement-source' };
+  }
 
   return { environment: env, isSynthetic: synth, source, observedAt };
 }
@@ -116,15 +235,29 @@ export function parseResponseProvenance(
  * Unknown provenance is ALWAYS rejected.
  */
 export function validateEngineProvenance(
-  prov: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string },
+  prov: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt?: string },
 ): { valid: boolean; reason?: string } {
-  // CR4.2: Explicitly reject known-bad CR4.2 sources
-  const CR42_REJECT_SOURCES = new Set(['string-isSynthetic', 'missing-isSynthetic', 'empty-source', 'invalid-observedAt']);
-  if (CR42_REJECT_SOURCES.has(prov.source)) {
-    return { valid: false, reason: `Provenance rejected by CR4.2 strict validation (source: ${prov.source})` };
+  // CR4.3A: Explicitly reject known-bad sources
+  const CR43A_REJECT_SOURCES = new Set([
+    'malformed-isSynthetic', 'missing-isSynthetic', 'empty-source',
+    'invalid-observedAt', 'missing-observedAt', 'malformed-environment',
+    'invalid-environment', 'malformed-source', 'missing-environment',
+    'missing-source', 'header-body-disagreement-environment',
+    'header-body-disagreement-isSynthetic', 'header-body-disagreement-source',
+    'header-body-disagreement-observedAt',
+    // R8: malformed header-specific rejection sources
+    'malformed-header-environment', 'malformed-header-isSynthetic',
+    'malformed-header-source', 'malformed-header-observedAt',
+  ]);
+  if (CR43A_REJECT_SOURCES.has(prov.source)) {
+    return { valid: false, reason: `Provenance rejected by CR4.3A strict validation (source: ${prov.source})` };
   }
   if (prov.environment === 'unknown') {
     return { valid: false, reason: `Provenance is unknown (source: ${prov.source}) — cannot determine data origin` };
+  }
+  // CR4.3A: observedAt validation
+  if (!prov.observedAt || !isValidObservedAt(prov.observedAt)) {
+    return { valid: false, reason: 'Provenance observedAt is missing or invalid' };
   }
   if (prov.environment === 'demo' && !prov.isSynthetic) {
     return { valid: false, reason: 'Demo environment data must be marked synthetic' };
@@ -167,10 +300,8 @@ export function parseCandleResponse(
   headers: Headers | Record<string, string>,
   body: Record<string, unknown>,
 ): CandlesWithProvenance | null {
-  // Candles may be nested under 'candles' key (new format) or be the array itself
   let candles = body.candles as unknown[] | undefined;
   if (!Array.isArray(candles)) {
-    // Try body itself as an array (legacy format)
     if (Array.isArray(body)) {
       candles = body as unknown[];
     } else {

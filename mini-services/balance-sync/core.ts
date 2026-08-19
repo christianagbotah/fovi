@@ -1,9 +1,10 @@
 // ============================================================
 // balance-sync/core.ts — Startup-free core module
-// Phase 1 CR4.1:
+// CR4.3A R7:
 //   All logic is in pure functions / exported stateless helpers.
 //   No Bun.serve, no global timers, no process event handlers.
 //   The server entrypoint (index.ts) is a thin wrapper.
+//   Added createBalanceSyncHandler() for testable route logic.
 //
 //   During Phase 1, getActiveAccounts() unconditionally returns [].
 //   No non-demo account can be selected or contacted.
@@ -144,4 +145,62 @@ export async function runSyncCycle(deps: SyncCycleDeps): Promise<SyncResult> {
   }
 
   return result;
+}
+
+// ============================================================
+// createBalanceSyncHandler — Testable route handler factory
+// ============================================================
+
+export function createBalanceSyncHandler(deps: {
+  internalServiceSecret: string;
+  balanceSyncEnabled: boolean;
+  syncIntervalMs: number;
+  port: number;
+  dbReady: boolean;
+}) {
+  return (req: Request): Response => {
+    const url = new URL(req.url);
+
+    if (url.pathname === '/health' && req.method === 'GET') {
+      return Response.json({
+        status: 'ok', service: 'fovi-balance-sync', port: deps.port,
+        dbReady: deps.dbReady, balanceSyncEnabled: deps.balanceSyncEnabled,
+        uptime: process.uptime(), timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (url.pathname === '/sync' && req.method === 'POST') {
+      const auth = checkInternalAuth(
+        (name: string) => req.headers.get(name),
+        deps.internalServiceSecret,
+      );
+      if (!auth.valid) return authErrorResponse(auth.status);
+
+      // Phase 1: UNCONDITIONAL 403 — do NOT check balanceSyncEnabled, do NOT call runSyncCycle
+      return Response.json(
+        { triggered: false, code: 'PHASE1_LIVE_TRADING_DISABLED', remediationPhase: 'containment' },
+        { status: 403 },
+      );
+    }
+
+    if (url.pathname === '/status' && req.method === 'GET') {
+      const auth = checkInternalAuth(
+        (name: string) => req.headers.get(name),
+        deps.internalServiceSecret,
+      );
+      if (!auth.valid) return authErrorResponse(auth.status);
+
+      const statusPayload: Record<string, unknown> = {
+        cyclesCompleted: 0, intervalMs: deps.syncIntervalMs,
+        port: deps.port, balanceSyncEnabled: deps.balanceSyncEnabled,
+      };
+      if (!deps.balanceSyncEnabled) {
+        statusPayload.reason = 'Phase 1: Balance sync is disabled during containment.';
+        statusPayload.remediationPhase = 'containment';
+      }
+      return Response.json(statusPayload);
+    }
+
+    return new Response('Not Found', { status: 404 });
+  };
 }

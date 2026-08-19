@@ -1,7 +1,8 @@
 // ============================================================
 // Fovi Auto-Trade Engine — Thin Startup Entry Point
-// Phase 1 CR4.2:
+// CR4.3A R7:
 //   Imports all core logic from engine-core.ts.
+//   processBot extracted to process-bot-core.ts with eligibility gate.
 //   This file ONLY contains: config, DB setup, Bun.serve,
 //   in-memory state, auth, SQL helpers, execution cycle, startup.
 //   No duplicate fetch/cache/eligibility logic.
@@ -17,7 +18,6 @@ import {
   type TradeSignal,
 } from './strategies';
 import {
-  isExplicitlyDemoAccount,
   fetchMarketPrice,
   fetchCandles,
   ALL_SYMBOLS,
@@ -25,6 +25,8 @@ import {
   type FetchCandlesDeps,
 } from './engine-core';
 import { validateEngineProvenance } from './market-provenance';
+import { processBotCore, type BotRow as ProcessBotRow, type ProcessBotDeps } from './process-bot-core';
+import { evaluateEngineAccountEligibility } from '../../src/lib/engine-eligibility';
 
 // ============================================================
 // Configuration
@@ -521,165 +523,25 @@ async function runCycle() {
 // Process a Single Bot
 // ============================================================
 
+// processBot is now delegated to process-bot-core.ts with eligibility gate
 async function processBot(config: BotRow) {
-  const tag = `[AutoTrade] [${config.id.slice(0, 8)}]`;
-  const strategyMap: Record<string, string> = { signal_based: 'balanced', scalping: 'momentum' };
-  const strategy = strategyMap[config.strategy] || config.strategy || 'balanced';
-  const risk = 'medium';
-  const accountBalance = config.account?.balance ?? 100000;
-  const maxPos = config.maxPositions || 5;
-  const isBotDemo = isExplicitlyDemoAccount(config.account);
-
-  // CR4.2: 6-field demo invariant check — reject non-demo bots
-  if (!isBotDemo) {
-    if (!config.account) {
-      console.log(`${tag} Skipping: no account attached`);
-      addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: 'No account attached — cannot process' });
-      return;
-    }
-    const a = config.account;
-    if (a.broker !== 'demo' || a.accountType !== 'demo' || a.isDemo !== true) {
-      console.log(`${tag} Skipping: non-demo account (broker=${a.broker}, type=${a.accountType}, isDemo=${a.isDemo})`);
-      addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: `Non-demo account rejected: broker=${a.broker}, type=${a.accountType}, isDemo=${a.isDemo}` });
-      return;
-    }
-    if (a.apiKey || a.apiSecret || a.passphrase) {
-      console.log(`${tag} Skipping: demo account has credential fields populated`);
-      addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: 'Demo account has credential fields — data invariant violation' });
-      return;
-    }
-  }
-
-  console.log(`${tag} Processing "${config.name}" (strategy: ${strategy}, account: ${config.accountId}, isDemo: ${isBotDemo})`);
-
-  // Step 1: Check SL/TP on in-memory positions
-  const botPositions = Array.from(positions.values()).filter(p => p.botId === config.id && p.accountId === config.accountId);
-  const closedSymbols: Set<string> = new Set();
-
-  for (const pos of botPositions) {
-    const priceResult = await fetchMarketPrice(pos.symbol, marketPriceDeps);
-    pos.currentPrice = priceResult.price;
-    pos.unrealizedPnl = pos.side === 'long'
-      ? (priceResult.price - pos.avgEntryPrice) * pos.qty
-      : (pos.avgEntryPrice - priceResult.price) * pos.qty;
-
-    const sl = pos.stopLoss; const tp = pos.takeProfit;
-    let closeReason: string | null = null;
-
-    if (sl !== null && sl > 0) {
-      if (pos.side === 'long' && priceResult.price <= sl) closeReason = 'stop_loss';
-      else if (pos.side === 'short' && priceResult.price >= sl) closeReason = 'stop_loss';
-    }
-    if (!closeReason && tp !== null && tp > 0) {
-      if (pos.side === 'long' && priceResult.price >= tp) closeReason = 'take_profit';
-      else if (pos.side === 'short' && priceResult.price <= tp) closeReason = 'take_profit';
-    }
-
-    if (closeReason) {
-      const pnl = pos.unrealizedPnl;
-      console.log(`${tag} ${closeReason.toUpperCase()} hit for ${pos.symbol}: price=${priceResult.price.toFixed(2)} PnL=${pnl.toFixed(2)}`);
-      positions.delete(pos.id);
-      closedSymbols.add(pos.symbol);
-      callNextJSApi('POST', '/api/trading/engine/report', { botId: config.id, tradeType: 'closed', pnl, isWin: pnl > 0, reason: closeReason, symbol: pos.symbol, side: pos.side, price: priceResult.price });
-      addActivity({ type: closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit', botId: config.id, botName: config.name, symbol: pos.symbol, side: pos.side === 'long' ? 'sell' : 'buy', price: priceResult.price, pnl });
-    }
-  }
-
-  // Step 2: Open new position if room
-  const activePositionCount = botPositions.length - closedSymbols.size;
-  if (activePositionCount >= maxPos) {
-    console.log(`${tag} Max positions reached (${activePositionCount}/${maxPos})`);
-    return;
-  }
-
-  const botSymbols = config.symbols ? config.symbols.split(',').map(s => s.trim()).filter(Boolean) : ALL_SYMBOLS;
-  const openSymbols = new Set(botPositions.filter(p => !closedSymbols.has(p.symbol)).map(p => p.symbol));
-  const symbols = botSymbols.filter(s => !openSymbols.has(s));
-
-  if (symbols.length === 0) {
-    console.log(`${tag} No symbols available to scan`);
-    return;
-  }
-
-  // Step 3: Run technical analysis
-  let bestSignal: TradeSignal | null = null;
-  for (const symbol of symbols) {
-    try {
-      const { candles, provenance: candleProvenance } = await fetchCandles(symbol, 100, candleDeps);
-      if (candles.length < 10) {
-        console.log(`${tag} [${symbol}] Not enough candles (${candles.length}) — skipping`);
-        continue;
-      }
-      const candleValidation = validateEngineProvenance(candleProvenance);
-      if (!candleValidation.valid) {
-        console.log(`${tag} [${symbol}] Skipping: candle provenance invalid: ${candleValidation.reason}`);
-        addActivity({ type: 'error', botId: config.id, botName: config.name, symbol, error: `Candle provenance invalid: ${candleValidation.reason}` });
-        continue;
-      }
-      if (!isBotDemo && (candleProvenance.environment === 'demo' || candleProvenance.isSynthetic)) {
-        console.log(`${tag} [${symbol}] Skipping: non-demo bot received synthetic candles (source: ${candleProvenance.source})`);
-        addActivity({ type: 'error', botId: config.id, botName: config.name, symbol, error: `Non-demo bot rejected: synthetic candle data from ${candleProvenance.source}` });
-        continue;
-      }
-      const signal = generateSignal(candles, strategy, risk, symbol);
-      if (!signal) continue;
-      if (!bestSignal || signal.confidence > bestSignal.confidence) bestSignal = signal;
-    } catch (err) {
-      console.warn(`${tag} [${symbol}] Analysis error:`, err instanceof Error ? err.message : err);
-    }
-  }
-
-  if (!bestSignal) {
-    console.log(`${tag} No actionable signal (scanned ${symbols.length} symbols)`);
-    return;
-  }
-
-  // Step 4: Validate confidence
-  const minConfidence = 50;
-  if (bestSignal.confidence < minConfidence) {
-    console.log(`${tag} Signal confidence ${bestSignal.confidence}% below ${minConfidence}% — skipping`);
-    return;
-  }
-
-  // Step 5: Fetch live price with provenance
-  const priceResult = await fetchMarketPrice(bestSignal.symbol, marketPriceDeps);
-  if (!isBotDemo && (priceResult.environment === 'demo' || priceResult.environment === 'unknown')) {
-    console.log(`${tag} [${bestSignal.symbol}] Skipping — only ${priceResult.environment} price data available for non-demo bot`);
-    addActivity({ type: 'signal_generated', botId: config.id, botName: config.name, symbol: bestSignal.symbol, side: bestSignal.side, confidence: bestSignal.confidence, reason: 'Skipped: non-demo bot cannot use demo price data' });
-    return;
-  }
-
-  const livePrice = priceResult.price;
-  if (livePrice <= 0) {
-    console.log(`${tag} Invalid price for ${bestSignal.symbol}: ${livePrice}`);
-    return;
-  }
-
-  const allocAmount = config.allocationAmount || 10000;
-  const maxPosSize = allocAmount * 0.2;
-  const qty = calculatePositionSize(accountBalance, risk, livePrice, bestSignal.stopLoss, maxPosSize, allocAmount);
-
-  if (qty <= 0) {
-    console.log(`${tag} Calculated qty=0 for ${bestSignal.symbol}`);
-    return;
-  }
-
-  if (bestSignal.side === 'buy') updateDCALastBuy(bestSignal.symbol, livePrice);
-
-  console.log(`${tag} Executing ${bestSignal.side.toUpperCase()} ${bestSignal.symbol} qty=${qty.toFixed(6)} @ ${livePrice.toFixed(2)} SL=${bestSignal.stopLoss.toFixed(2)} TP=${bestSignal.takeProfit.toFixed(2)} (confidence: ${bestSignal.confidence}%, isDemoData: ${priceResult.isDemoData})`);
-
-  if (!AUTOMATED_TRADING_ENABLED) {
-    console.log(`${tag} AUTOMATED_TRADING_ENABLED=false — not executing trade`);
-    return;
-  }
-
-  await executeTrade(config, {
-    symbol: bestSignal.symbol, side: bestSignal.side, qty, price: livePrice,
-    stopLoss: bestSignal.stopLoss, takeProfit: bestSignal.takeProfit,
-    confidence: bestSignal.confidence, reason: bestSignal.reason,
+  await processBotCore(config as unknown as ProcessBotRow, {
+    fetchMarketPrice,
+    fetchCandles,
+    validateEngineProvenance: validateEngineProvenance as ProcessBotDeps['validateEngineProvenance'],
+    generateSignal,
+    calculatePositionSize,
+    updateDCALastBuy,
+    marketPriceDeps,
+    candleDeps,
+    positions,
+    addActivity: (entry) => addActivity(entry as Omit<ActivityEntry, 'id' | 'timestamp'>),
+    callNextJSApi,
+    executeTrade: executeTrade as unknown as ProcessBotDeps['executeTrade'],
+    automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
+    allSymbols: ALL_SYMBOLS,
+    evaluateEngineAccountEligibility,
   });
-
-  addActivity({ type: 'signal_generated', botId: config.id, botName: config.name, symbol: bestSignal.symbol, side: bestSignal.side, confidence: bestSignal.confidence, reason: bestSignal.reason });
 }
 
 // ============================================================
