@@ -162,6 +162,7 @@ describe('broker spy blocking — order placement (Req 4)', () => {
       qty: 0.1, filledQty: 0.1, filledPrice: 65000, status: 'filled', timestamp: new Date().toISOString(),
     });
     mockCreate.mockResolvedValue({ id: 'order_1' });
+    mockUpdate.mockResolvedValue({ count: 1 });
 
     const { POST } = await import('@/app/api/trading/orders/route');
     const res = await POST(authedReqPost('user_A', {

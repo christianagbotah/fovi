@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
-import { getUserIdSync } from '@/lib/get-user-id';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 
 // Generate demo analytics data when db is unavailable
 function buildDemoAnalytics() {
@@ -72,16 +72,29 @@ function buildDemoAnalytics() {
 }
 
 export async function GET(req: NextRequest) {
+  // CR4.3B: Auth BEFORE DB check / fallback
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   if (!db || !hasModel('tradingAccount')) {
-    return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
+    return NextResponse.json(
+      { error: 'Analytics data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+      { status: 503 },
+    );
   }
   try {
-    const userId = getUserIdSync(req);
     const account = await db.tradingAccount.findFirst({
       where: { userId, isDefault: true },
     });
     if (!account) {
-      return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
+      return NextResponse.json(
+        { error: 'No default account found', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
+        { status: 404 },
+      );
     }
 
     // Fetch recent orders (last 6 months)
@@ -96,9 +109,6 @@ export async function GET(req: NextRequest) {
     });
 
     // Calculate P&L from filled orders (heuristic: use filledQty * filledPrice movements)
-    // For demo purposes, derive a synthetic P&L from order volume since the schema
-    // doesn't directly expose trade-level pnl on orders. Each filled order contributes
-    // a random-but-deterministic slice so the analytics still compute real stats.
     const dayMs = 86400000;
     const startBalance = account.balance || 100000;
     const trades = orders.map((o, idx) => {
@@ -255,8 +265,13 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    // ANY database error falls back to demo
-    console.warn('[analytics GET] DB error, using fallback:', error);
-    return NextResponse.json(buildDemoAnalytics(), { headers: { 'x-demo': 'true' } });
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
+    console.warn('[analytics GET] DB error:', error);
+    return NextResponse.json(
+      { error: 'Failed to compute analytics.', code: 'ANALYTICS_ERROR', remediationPhase: 'containment' },
+      { status: 500 },
+    );
   }
 }

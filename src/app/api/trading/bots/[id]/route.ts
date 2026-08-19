@@ -107,7 +107,7 @@ export async function PUT(
     if (count === 0) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
     }
-    const updated = await db.bot.findFirst({ where: { id } });
+    const updated = await db.bot.findFirst({ where: { id, userId } });
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof AuthRequiredError) {

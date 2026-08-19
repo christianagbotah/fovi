@@ -5,6 +5,9 @@ import { logSecurityEvent } from '@/lib/trading-policy';
 
 export async function GET(req: NextRequest) {
   try {
+    // CR4.3B: Auth BEFORE hasModel/db checks
+    const userId = await getUserId(req);
+
     if (!db || !hasModel('tradingAccount') || !hasModel('tradingSignal')) {
       return NextResponse.json(
         { error: 'Signal data is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
@@ -14,8 +17,6 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-
-    const userId = await getUserId(req);
 
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },

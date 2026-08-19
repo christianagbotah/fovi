@@ -66,8 +66,8 @@ export async function GET(req: NextRequest) {
       const takeProfit = memorySltp?.takeProfit ?? existing?.takeProfit ?? null;
 
       if (existing) {
-        await db.position.update({
-          where: { id: existing.id },
+        await db.position.updateMany({
+          where: { id: existing.id, accountId: account.id },
           data: {
             currentPrice: bp.currentPrice,
             unrealizedPnl: bp.unrealizedPnl,

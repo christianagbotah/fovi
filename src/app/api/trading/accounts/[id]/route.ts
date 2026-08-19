@@ -55,7 +55,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (count === 0) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
-    const updated = await db.tradingAccount.findFirst({ where: { id } });
+    const updated = await db.tradingAccount.findFirst({ where: { id, userId } });
 
     return NextResponse.json({ success: true, account: safeAccountDTO(updated as unknown as Record<string, unknown>) });
   } catch (error) {

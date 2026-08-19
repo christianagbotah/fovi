@@ -77,7 +77,7 @@ export async function PATCH(
     if (count === 0) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
-    const updated = await db.position.findFirst({ where: { id } });
+    const updated = await db.position.findFirst({ where: { id, account: { userId } } });
 
     if (body.stopLoss !== undefined || body.takeProfit !== undefined) {
       saveDemoPositionSLTP(
@@ -168,7 +168,14 @@ export async function DELETE(
     if (levyAmount > 0) {
       accountUpdateData.totalAdminLevyCollected = { increment: levyAmount };
     }
-    await db.tradingAccount.update({ where: { id: position.accountId }, data: accountUpdateData });
+    // CR4.3B: Tenant-scoped related account mutation
+    const { count: acctCount } = await db.tradingAccount.updateMany({
+      where: { id: position.accountId, userId },
+      data: accountUpdateData,
+    });
+    if (acctCount === 0) {
+      return NextResponse.json({ error: 'Account update failed' }, { status: 404 });
+    }
 
     return NextResponse.json({
       success: true, orderId: result.orderId,

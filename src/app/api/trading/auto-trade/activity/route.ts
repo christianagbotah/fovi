@@ -1,21 +1,21 @@
 // ============================================================
 // GET /api/trading/auto-trade/activity
-// Phase 1 CR1: P0-14 — Remove DEMO_USER_ID fallback.
-// Require X-User-Id. Return empty array, NOT fabricated demo activity.
+// Phase 1 CR1: P0-14 — Require X-User-Id.
+// CR4.3B: Use centralized getUserId, not raw header.
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { db, hasModel } from '@/lib/db';
+import { getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { logSecurityEvent } from '@/lib/trading-policy';
 
 export async function GET(req: Request) {
-  // ── P0-14: Require authenticated user via X-User-Id ──
-  const userId = req.headers.get('x-user-id');
-  if (!userId) {
-    return NextResponse.json(
-      { error: 'Authentication required.', code: 'AUTH_REQUIRED', remediationPhase: 'containment' },
-      { status: 401 },
-    );
+  // CR4.3B: Use centralized auth helper, not raw header
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
   }
 
   if (!db || !hasModel('tradingAccount')) {
@@ -31,7 +31,6 @@ export async function GET(req: Request) {
     });
 
     if (!defaultAccount) {
-      // No account — return empty array, NOT fabricated demo activity
       return NextResponse.json([]);
     }
 
@@ -59,7 +58,6 @@ export async function GET(req: Request) {
       createdAt: order.createdAt,
     }));
 
-    // P0-14: Return real activity even if empty, NOT fabricated demo activity
     return NextResponse.json(activity);
   } catch (error) {
     logSecurityEvent({

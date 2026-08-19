@@ -173,7 +173,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await db.tradingAccount.update({ where: { id: account.id }, data: { lastSyncedAt: new Date() } });
+    // CR4.3B: Tenant-scoped account mutation
+    const { count: syncCount } = await db.tradingAccount.updateMany({ where: { id: account.id, userId }, data: { lastSyncedAt: new Date() } });
+    if (syncCount === 0) {
+      logSecurityEvent({
+        eventType: 'ORDERS_POST_SYNC_FAILED', route: '/api/trading/orders', userId,
+        reason: 'Account lastSyncedAt update returned zero count',
+      });
+    }
 
     const responseHeaders: Record<string, string> = {};
     if (isExplicitlyDemo(account)) {

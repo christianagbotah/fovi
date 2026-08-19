@@ -41,6 +41,14 @@ function generateInlineCandles(
 }
 
 export async function POST(req: NextRequest) {
+  // CR4.3B: Auth at the very start, before body / candles / backtest / persistence
+  let userId: string;
+  try {
+    userId = await getUserId(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const body = await req.json().catch(() => ({}));
   const {
     symbol = 'BTC',
@@ -124,10 +132,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
-  // 4) Persist to DB if available (requires authenticated user)
+  // 4) Persist to DB if available (already authenticated above)
   if (db && hasModel('backtest')) {
     try {
-      const userId = await getUserId(req);
       await db.backtest.create({
         data: {
           userId,
@@ -156,11 +163,7 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (error) {
-      if (error instanceof AuthRequiredError) {
-        // No auth — skip persistence silently
-      } else {
-        console.warn('[backtest] failed to persist result:', error);
-      }
+      console.warn('[backtest] failed to persist result:', error);
     }
   }
 

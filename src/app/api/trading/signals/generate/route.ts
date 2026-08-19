@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
 import { db, hasModel } from '@/lib/db';
 import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { generateSignals } from '@/lib/ai/signals';
@@ -202,9 +203,13 @@ async function persistSignalsToDb(_signals: SignalOutput[]): Promise<void> {
 
 // ============================================================
 // POST handler
+// CR4.3B: Auth BEFORE body parse / network / compute
 // ============================================================
 export async function POST(req: NextRequest) {
-  try {
+ try {
+    // CR4.3B: Auth at the very start, before body / network / compute
+    const userId = await getUserId(req);
+
     const body = await req.json().catch(() => ({}));
     const symbol = body.symbol || '';
     const timeframe = body.timeframe || '1h';
@@ -221,6 +226,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(signals);
   } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return authRequiredResponse();
+    }
     console.error('[signals/generate] Error:', error);
     return NextResponse.json({ error: 'Failed to generate signals' }, { status: 500 });
   }

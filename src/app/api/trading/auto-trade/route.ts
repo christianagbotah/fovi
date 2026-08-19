@@ -16,10 +16,10 @@ const DEFAULT_CONFIG = {
 // GET /api/trading/auto-trade — DB is the source of truth
 export async function GET(req: NextRequest) {
   try {
-    const globalLevy = await getGlobalAdminLevy();
-
-    // CR4.1: Auth before DB check
+    // CR4.3B: Auth BEFORE getGlobalAdminLevy / DB checks
     const userId = await getUserId(req);
+
+    const globalLevy = await getGlobalAdminLevy();
 
     if (!db || !hasModel('tradingAccount')) {
       return NextResponse.json(
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     );
 
     let config = await db.botConfig.findFirst({
-      where: { accountId: defaultAccount.id },
+      where: { userId, accountId: defaultAccount.id },
     });
     if (!config) {
       config = await db.botConfig.create({
@@ -44,15 +44,15 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Cleanup duplicates (non-critical)
+    // Cleanup duplicates (non-critical) — tenant-scoped
     try {
       const allConfigs = await db.botConfig.findMany({
-        where: { accountId: defaultAccount.id },
+        where: { userId, accountId: defaultAccount.id },
         orderBy: { createdAt: 'desc' },
       });
       if (allConfigs.length > 1) {
         for (let i = 1; i < allConfigs.length; i++) {
-          try { await db.botConfig.delete({ where: { id: allConfigs[i].id } }); } catch { /* */ }
+          try { await db.botConfig.deleteMany({ where: { id: allConfigs[i].id, userId } }); } catch { /* */ }
         }
       }
     } catch { /* non-critical cleanup */ }
@@ -81,6 +81,14 @@ export async function GET(req: NextRequest) {
 
 // PUT /api/trading/auto-trade — Persist ALL fields to DB
 export async function PUT(request: Request) {
+  // CR4.3B: Auth BEFORE body parse / DB / config
+  let userId: string;
+  try {
+    userId = await getUserId(request);
+  } catch {
+    return authRequiredResponse();
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -95,13 +103,6 @@ export async function PUT(request: Request) {
       { error: 'Auto-trade configuration is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
       { status: 503 },
     );
-  }
-
-  let userId: string;
-  try {
-    userId = await getUserId(request);
-  } catch {
-    return authRequiredResponse();
   }
 
   try {
@@ -151,14 +152,21 @@ export async function PUT(request: Request) {
     // (totalTrades, winTrades, totalPnl stripped)
 
     const existingConfig = await db.botConfig.findFirst({
-      where: { accountId: defaultAccount.id },
+      where: { userId, accountId: defaultAccount.id },
     });
 
     let config;
     if (existingConfig) {
-      config = await db.botConfig.update({
-        where: { id: existingConfig.id },
+      // CR4.3B: Tenant-scoped updateMany
+      const { count } = await db.botConfig.updateMany({
+        where: { id: existingConfig.id, userId },
         data: updateData,
+      });
+      if (count === 0) {
+        return NextResponse.json({ error: 'Config not found' }, { status: 404 });
+      }
+      config = await db.botConfig.findFirst({
+        where: { id: existingConfig.id, userId },
       });
     } else {
       config = await db.botConfig.create({
