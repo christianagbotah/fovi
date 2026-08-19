@@ -1,0 +1,125 @@
+name: Phase 1 CI Gate
+
+on:
+  push:
+    branches:
+      - 'phase-1-*'
+  pull_request:
+    branches:
+      - phase-1-emergency-containment
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase1-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test, containment, lint, and TS debt gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.4'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bunx prisma generate
+
+      - name: Determine comparison base
+        id: base
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            BASE_SHA="$PR_BASE_SHA"
+          else
+            BASE_SHA="$PUSH_BEFORE_SHA"
+          fi
+
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            BASE_SHA="$(git rev-parse HEAD^)"
+          fi
+
+          git cat-file -e "${BASE_SHA}^{commit}"
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Comparison base: $BASE_SHA"
+
+      - name: Containment tests
+        run: bun run test:containment
+
+      - name: Full Vitest suite
+        run: bun run test
+
+      - name: Lint changed source files
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx')
+
+          if (( ${#FILES[@]} == 0 )); then
+            echo "No changed JS/TS files to lint."
+            exit 0
+          fi
+
+          printf 'Linting changed files:\n%s\n' "${FILES[@]}"
+          bunx eslint "${FILES[@]}"
+
+      - name: Whitespace / patch integrity
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: git diff --check "$BASE_SHA" "$GITHUB_SHA"
+
+      - name: TypeScript debt ceiling and conditional build
+        shell: bash
+        run: |
+          set +e
+          bunx tsc --noEmit --pretty false > "$RUNNER_TEMP/tsc.log" 2>&1
+          TSC_EXIT=$?
+          set -e
+
+          TS_ERRORS=$(grep -cE 'error TS[0-9]+' "$RUNNER_TEMP/tsc.log" || true)
+          cat "$RUNNER_TEMP/tsc.log"
+
+          {
+            echo "### TypeScript debt gate"
+            echo "- Current compiler errors: $TS_ERRORS"
+            echo "- Accepted Phase 1 ceiling: 56"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$TSC_EXIT" -ne 0 && "$TS_ERRORS" -eq 0 ]]; then
+            echo "TypeScript exited non-zero without recognizable TS diagnostics."
+            exit "$TSC_EXIT"
+          fi
+
+          if (( TS_ERRORS > 56 )); then
+            echo "TypeScript regression: $TS_ERRORS errors exceeds the accepted ceiling of 56."
+            exit 1
+          fi
+
+          if (( TS_ERRORS == 0 )); then
+            echo "TypeScript is clean; enforcing production build."
+            bun run build
+          else
+            echo "Build gate deferred until TypeScript debt reaches zero."
+          fi
