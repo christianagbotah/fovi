@@ -18,9 +18,9 @@ concurrency:
 
 jobs:
   validate:
-    name: Test, containment, lint, and TS debt gate
+    name: Test, containment, lint, typecheck, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -34,8 +34,17 @@ jobs:
         with:
           bun-version: '1.3.4'
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install mini-service dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in auto-trade-engine balance-sync market-service; do
+            echo "Installing mini-services/${service}"
+            (cd "mini-services/${service}" && bun install --frozen-lockfile)
+          done
 
       - name: Generate Prisma client
         run: bunx prisma generate
@@ -90,36 +99,15 @@ jobs:
           BASE_SHA: ${{ steps.base.outputs.sha }}
         run: git diff --check "$BASE_SHA" "$GITHUB_SHA"
 
-      - name: TypeScript debt ceiling and conditional build
-        shell: bash
-        run: |
-          set +e
-          bunx tsc --noEmit --pretty false > "$RUNNER_TEMP/tsc.log" 2>&1
-          TSC_EXIT=$?
-          set -e
+      - name: Root TypeScript — zero debt
+        run: bunx tsc --noEmit --pretty false
 
-          TS_ERRORS=$(grep -cE 'error TS[0-9]+' "$RUNNER_TEMP/tsc.log" || true)
-          cat "$RUNNER_TEMP/tsc.log"
+      - name: Mini-services TypeScript — zero debt
+        run: bunx tsc -p mini-services/tsconfig.json --pretty false
 
-          {
-            echo "### TypeScript debt gate"
-            echo "- Current compiler errors: $TS_ERRORS"
-            echo "- Accepted Phase 1 ceiling: 56"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$TSC_EXIT" -ne 0 && "$TS_ERRORS" -eq 0 ]]; then
-            echo "TypeScript exited non-zero without recognizable TS diagnostics."
-            exit "$TSC_EXIT"
-          fi
-
-          if (( TS_ERRORS > 56 )); then
-            echo "TypeScript regression: $TS_ERRORS errors exceeds the accepted ceiling of 56."
-            exit 1
-          fi
-
-          if (( TS_ERRORS == 0 )); then
-            echo "TypeScript is clean; enforcing production build."
-            bun run build
-          else
-            echo "Build gate deferred until TypeScript debt reaches zero."
-          fi
+      - name: Production build
+        env:
+          # CI-only ephemeral values. These are never deployment/runtime secrets.
+          AUTH_PEPPER: ci-build-only-pepper-${{ github.run_id }}-${{ github.run_attempt }}
+          JWT_SECRET: ci-build-only-jwt-secret-${{ github.run_id }}-${{ github.run_attempt }}-not-for-runtime
+        run: bun run build
