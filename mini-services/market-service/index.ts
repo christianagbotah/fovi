@@ -410,7 +410,25 @@ function getPriceTick(symbol: string): PriceTick {
 // Socket.io Server
 // ============================================================
 
-const httpServer = createServer()
+const marketStartTime = Date.now();
+const httpServer = createServer((req, res) => {
+  // Health endpoint for deployment validation
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'fovi-market-service',
+      port: PORT,
+      uptime: Math.floor((Date.now() - marketStartTime) / 1000),
+      symbolsTotal: ALL_SYMBOLS.length,
+      symbolsWithRealData: realPriceCache.size,
+    }));
+    return;
+  }
+  // Non-health requests fall through to Socket.io
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.end('Not Found');
+})
 const io = new Server(httpServer, {
   path: '/',
   cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -483,12 +501,13 @@ setInterval(() => { fetchStockPrices() }, 300_000)
 // Startup
 // ============================================================
 
-const PORT = 3003
+const HOST = '127.0.0.1';
+const PORT = 3003;
 
 async function startup() {
-  console.log(`[market] Starting market data service on port ${PORT}`)
-  console.log(`[market] Streaming ${ALL_SYMBOLS.length} symbols every 2s`)
-  console.log(`[market] Data sources: CoinGecko (crypto, 30s), ExchangeRate-API (forex, 60s), metals.live (metals, 60s), Finnhub (stocks, 5min, requires FINNHUB_API_KEY)`)
+  console.log(`[market] Starting market data service on ${HOST}:${PORT}`);
+  console.log(`[market] Streaming ${ALL_SYMBOLS.length} symbols every 2s`);
+  console.log(`[market] Data sources: CoinGecko (crypto, 30s), ExchangeRate-API (forex, 60s), metals.live (metals, 60s), Finnhub (stocks, 5min, requires FINNHUB_API_KEY)`);
 
   // Fetch all real data in parallel on startup
   await Promise.all([
@@ -498,7 +517,7 @@ async function startup() {
     fetchStockPrices(),
   ])
 
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, HOST, () => {
     const realCount = realPriceCache.size
     console.log(`[market] Ready — ${realCount}/${ALL_SYMBOLS.length} symbols have real data, rest use demo`)
   })
@@ -506,7 +525,7 @@ async function startup() {
 
 startup().catch(err => {
   console.error('[market] Startup error:', err)
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, HOST, () => {
     console.log(`[market] Running in demo-only mode (${err instanceof Error ? err.message : err})`)
   })
 })

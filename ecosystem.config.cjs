@@ -1,12 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 
-// Load .env from project root
+// Load .env from project root WITHOUT printing secret values.
 const envPath = path.resolve(__dirname, '.env');
 const envVars = { NODE_ENV: 'production' };
 
 if (fs.existsSync(envPath)) {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
+  const content = fs.readFileSync(envPath, 'utf8');
+  let count = 0;
+  for (const line of content.split('\n')) {
     const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)/);
     if (m && m[2] !== '') {
       let val = m[2];
@@ -14,9 +16,10 @@ if (fs.existsSync(envPath)) {
         val = val.slice(1, -1);
       }
       envVars[m[1]] = val;
+      count++;
     }
-  });
-  console.log(`[ecosystem] Loaded ${Object.keys(envVars).length} env vars from .env`);
+  }
+  console.log('[ecosystem] Loaded ' + count + ' env vars from .env (values not printed)');
 } else {
   console.warn('[ecosystem] WARNING: .env file not found at', envPath);
 }
@@ -34,35 +37,35 @@ module.exports = {
       max_memory_restart: '1G',
       env: envVars,
     },
-    // Market Data WebSocket — port 3003
+    // Market Data WebSocket — port 3003 (loopback-only)
     {
       name: 'fovi-market',
       script: 'index.ts',
       cwd: '/home/lightworld/webapps/fovi/mini-services/market-service',
       exec_mode: 'fork',
-      interpreter: '/root/.bun/bin/bun',
+      interpreter: 'bun',
       autorestart: true,
       max_memory_restart: '256M',
       env: { ...envVars, PORT: '3003' },
     },
-    // Auto-Trade Engine — port 3012
+    // Auto-Trade Engine — port 3012 (loopback-only, demo-only in Phase 1)
     {
       name: 'fovi-auto-trade',
       script: 'index.ts',
       cwd: '/home/lightworld/webapps/fovi/mini-services/auto-trade-engine',
       exec_mode: 'fork',
-      interpreter: '/root/.bun/bin/bun',
+      interpreter: 'bun',
       autorestart: true,
       max_memory_restart: '256M',
       env: { ...envVars, PORT: '3012' },
     },
-    // Balance Sync — port 3013
+    // Balance Sync — port 3013 (loopback-only, disabled in Phase 1)
     {
       name: 'fovi-balance-sync',
       script: 'index.ts',
       cwd: '/home/lightworld/webapps/fovi/mini-services/balance-sync',
       exec_mode: 'fork',
-      interpreter: '/root/.bun/bin/bun',
+      interpreter: 'bun',
       autorestart: true,
       max_memory_restart: '256M',
       env: { ...envVars, PORT: '3013' },

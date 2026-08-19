@@ -1,6 +1,12 @@
 // ============================================================
 // encryption.ts — AES-256-GCM encryption for broker API keys
 // Supports both sync (Node 22+) and async (Node 18+) crypto APIs
+//
+// FAIL-CLOSED in production:
+//   - ENCRYPTION_KEY must be set and >= 32 characters.
+//   - Production never falls back to a repository-known key.
+//   - Development/test retains a documented fallback for convenience.
+//   - Module throws at load time in production if key is invalid.
 // ============================================================
 
 const ALGORITHM = 'aes-256-gcm';
@@ -17,18 +23,40 @@ if (!USE_SYNC) {
   console.warn('[encryption] Sync crypto API not available — using async fallback. Consider upgrading to Node.js 22+');
 }
 
+// -- Production-safe key loading --
+// In test/development mode, the module loads with a documented fallback.
+// In production, missing or short ENCRYPTION_KEY causes immediate failure —
+// no fallback to a repository-known value.
+
+const _ENCRYPTION_KEY_RAW = process.env.ENCRYPTION_KEY;
+
+let _cachedKey: Uint8Array | null = null;
+
+if (process.env.NODE_ENV === 'production') {
+  if (!_ENCRYPTION_KEY_RAW || _ENCRYPTION_KEY_RAW.length < 32) {
+    const reason = !_ENCRYPTION_KEY_RAW
+      ? 'ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.'
+      : 'ENCRYPTION_KEY is too short (' + _ENCRYPTION_KEY_RAW.length + ' chars). It must be at least 32 characters.';
+    throw new Error(reason);
+  }
+  _cachedKey = new TextEncoder().encode(_ENCRYPTION_KEY_RAW.slice(0, 32));
+}
+
 /**
- * Get the encryption key from env, generating a deterministic
- * fallback if ENCRYPTION_KEY is not set.
+ * Get the encryption key.
+ * In production, this always returns the pre-validated key.
+ * In development/test, uses a documented development-only fallback.
  */
 function getKey(): Uint8Array {
-  const envKey = process.env.ENCRYPTION_KEY;
-  if (envKey && envKey.length >= 32) {
-    return new TextEncoder().encode(envKey.slice(0, 32));
-  }
-  const source = process.env.APP_SECRET || 'fovi-dev-encryption-key-32b!';
+  if (_cachedKey) return _cachedKey;
+
+  // Development/test only: use a documented, repository-known fallback.
+  // This must NEVER be reached in production.
+  const DEV_FALLBACK = 'fovi-dev-encryption-key-32b!';
+  const source = process.env.APP_SECRET || DEV_FALLBACK;
   if (typeof (crypto.subtle as any).digestSync === 'function') {
-    return (crypto.subtle as any).digestSync('SHA-256', new TextEncoder().encode(source)) as Uint8Array;
+    _cachedKey = (crypto.subtle as any).digestSync('SHA-256', new TextEncoder().encode(source)) as Uint8Array;
+    return _cachedKey;
   }
   // Fallback: simple hash for older Node versions
   const encoder = new TextEncoder();
@@ -43,11 +71,11 @@ function getKey(): Uint8Array {
   const view = new DataView(key.buffer);
   view.setInt32(0, hash, true);
   view.setInt32(4, hash * 31, true);
-  // Fill remaining with derived bytes
   for (let i = 8; i < 32; i++) {
     key[i] = data[i % data.length] ^ (hash & 0xFF);
   }
-  return key;
+  _cachedKey = key;
+  return _cachedKey;
 }
 
 /**
