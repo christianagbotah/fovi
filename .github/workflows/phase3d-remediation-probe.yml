@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'ci: apply audited dependency artifact'
+    if: "${{ github.event.head_commit.message == 'ci: apply audited dependency artifact' }}"
     name: Apply exact audited root dependency graph
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -63,7 +63,6 @@ jobs:
           bunx prisma generate
           bunx tsc --noEmit --pretty false
           git diff --check
-          git diff --exit-code -- .github/workflows ':!package.json' ':!bun.lock' || true
 
       - name: Commit only audited dependency files
         shell: bash
