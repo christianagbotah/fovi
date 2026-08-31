@@ -1,6 +1,6 @@
 // ============================================================
 // process-bot-core.ts — Startup-free processBot extraction
-// Phase 2B: eligibility first + verified market data fail-closed.
+// Phase 2C: eligibility first + verified data + canonical strategy/risk gates.
 // ============================================================
 
 import { type CandleData, type TradeSignal } from './strategies';
@@ -8,7 +8,7 @@ import { type CandleData, type TradeSignal } from './strategies';
 export interface BotRow {
   id: string; userId?: string; accountId: string; name: string; strategy: string;
   symbols?: string; timeframe?: string; allocationAmount?: number; enabled?: boolean;
-  status?: string; riskPerTrade?: string; maxPositions?: number; stopLossPercent?: number;
+  status?: string; riskPerTrade?: number; maxPositions?: number; stopLossPercent?: number;
   takeProfitPercent?: number; totalTrades?: number; winTrades?: number; totalPnl?: number;
   account: {
     id: string; broker: string; accountType: string; isDemo: boolean | null; balance?: number;
@@ -26,19 +26,49 @@ interface CandlesResult {
   dataUnavailable?: boolean; reason?: string; volumeAvailable?: boolean;
 }
 
+export interface GeneratedTradeSignal extends TradeSignal {
+  signalType?: string;
+  strategy?: string;
+  timeframe?: string;
+  strategyVersion?: string;
+}
+
+export type StrategyEvaluation =
+  | { action: 'trade'; trade: GeneratedTradeSignal }
+  | { action: 'hold'; code: string; reason: string };
+
+export type RiskEvaluation =
+  | {
+      approved: true;
+      engineVersion: string;
+      quantity: number;
+      positionNotional: number;
+      riskAmount: number;
+      riskPercentOfAllocation: number;
+      riskReward: number;
+    }
+  | { approved: false; engineVersion: string; code: string; reason: string };
+
 export interface ProcessBotDeps {
   fetchMarketPrice: (symbol: string, deps: { nextjsApi: string; fetchFn?: typeof fetch }) => Promise<PriceResult>;
   fetchCandles: (symbol: string, limit: number, deps: { nextjsApi: string; fetchFn?: typeof fetch }) => Promise<CandlesResult>;
   validateEngineProvenance: (prov: { environment: string; isSynthetic: boolean; source: string; observedAt?: string }) => { valid: boolean; reason?: string };
-  generateSignal: (candles: CandleData[], strategy: string, risk: string, symbol: string) => TradeSignal | null;
-  calculatePositionSize: (balance: number, risk: string, price: number, stopLoss: number, maxSize: number, allocAmount: number) => number;
+  evaluateStrategy: (candles: CandleData[], context: { symbol: string; strategy: string; timeframe: string }) => StrategyEvaluation;
+  evaluateTradeRisk: (
+    candidate: { symbol: string; side: 'buy' | 'sell'; entryPrice: number; stopLoss: number; takeProfit: number; confidence: number; strategy: string; timeframe: string },
+    context: { accountBalance: number; allocationAmount: number; riskPerTradePct: number; maxPositions: number; currentOpenPositions: number; maxPositionNotional?: number | null },
+  ) => RiskEvaluation;
   updateDCALastBuy: (symbol: string, price: number) => void;
   marketPriceDeps: { nextjsApi: string; fetchFn?: typeof fetch };
   candleDeps: { nextjsApi: string; fetchFn?: typeof fetch };
   positions: Map<string, { id: string; botId: string; accountId: string; symbol: string; side: 'long' | 'short'; qty: number; avgEntryPrice: number; currentPrice: number; stopLoss: number | null; takeProfit: number | null; openedAt: number; unrealizedPnl: number }>;
   addActivity: (entry: Record<string, unknown>) => void;
   callNextJSApi: (method: string, path: string, body?: Record<string, unknown>) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  executeTrade: (config: BotRow, trade: { symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number; confidence: number; reason: string }) => Promise<void>;
+  executeTrade: (config: BotRow, trade: {
+    symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number;
+    confidence: number; reason: string; strategyVersion?: string; riskEngineVersion: string;
+    positionNotional: number; riskAmount: number; riskPercentOfAllocation: number; riskReward: number;
+  }) => Promise<void>;
   automatedTradingEnabled: boolean;
   allSymbols: string[];
   evaluateEngineAccountEligibility: (account: { broker: string; accountType: string; isDemo: boolean | null | undefined; isActive: boolean | null | undefined; apiKey: string | null | undefined; apiSecret: string | null | undefined; passphrase: string | null | undefined } | null) => { eligible: boolean; reason?: string };
@@ -52,6 +82,7 @@ export async function processBotCore(
   config: BotRow,
   deps: ProcessBotDeps,
 ): Promise<{ processed: boolean; reason?: string }> {
+  // Eligibility remains the FIRST operation. Nothing below may run first.
   const eligibility = deps.evaluateEngineAccountEligibility(
     config.account ? {
       broker: config.account.broker,
@@ -66,24 +97,36 @@ export async function processBotCore(
   if (!eligibility.eligible) return { processed: false, reason: 'ineligible-account' };
 
   const tag = `[AutoTrade] [${config.id.slice(0, 8)}]`;
-  if (config.timeframe && config.timeframe !== '4h') {
-    deps.addActivity({ type: 'market_data_unavailable', botId: config.id, botName: config.name, reason: 'UNSUPPORTED_MARKET_DATA', timeframe: config.timeframe });
-    return { processed: true, reason: 'unsupported-market-data' };
+  const timeframe = config.timeframe?.trim().toLowerCase() || '';
+  if (timeframe !== '4h') {
+    deps.addActivity({
+      type: 'strategy_hold', botId: config.id, botName: config.name,
+      code: 'UNSUPPORTED_VERIFIED_TIMEFRAME', timeframe,
+      reason: 'Verified automated decisions currently require 4h market data.',
+    });
+    return { processed: true, reason: 'unsupported-verified-timeframe' };
   }
 
-  const strategyMap: Record<string, string> = { signal_based: 'balanced', scalping: 'momentum' };
-  const strategy = strategyMap[config.strategy] || config.strategy || 'balanced';
-  const risk = 'medium';
-  const accountBalance = config.account?.balance ?? 100000;
-  const maxPos = config.maxPositions || 5;
+  const strategy = config.strategy?.trim().toLowerCase() || '';
+  const accountBalance = config.account?.balance ?? 0;
+  const allocationAmount = config.allocationAmount ?? 0;
+  const riskPerTradePct = config.riskPerTrade ?? 0;
+  const maxPos = config.maxPositions ?? 0;
 
-  const botPositions = Array.from(deps.positions.values()).filter(p => p.botId === config.id && p.accountId === config.accountId);
+  const botPositions = Array.from(deps.positions.values()).filter(
+    p => p.botId === config.id && p.accountId === config.accountId,
+  );
   const closedSymbols: Set<string> = new Set();
 
+  // Existing positions may only be re-priced and closed from verified prices.
   for (const pos of botPositions) {
     const priceResult = await deps.fetchMarketPrice(pos.symbol, deps.marketPriceDeps);
     if (!isVerifiedPrice(priceResult)) {
-      deps.addActivity({ type: 'market_data_unavailable', botId: config.id, botName: config.name, symbol: pos.symbol, reason: priceResult.reason || 'MARKET_DATA_UNAVAILABLE', action: 'skip-sl-tp-check' });
+      deps.addActivity({
+        type: 'market_data_unavailable', botId: config.id, botName: config.name,
+        symbol: pos.symbol, reason: priceResult.reason || 'MARKET_DATA_UNAVAILABLE',
+        action: 'skip-sl-tp-check',
+      });
       continue;
     }
 
@@ -108,73 +151,159 @@ export async function processBotCore(
       const pnl = pos.unrealizedPnl;
       deps.positions.delete(pos.id);
       closedSymbols.add(pos.symbol);
-      deps.callNextJSApi('POST', '/api/trading/engine/report', {
+      void deps.callNextJSApi('POST', '/api/trading/engine/report', {
         botId: config.id, tradeType: 'closed', pnl, isWin: pnl > 0, reason: closeReason,
         symbol: pos.symbol, side: pos.side, price: priceResult.price,
       });
-      deps.addActivity({ type: closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit', botId: config.id, botName: config.name, symbol: pos.symbol, side: pos.side === 'long' ? 'sell' : 'buy', price: priceResult.price, pnl });
+      deps.addActivity({
+        type: closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit',
+        botId: config.id, botName: config.name, symbol: pos.symbol,
+        side: pos.side === 'long' ? 'sell' : 'buy', price: priceResult.price, pnl,
+      });
     }
   }
 
   const activePositionCount = botPositions.length - closedSymbols.size;
-  if (activePositionCount >= maxPos) return { processed: true };
+  if (maxPos > 0 && activePositionCount >= maxPos) return { processed: true, reason: 'max-positions-reached' };
 
-  const botSymbols = config.symbols ? config.symbols.split(',').map(s => s.trim()).filter(Boolean) : deps.allSymbols;
-  const openSymbols = new Set(botPositions.filter(p => !closedSymbols.has(p.symbol)).map(p => p.symbol));
-  const symbols = botSymbols.filter(s => !openSymbols.has(s));
-  if (symbols.length === 0) return { processed: true };
+  const botSymbols = config.symbols
+    ? config.symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+    : deps.allSymbols;
+  const openSymbols = new Set(
+    botPositions.filter(p => !closedSymbols.has(p.symbol)).map(p => p.symbol.toUpperCase()),
+  );
+  const symbols = botSymbols.filter(s => !openSymbols.has(s.toUpperCase()));
+  if (symbols.length === 0) return { processed: true, reason: 'no-symbols-available' };
 
-  let bestSignal: TradeSignal | null = null;
+  let bestSignal: GeneratedTradeSignal | null = null;
   for (const symbol of symbols) {
     try {
       const candleResult = await deps.fetchCandles(symbol, 100, deps.candleDeps);
       if (candleResult.dataUnavailable || candleResult.candles.length < 35) {
-        deps.addActivity({ type: 'market_data_unavailable', botId: config.id, botName: config.name, symbol, reason: candleResult.reason || 'INSUFFICIENT_HISTORY' });
+        deps.addActivity({
+          type: 'market_data_unavailable', botId: config.id, botName: config.name,
+          symbol, reason: candleResult.reason || 'INSUFFICIENT_HISTORY',
+        });
         continue;
       }
 
       const candleValidation = deps.validateEngineProvenance(candleResult.provenance);
-      if (!candleValidation.valid || candleResult.provenance.environment !== 'live' || candleResult.provenance.isSynthetic) {
-        deps.addActivity({ type: 'market_data_unavailable', botId: config.id, botName: config.name, symbol, reason: candleValidation.reason || 'SYNTHETIC_DATA' });
+      if (
+        !candleValidation.valid ||
+        candleResult.provenance.environment !== 'live' ||
+        candleResult.provenance.isSynthetic
+      ) {
+        deps.addActivity({
+          type: 'market_data_unavailable', botId: config.id, botName: config.name,
+          symbol, reason: candleValidation.reason || 'SYNTHETIC_DATA',
+        });
         continue;
       }
 
-      const signal = deps.generateSignal(candleResult.candles, strategy, risk, symbol);
-      if (!signal) continue;
-      if (!bestSignal || signal.confidence > bestSignal.confidence) bestSignal = signal;
+      const strategyDecision = deps.evaluateStrategy(candleResult.candles, {
+        symbol, strategy, timeframe,
+      });
+      if (strategyDecision.action === 'hold') {
+        if (strategyDecision.code !== 'NO_VALID_CANDIDATE') {
+          deps.addActivity({
+            type: 'strategy_hold', botId: config.id, botName: config.name,
+            symbol, code: strategyDecision.code, reason: strategyDecision.reason,
+          });
+        }
+        continue;
+      }
+
+      const signal = strategyDecision.trade;
+      if (
+        !bestSignal ||
+        signal.confidence > bestSignal.confidence ||
+        (signal.confidence === bestSignal.confidence && signal.symbol.localeCompare(bestSignal.symbol) < 0)
+      ) {
+        bestSignal = signal;
+      }
     } catch (err) {
       console.warn(`${tag} [${symbol}] Analysis error:`, err instanceof Error ? err.message : err);
     }
   }
 
-  if (!bestSignal || bestSignal.confidence < 50) return { processed: true };
+  if (!bestSignal) return { processed: true, reason: 'no-strategy-decision' };
 
+  // Re-price the selected candidate immediately before sizing/risk evaluation.
   const priceResult = await deps.fetchMarketPrice(bestSignal.symbol, deps.marketPriceDeps);
   if (!isVerifiedPrice(priceResult)) {
-    deps.addActivity({ type: 'market_data_unavailable', botId: config.id, botName: config.name, symbol: bestSignal.symbol, reason: priceResult.reason || 'MARKET_DATA_UNAVAILABLE', action: 'skip-new-trade' });
+    deps.addActivity({
+      type: 'market_data_unavailable', botId: config.id, botName: config.name,
+      symbol: bestSignal.symbol, reason: priceResult.reason || 'MARKET_DATA_UNAVAILABLE',
+      action: 'skip-new-trade',
+    });
     return { processed: true, reason: 'market-data-unavailable' };
   }
 
-  const livePrice = priceResult.price;
-  const allocAmount = config.allocationAmount || 10000;
-  const maxPosSize = allocAmount * 0.2;
-  const qty = deps.calculatePositionSize(accountBalance, risk, livePrice, bestSignal.stopLoss, maxPosSize, allocAmount);
-  if (qty <= 0) return { processed: true };
+  const riskDecision = deps.evaluateTradeRisk(
+    {
+      symbol: bestSignal.symbol,
+      side: bestSignal.side,
+      entryPrice: priceResult.price,
+      stopLoss: bestSignal.stopLoss,
+      takeProfit: bestSignal.takeProfit,
+      confidence: bestSignal.confidence,
+      strategy,
+      timeframe,
+    },
+    {
+      accountBalance,
+      allocationAmount,
+      riskPerTradePct,
+      maxPositions: maxPos,
+      currentOpenPositions: activePositionCount,
+    },
+  );
 
-  if (bestSignal.side === 'buy') deps.updateDCALastBuy(bestSignal.symbol, livePrice);
+  if (!riskDecision.approved) {
+    deps.addActivity({
+      type: 'risk_rejected', botId: config.id, botName: config.name,
+      symbol: bestSignal.symbol, code: riskDecision.code,
+      reason: riskDecision.reason, riskEngineVersion: riskDecision.engineVersion,
+    });
+    return { processed: true, reason: `risk-rejected:${riskDecision.code}` };
+  }
 
-  // Phase 1 containment remains authoritative: this branch never enables it.
+  // Containment remains authoritative. A valid strategy+risk decision is NOT
+  // permission to execute while automated trading is disabled.
   if (!deps.automatedTradingEnabled) {
-    console.log(`${tag} AUTOMATED_TRADING_ENABLED=false — not executing trade`);
-    return { processed: true };
+    deps.addActivity({
+      type: 'risk_approved_execution_disabled', botId: config.id, botName: config.name,
+      symbol: bestSignal.symbol, riskEngineVersion: riskDecision.engineVersion,
+      positionNotional: riskDecision.positionNotional, riskAmount: riskDecision.riskAmount,
+    });
+    console.log(`${tag} AUTOMATED_TRADING_ENABLED=false — approved decision not executed`);
+    return { processed: true, reason: 'execution-disabled' };
   }
 
   await deps.executeTrade(config, {
-    symbol: bestSignal.symbol, side: bestSignal.side, qty, price: livePrice,
-    stopLoss: bestSignal.stopLoss, takeProfit: bestSignal.takeProfit,
-    confidence: bestSignal.confidence, reason: bestSignal.reason,
+    symbol: bestSignal.symbol,
+    side: bestSignal.side,
+    qty: riskDecision.quantity,
+    price: priceResult.price,
+    stopLoss: bestSignal.stopLoss,
+    takeProfit: bestSignal.takeProfit,
+    confidence: bestSignal.confidence,
+    reason: bestSignal.reason,
+    strategyVersion: bestSignal.strategyVersion,
+    riskEngineVersion: riskDecision.engineVersion,
+    positionNotional: riskDecision.positionNotional,
+    riskAmount: riskDecision.riskAmount,
+    riskPercentOfAllocation: riskDecision.riskPercentOfAllocation,
+    riskReward: riskDecision.riskReward,
   });
 
-  deps.addActivity({ type: 'signal_generated', botId: config.id, botName: config.name, symbol: bestSignal.symbol, side: bestSignal.side, confidence: bestSignal.confidence, reason: bestSignal.reason });
+  if (bestSignal.side === 'buy') deps.updateDCALastBuy(bestSignal.symbol, priceResult.price);
+
+  deps.addActivity({
+    type: 'signal_generated', botId: config.id, botName: config.name,
+    symbol: bestSignal.symbol, side: bestSignal.side, confidence: bestSignal.confidence,
+    reason: bestSignal.reason, strategyVersion: bestSignal.strategyVersion,
+    riskEngineVersion: riskDecision.engineVersion,
+  });
   return { processed: true };
 }
