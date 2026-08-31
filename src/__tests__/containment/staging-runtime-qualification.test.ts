@@ -8,9 +8,10 @@ const workflow = readFileSync(
 );
 
 describe('Phase 3A staging runtime qualification', () => {
-  it('uses a real PostgreSQL service and production migrations', () => {
+  it('uses a real PostgreSQL service and the shared production migration gate', () => {
     expect(workflow).toContain('image: postgres:16-alpine');
-    expect(workflow).toContain('bunx prisma migrate deploy');
+    expect(workflow).toContain('bun run scripts/migrate-production.ts');
+    expect(workflow.match(/bun run scripts\/migrate-production\.ts/g)?.length).toBe(2);
     expect(workflow).toContain('bun run build');
     expect(workflow).toContain('NODE_ENV: production');
   });
