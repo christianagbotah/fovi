@@ -5,9 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { classifyProductionDatabaseState } from '@/lib/production-migration-policy';
 
 const baselinePath = resolve(__dirname, '../../../prisma/baseline.pre-containment.prisma');
+const baselineMarkerPath = resolve(
+  __dirname,
+  '../../../prisma/migrations/00000000000000_pre_containment_baseline/migration.sql',
+);
 const migrationScriptPath = resolve(__dirname, '../../../scripts/migrate-production.ts');
 const deployScriptPath = resolve(__dirname, '../../../deploy.sh');
 const baseline = readFileSync(baselinePath, 'utf8');
+const baselineMarker = readFileSync(baselineMarkerPath, 'utf8');
 const migrationScript = readFileSync(migrationScriptPath, 'utf8');
 const deployScript = readFileSync(deployScriptPath, 'utf8');
 
@@ -25,6 +30,13 @@ describe('production database bootstrap safety', () => {
     expect(baseline).toContain('model TradingAccount');
     expect(baseline).not.toContain('isDemo          Boolean');
     expect(baseline).not.toContain('model PaperTradeSettlement');
+  });
+
+  it('uses a metadata-only baseline marker before later committed migrations', () => {
+    expect(baselineMarker).toContain('historical PostgreSQL baseline marker');
+    expect(baselineMarker).toContain('intentionally contains no DDL');
+    expect(baselineMarker).not.toMatch(/\bCREATE\s+TABLE\b/i);
+    expect(baselineMarker).not.toMatch(/\bALTER\s+TABLE\b/i);
   });
 
   it('bootstraps only a truly empty database', () => {
@@ -55,16 +67,18 @@ describe('production database bootstrap safety', () => {
     })).toThrow('FATAL_INCONSISTENT_MIGRATION_STATE');
   });
 
-  it('generates baseline SQL from empty, executes it, then deploys committed migrations', () => {
+  it('generates and verifies baseline DDL, resolves the marker, then deploys migrations', () => {
     expect(migrationScript).toContain("'--from-empty'");
     expect(migrationScript).toContain("'--to-schema-datamodel'");
     expect(migrationScript).not.toContain("'--to-schema',");
     expect(migrationScript).toContain('baseline.pre-containment.prisma');
+    expect(migrationScript).toContain('verifyHistoricalBaselineTables');
+    expect(migrationScript).toContain('00000000000000_pre_containment_baseline');
     expect(migrationScript).toContain("'db', 'execute'");
+    expect(migrationScript).toContain("'migrate', 'resolve', '--applied'");
     expect(migrationScript).toContain("'migrate', 'deploy'");
     expect(migrationScript).toContain("'migrate', 'status'");
     expect(migrationScript).not.toContain('db push');
-    expect(migrationScript).not.toContain("'migrate', 'resolve'");
   });
 
   it('keeps VPS deployment on the same shared migration decision gate', () => {
