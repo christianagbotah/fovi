@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { processBotCore, type BotRow, type ProcessBotDeps } from '../../../mini-services/auto-trade-engine/process-bot-core';
+import { processBotCore, type BotRow, type EnginePosition, type ProcessBotDeps } from '../../../mini-services/auto-trade-engine/process-bot-core';
 import { evaluateEngineAccountEligibility } from '@/lib/engine-eligibility';
 
 function verifiedCandles() {
@@ -44,6 +44,7 @@ function createMockDeps(overrides?: Partial<ProcessBotDeps>): ProcessBotDeps {
     addActivity: vi.fn(),
     callNextJSApi: vi.fn().mockResolvedValue({ ok: true }),
     executeTrade: vi.fn().mockResolvedValue(undefined),
+    closePosition: vi.fn().mockResolvedValue(undefined),
     automatedTradingEnabled: false,
     allSymbols: ['BTC'],
     evaluateEngineAccountEligibility: vi.fn(),
@@ -54,6 +55,7 @@ function createMockDeps(overrides?: Partial<ProcessBotDeps>): ProcessBotDeps {
 function makeBotRow(accountOverrides?: Partial<NonNullable<BotRow['account']>>): BotRow {
   return {
     id: 'bot-001',
+    userId: 'user-001',
     accountId: 'acc-001',
     name: 'Test Bot',
     strategy: 'signal_based',
@@ -70,6 +72,14 @@ function makeBotRow(accountOverrides?: Partial<NonNullable<BotRow['account']>>):
   };
 }
 
+function openLongPosition(): EnginePosition {
+  return {
+    id: 'ppos-1', botId: 'bot-001', accountId: 'acc-001', symbol: 'BTC', side: 'long',
+    qty: 1, avgEntryPrice: 40_000, currentPrice: 40_000, stopLoss: 39_000,
+    takeProfit: 45_000, openedAt: Date.now(), unrealizedPnl: 0,
+  };
+}
+
 describe('processBotCore — eligibility is first', () => {
   it('ineligible live account has zero side effects', async () => {
     const deps = createMockDeps({
@@ -80,6 +90,7 @@ describe('processBotCore — eligibility is first', () => {
     expect(deps.fetchMarketPrice).not.toHaveBeenCalled();
     expect(deps.fetchCandles).not.toHaveBeenCalled();
     expect(deps.executeTrade).not.toHaveBeenCalled();
+    expect(deps.closePosition).not.toHaveBeenCalled();
     expect(deps.addActivity).not.toHaveBeenCalled();
   });
 
@@ -92,6 +103,7 @@ describe('processBotCore — eligibility is first', () => {
     expect(result.processed).toBe(false);
     expect(deps.fetchCandles).not.toHaveBeenCalled();
     expect(deps.executeTrade).not.toHaveBeenCalled();
+    expect(deps.closePosition).not.toHaveBeenCalled();
   });
 });
 
@@ -143,11 +155,7 @@ describe('processBotCore — verified decision boundary', () => {
   });
 
   it('unavailable verified price skips existing-position SL/TP', async () => {
-    const positions = new Map<string, {
-      id: string; botId: string; accountId: string; symbol: string; side: 'long' | 'short';
-      qty: number; avgEntryPrice: number; currentPrice: number; stopLoss: number | null;
-      takeProfit: number | null; openedAt: number; unrealizedPnl: number;
-    }>();
+    const positions = new Map<string, EnginePosition>();
     positions.set('p1', {
       id: 'p1', botId: 'bot-001', accountId: 'acc-001', symbol: 'BTC', side: 'long',
       qty: 1, avgEntryPrice: 40_000, currentPrice: 40_000, stopLoss: 39_000,
@@ -173,8 +181,83 @@ describe('processBotCore — verified decision boundary', () => {
     const result = await processBotCore(makeBotRow(), deps);
     expect(result.processed).toBe(true);
     expect(positions.has('p1')).toBe(true);
-    expect(deps.callNextJSApi).not.toHaveBeenCalled();
+    expect(deps.closePosition).not.toHaveBeenCalled();
     expect(deps.executeTrade).not.toHaveBeenCalled();
+  });
+
+  it('releases a triggered position only after durable close succeeds', async () => {
+    const positions = new Map<string, EnginePosition>();
+    const position = openLongPosition();
+    positions.set(position.id, position);
+    const closePosition = vi.fn().mockResolvedValue(undefined);
+    const deps = createMockDeps({
+      positions,
+      closePosition,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchMarketPrice: vi.fn().mockResolvedValue({
+        price: 38_500, isDemoData: false, environment: 'live' as const,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      }),
+      fetchCandles: vi.fn().mockResolvedValue({
+        candles: flatCandles(),
+        provenance: {
+          environment: 'live' as const, isSynthetic: false,
+          source: 'coingecko', observedAt: new Date().toISOString(),
+        },
+        volumeAvailable: false,
+      }),
+    });
+
+    const result = await processBotCore(makeBotRow(), deps);
+
+    expect(result.processed).toBe(true);
+    expect(closePosition).toHaveBeenCalledTimes(1);
+    expect(closePosition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'bot-001' }),
+      expect.objectContaining({ id: position.id }),
+      expect.objectContaining({ reason: 'stop_loss', price: 38_500 }),
+    );
+    expect(positions.has(position.id)).toBe(false);
+  });
+
+  it('keeps exposure and blocks replacement when durable close fails', async () => {
+    const positions = new Map<string, EnginePosition>();
+    const position = openLongPosition();
+    positions.set(position.id, position);
+    const closePosition = vi.fn().mockRejectedValue(new Error('settlement unavailable'));
+    const executeTrade = vi.fn().mockResolvedValue(undefined);
+    const fetchCandles = vi.fn().mockResolvedValue({
+      candles: verifiedCandles(),
+      provenance: {
+        environment: 'live' as const, isSynthetic: false,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      },
+      volumeAvailable: false,
+    });
+    const deps = createMockDeps({
+      positions,
+      closePosition,
+      executeTrade,
+      fetchCandles,
+      automatedTradingEnabled: true,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchMarketPrice: vi.fn().mockResolvedValue({
+        price: 38_500, isDemoData: false, environment: 'live' as const,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      }),
+    });
+
+    const result = await processBotCore(makeBotRow(), deps);
+
+    expect(result.processed).toBe(true);
+    expect(closePosition).toHaveBeenCalledTimes(1);
+    expect(positions.has(position.id)).toBe(true);
+    expect(fetchCandles).not.toHaveBeenCalled();
+    expect(executeTrade).not.toHaveBeenCalled();
+    expect(deps.addActivity).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'position_close_failed',
+      symbol: 'BTC',
+    }));
   });
 
   it('legacy signal/sizing hooks cannot force an automated trade', async () => {
