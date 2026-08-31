@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { classifyProductionDatabaseState } from '@/lib/production-migration-policy';
+import { classifyProductionDatabaseState } from '../src/lib/production-migration-policy';
 
 const BASELINE_SCHEMA = resolve(process.cwd(), 'prisma/baseline.pre-containment.prisma');
 const CURRENT_SCHEMA = resolve(process.cwd(), 'prisma/schema.prisma');
