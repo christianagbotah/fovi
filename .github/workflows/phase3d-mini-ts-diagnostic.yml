@@ -1,4 +1,4 @@
-name: Phase 3D Mini-Service Type Diagnostic
+name: Phase 3D Bun Type Alignment Probe
 
 on:
   push:
@@ -9,14 +9,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: phase3d-mini-ts-diagnostic-${{ github.ref }}
+  group: phase3d-bun-type-probe-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  diagnose:
-    name: Mini-service TypeScript diagnostics
+  probe:
+    name: Bun 1.3.4 type alignment
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
@@ -30,21 +30,26 @@ jobs:
         with:
           bun-version: '1.3.4'
 
-      - name: Install exact dependency graph quietly
+      - name: Align Bun types to runtime
         shell: bash
         run: |
           set -euo pipefail
           bun install --frozen-lockfile >/dev/null
+          bun add --dev --exact bun-types@1.3.4 >/dev/null
+          bun install --frozen-lockfile >/dev/null
           for service in auto-trade-engine balance-sync market-service; do
             (cd "mini-services/${service}" && bun install --frozen-lockfile >/dev/null)
           done
+          grep -F '"bun-types": "1.3.4"' package.json
 
-      - name: Print only mini-service compiler diagnostics
+      - name: Re-prove security and TypeScript
         shell: bash
         run: |
-          set +e
-          bunx tsc -p mini-services/tsconfig.json --pretty false > /tmp/mini-ts-errors.txt 2>&1
-          status=$?
-          cat /tmp/mini-ts-errors.txt
-          echo "MINI_TS_EXIT=${status}"
-          exit "$status"
+          set -euo pipefail
+          bun audit --audit-level=high
+          bunx prisma generate >/dev/null
+          bunx tsc --noEmit --pretty false
+          bunx tsc -p mini-services/tsconfig.json --pretty false
+          git diff --check
+          git diff -- package.json bun.lock > /tmp/bun-type-alignment.patch
+          test -s /tmp/bun-type-alignment.patch
