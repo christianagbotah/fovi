@@ -30,10 +30,19 @@ describe('Phase 3B backup/restore disaster-recovery qualification', () => {
   });
 
   it('keeps the deterministic DR fixture demo-only and credential-free', () => {
-    expect(workflow).toContain("'demo', 'demo', 'DR Probe', TRUE");
-    expect(workflow).toContain("COALESCE(a.\"apiKey\",'')");
-    expect(workflow).toContain("COALESCE(a.\"apiSecret\",'')");
-    expect(workflow).toContain("COALESCE(a.passphrase,'')");
+    const tradingAccountSeed = workflow.match(/INSERT INTO "TradingAccount" \([\s\S]*?\n          \);/)?.[0];
+    expect(tradingAccountSeed).toBeDefined();
+    expect(tradingAccountSeed).toContain("'demo', 'demo', 'DR Probe', TRUE");
+    expect(tradingAccountSeed).not.toContain('apiKey');
+    expect(tradingAccountSeed).not.toContain('apiSecret');
+    expect(tradingAccountSeed).not.toContain('passphrase');
+
+    expect(workflow).toContain('apiKey');
+    expect(workflow).toContain('apiSecret');
+    expect(workflow).toContain('passphrase');
+    expect(workflow).toContain("NF == 13 && $11 == \"\" && $12 == \"\" && $13 == \"\"");
+    expect(workflow).toContain('docker run --rm -i --network host');
+
     expect(workflow).not.toMatch(/BINANCE_[A-Z_]*KEY/);
     expect(workflow).not.toMatch(/OKX_[A-Z_]*KEY/);
     expect(workflow).not.toMatch(/ALPACA_[A-Z_]*KEY/);
