@@ -71,13 +71,13 @@ jobs:
             (cd "mini-services/${service}" && bun install --frozen-lockfile)
           done
 
-      - name: Generate Prisma and apply migrations
+      - name: Generate Prisma and apply migrations safely
         shell: bash
         run: |
           set -euo pipefail
           bunx prisma generate
-          bunx prisma migrate deploy
-          bunx prisma migrate deploy
+          bun run scripts/migrate-production.ts
+          bun run scripts/migrate-production.ts
 
       - name: Build production application
         run: bun run build
