@@ -42,7 +42,6 @@ mini-services/**/.env
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -61,6 +60,10 @@ server.log
 
 # tool-results
 tool-results/
+
+# local/runtime database artifacts
+/db/*.db
+/db/*.db-journal
 
 # prisma db files
 prisma/*.db
