@@ -7,8 +7,5 @@
   },
   "devDependencies": {
     "typescript": "^5"
-  },
-  "dependencies": {
-    "postgres": "^3.4.9"
   }
 }
