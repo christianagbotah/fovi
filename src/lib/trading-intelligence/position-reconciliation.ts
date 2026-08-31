@@ -78,9 +78,10 @@ export interface PaperSettlementValues {
   marketObservedAt: Date | string;
 }
 
-export interface PersistedPaperSettlement extends Omit<PaperSettlementValues, 'side'> {
+export interface PersistedPaperSettlement extends Omit<PaperSettlementValues, 'side' | 'closeReason'> {
   id: string;
   side: string;
+  closeReason: string;
 }
 
 export type PaperSettlementValidation =
