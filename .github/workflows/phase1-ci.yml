@@ -75,7 +75,7 @@ jobs:
           echo "Comparison base: $BASE_SHA"
 
       - name: Containment tests
-        run: bun run test:containment
+        run: bun run test:containment-only
 
       - name: Deterministic paper soak gate
         run: bun run test:soak
