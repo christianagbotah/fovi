@@ -1,45 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserId, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
-import { db, hasModel } from '@/lib/db';
-import { createBrokerFromAccount } from '@/lib/broker/factory';
 import { generateSignals } from '@/lib/ai/signals';
-import { getDemoCandles, getAssetType, getDemoPrice } from '@/lib/broker/demo';
-import { v4 as uuidv4 } from 'uuid';
-import type { CandleData } from '@/lib/types';
+import { getAssetType } from '@/lib/broker/demo';
+import {
+  getVerifiedCandles,
+  VERIFIED_CRYPTO_SYMBOLS,
+  toProvenance,
+} from '@/lib/verified-market-data';
+import type { Timeframe } from '@/lib/types';
 
-// Symbols to scan when no specific symbol is requested
-const SCAN_SYMBOLS = ['BTC', 'ETH', 'SOL', 'AAPL', 'NVDA', 'TSLA', 'EURUSD', 'XAUUSD', 'XRP', 'META'];
+const SCAN_SYMBOLS = [...VERIFIED_CRYPTO_SYMBOLS];
 
-// CoinGecko IDs for crypto symbols
-const COINGECKO_IDS: Record<string, string> = {
-  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
-  XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
-  DOT: 'polkadot', LINK: 'chainlink',
-};
-
-const COINGECKO_DAYS_MAP: Record<string, number> = {
-  '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '1d': 30, '1w': 90,
-};
-
-// In-memory cache
-const cache = new Map<string, { data: unknown; ts: number }>();
-const CACHE_TTL = 30_000;
-
-function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
-  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data as T;
-  return null;
-}
-function setCache(key: string, data: unknown) {
-  cache.set(key, { data, ts: Date.now() });
-}
-
-function getTimeframeMs(tf: string): number {
-  const map: Record<string, number> = {
-    '1m': 60000, '5m': 300000, '15m': 900000,
-    '1h': 3600000, '4h': 14400000, '1d': 86400000, '1w': 604800000,
+function getTimeframeMs(tf: Timeframe): number {
+  const map: Record<Timeframe, number> = {
+    '1m': 60_000, '5m': 300_000, '15m': 900_000,
+    '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000,
   };
-  return map[tf] || 3600000;
+  return map[tf];
 }
 
 interface SignalOutput {
@@ -49,7 +26,7 @@ interface SignalOutput {
   direction: string;
   confidence: number;
   signalType: string;
-  timeframe: string;
+  timeframe: Timeframe;
   entryPrice: number;
   stopLoss: number;
   takeProfit: number;
@@ -57,179 +34,86 @@ interface SignalOutput {
   status: string;
   createdAt: string;
   expiresAt: string;
+  dataProvenance: {
+    environment: 'live';
+    isSynthetic: false;
+    source: string;
+    observedAt: string;
+    volumeAvailable: false;
+  };
 }
 
-// ============================================================
-// Fetch REAL candle data from CoinGecko for crypto symbols
-// ============================================================
-async function fetchCoinGeckoCandles(symbol: string, timeframe: string, limit: number): Promise<CandleData[] | null> {
-  const coinId = COINGECKO_IDS[symbol];
-  if (!coinId) return null;
-
-  const cacheKey = `cg_candles_${symbol}_${timeframe}`;
-  const cached = getCached<CandleData[]>(cacheKey);
-  if (cached) return cached;
-
+export async function POST(req: NextRequest) {
   try {
-    const days = COINGECKO_DAYS_MAP[timeframe] ?? 30;
-    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`;
-    const res = await fetch(url, {
-      next: { revalidate: 30 },
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) throw new Error(`CoinGecko OHLC HTTP ${res.status}`);
+    await getUserId(req);
 
-    const raw = (await res.json()) as number[][];
-    const candles = raw.slice(-limit).map((c) => ({
-      timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: 0,
-    }));
+    const body = await req.json().catch(() => ({}));
+    const requestedSymbol = typeof body.symbol === 'string' ? body.symbol.trim().toUpperCase() : '';
+    const timeframe = (typeof body.timeframe === 'string' ? body.timeframe : '4h') as Timeframe;
+    const riskTolerance = body.riskTolerance || 'medium';
+    const symbols = requestedSymbol ? [requestedSymbol] : SCAN_SYMBOLS;
 
-    if (candles.length === 0) return null;
-    setCache(cacheKey, candles);
-    return candles;
-  } catch (err) {
-    console.warn(`[signals/generate] CoinGecko failed for ${symbol}:`, err);
-    return null;
-  }
-}
+    if (timeframe !== '4h') {
+      return NextResponse.json(
+        { error: `Verified ${timeframe} signal data is not currently available`, code: 'UNSUPPORTED_MARKET_DATA', dataPolicy: 'verified-only' },
+        { status: 422, headers: { 'x-data-policy': 'verified-only' } },
+      );
+    }
 
-// ============================================================
-// Fetch real current price from CoinGecko
-// ============================================================
-async function fetchCoinGeckoPrice(symbol: string): Promise<number | null> {
-  const coinId = COINGECKO_IDS[symbol];
-  if (!coinId) return null;
+    const allSignals: SignalOutput[] = [];
+    const unavailable: Array<{ symbol: string; code: string }> = [];
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + getTimeframeMs(timeframe) * 3);
 
-  const cacheKey = `cg_price_${symbol}`;
-  const cached = getCached<number>(cacheKey);
-  if (cached) return cached;
+    for (const symbol of symbols) {
+      const candleResult = await getVerifiedCandles(symbol, timeframe, 100);
+      if (!candleResult.ok) {
+        unavailable.push({ symbol, code: candleResult.code });
+        continue;
+      }
 
-  try {
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
-    const res = await fetch(url, { next: { revalidate: 15 } });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const price = data[coinId]?.usd;
-    if (price) setCache(cacheKey, price);
-    return price || null;
-  } catch { return null; }
-}
+      const candidates = generateSignals(symbol, candleResult.candles, timeframe, riskTolerance);
+      const lastClose = candleResult.candles[candleResult.candles.length - 1]?.close ?? 0;
+      const prov = toProvenance(candleResult.metadata);
 
-// ============================================================
-// Get candles: try real sources first, demo as last resort
-// ============================================================
-async function getCandlesForSymbol(symbol: string, timeframe: string, limit: number): Promise<CandleData[]> {
-  // 1. Try CoinGecko for crypto
-  const cgCandles = await fetchCoinGeckoCandles(symbol, timeframe, limit);
-  if (cgCandles && cgCandles.length >= 30) return cgCandles;
-
-  // Phase 1: Skip broker candle lookup. Use CoinGecko or demo candles.
-  // 2. Last resort: demo candles
-  return getDemoCandles(symbol, timeframe, limit);
-}
-
-// ============================================================
-// Get current price: real source first
-// ============================================================
-async function getPriceForSymbol(symbol: string): Promise<number> {
-  // Try CoinGecko for crypto
-  const cgPrice = await fetchCoinGeckoPrice(symbol);
-  if (cgPrice) return cgPrice;
-
-  // Phase 1: Skip broker price lookup. Use CoinGecko or demo price.
-  // Fallback
-  return getDemoPrice(symbol);
-}
-
-// ============================================================
-// Core signal generation with real data
-// ============================================================
-async function generateRealSignals(
-  symbols: string[],
-  timeframe: string,
-  riskTolerance: string,
-): Promise<SignalOutput[]> {
-  const allSignals: SignalOutput[] = [];
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + getTimeframeMs(timeframe) * 3);
-
-  for (const symbol of symbols) {
-    try {
-      // Get REAL candles
-      const candles = await getCandlesForSymbol(symbol, timeframe, 100);
-      if (candles.length < 30) continue;
-
-      // Run technical analysis on real data
-      const candidates = generateSignals(symbol, candles, timeframe as any, riskTolerance as any);
-
-      // Get real current price
-      const price = await getPriceForSymbol(symbol);
-
-      for (const c of candidates) {
+      for (const candidate of candidates) {
         allSignals.push({
-          id: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          id: `sig_${crypto.randomUUID()}`,
           symbol,
           assetType: getAssetType(symbol),
-          direction: c.direction,
-          confidence: Math.round(c.confidence),
-          signalType: c.signalType,
+          direction: candidate.direction,
+          confidence: Math.round(candidate.confidence),
+          signalType: candidate.signalType,
           timeframe,
-          entryPrice: c.entryPrice || price,
-          stopLoss: c.stopLoss || 0,
-          takeProfit: c.takeProfit || 0,
-          reasoning: c.reasoning,
+          entryPrice: candidate.entryPrice || lastClose,
+          stopLoss: candidate.stopLoss || 0,
+          takeProfit: candidate.takeProfit || 0,
+          reasoning: candidate.reasoning,
           status: 'active',
           createdAt: now.toISOString(),
           expiresAt: expiresAt.toISOString(),
+          dataProvenance: {
+            environment: 'live', isSynthetic: false, source: prov.source,
+            observedAt: prov.observedAt, volumeAvailable: false,
+          },
         });
       }
-    } catch (err) {
-      console.warn(`[signals/generate] Error analyzing ${symbol}:`, err);
-    }
-  }
-
-  return allSignals.sort((a, b) => b.confidence - a.confidence);
-}
-
-// ============================================================
-// Persist signals to database
-// Phase 1: Signals are NOT persisted because the generate endpoint
-// does not have authenticated user context. Returns signals
-// directly without DB persistence.
-// ============================================================
-async function persistSignalsToDb(_signals: SignalOutput[]): Promise<void> {
-  // Phase 1: no-op. Signal persistence requires authenticated user context.
-}
-
-// ============================================================
-// POST handler
-// CR4.3B: Auth BEFORE body parse / network / compute
-// ============================================================
-export async function POST(req: NextRequest) {
- try {
-    // CR4.3B: Auth at the very start, before body / network / compute
-    const userId = await getUserId(req);
-
-    const body = await req.json().catch(() => ({}));
-    const symbol = body.symbol || '';
-    const timeframe = body.timeframe || '1h';
-    const riskTolerance = body.riskTolerance || 'medium';
-    const symbols = symbol ? [symbol.toUpperCase()] : SCAN_SYMBOLS;
-
-    // Generate signals using real market data
-    const signals = await generateRealSignals(symbols, timeframe, riskTolerance);
-
-    // Persist to database in background (don't block response)
-    if (signals.length > 0) {
-      persistSignalsToDb(signals).catch(() => {});
     }
 
-    return NextResponse.json(signals);
+    if (requestedSymbol && allSignals.length === 0 && unavailable.length > 0) {
+      const code = unavailable[0].code;
+      return NextResponse.json(
+        { error: `Verified market data is unavailable for ${requestedSymbol}`, code, dataPolicy: 'verified-only' },
+        { status: code === 'UNSUPPORTED_MARKET_DATA' ? 422 : 503, headers: { 'x-data-policy': 'verified-only' } },
+      );
+    }
+
+    return NextResponse.json(allSignals, {
+      headers: { 'x-data-policy': 'verified-only', 'x-unavailable-symbol-count': String(unavailable.length) },
+    });
   } catch (error) {
-    if (error instanceof AuthRequiredError) {
-      return authRequiredResponse();
-    }
+    if (error instanceof AuthRequiredError) return authRequiredResponse();
     console.error('[signals/generate] Error:', error);
-    return NextResponse.json({ error: 'Failed to generate signals' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to generate verified signals' }, { status: 500 });
   }
 }
