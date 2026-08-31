@@ -1,11 +1,12 @@
 // ============================================================
 // Fovi Auto-Trade Engine — Thin Startup Entry Point
-// Phase 2D:
+// Phase 2E:
 //   - Next.js internal APIs are the single control/persistence plane.
 //   - No direct database reads/writes from the mini-service.
+//   - Every enabled cycle hydrates authoritative persisted open positions.
 //   - process-bot-core owns eligibility + strategy + risk decisions.
-//   - Automated order intents go only to the audited paper adapter.
-//   - Returned persisted positions are the only accepted execution truth.
+//   - Opens and closes go only to deterministic audited paper adapters.
+//   - Persisted API responses are the only accepted execution truth.
 // ============================================================
 
 import { createHash, timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
@@ -18,9 +19,15 @@ import {
   type FetchCandlesDeps,
 } from './engine-core';
 import { validateEngineProvenance } from './market-provenance';
-import { processBotCore, type BotRow as ProcessBotRow, type ProcessBotDeps } from './process-bot-core';
+import {
+  processBotCore,
+  type BotRow as ProcessBotRow,
+  type EnginePosition,
+  type ProcessBotDeps,
+} from './process-bot-core';
 import { evaluateEngineAccountEligibility } from '../../src/lib/engine-eligibility';
 import { buildPaperExecutionIntent } from '../../src/lib/trading-intelligence/execution-contract';
+import { buildPaperCloseIntent } from '../../src/lib/trading-intelligence/position-reconciliation';
 import { STRATEGY_ENGINE_VERSION } from '../../src/lib/trading-intelligence/strategy-engine';
 
 // ============================================================
@@ -79,21 +86,6 @@ interface BotRow {
   } | null;
 }
 
-interface InMemoryPosition {
-  id: string;
-  botId: string;
-  accountId: string;
-  symbol: string;
-  side: 'long' | 'short';
-  qty: number;
-  avgEntryPrice: number;
-  currentPrice: number;
-  stopLoss: number | null;
-  takeProfit: number | null;
-  openedAt: number;
-  unrealizedPnl: number;
-}
-
 interface ActivityEntry {
   id: string;
   timestamp: string;
@@ -116,11 +108,12 @@ type ActivityInput = Pick<ActivityEntry, 'type' | 'botId' | 'botName' | 'symbol'
 // ============================================================
 // In-Memory Read Cache
 // ============================================================
-// This cache is NOT execution truth. New positions enter it only from the
-// persisted response returned by /api/trading/engine/execute. Phase 2E will
-// add restart hydration and durable close reconciliation from the API.
+// This cache is never execution truth. Before each enabled cycle it is
+// replaced atomically from /api/trading/engine/positions. New opens are also
+// accepted only from persisted /engine/execute responses. Durable closes are
+// removed only after /engine/close returns a persisted closed Position.
 
-const positions = new Map<string, InMemoryPosition>();
+const positions = new Map<string, EnginePosition>();
 const activityLog: ActivityEntry[] = [];
 const MAX_ACTIVITY = 200;
 
@@ -192,6 +185,7 @@ Bun.serve({
         pollIntervalMs: POLL_INTERVAL_MS,
         automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
         controlPlane: 'nextjs-internal-api',
+        positionTruth: 'persisted-db-hydration',
       });
     }
 
@@ -207,6 +201,7 @@ Bun.serve({
         activeBots: lastActiveBotCount,
         automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
         controlPlane: 'nextjs-internal-api',
+        positionTruth: 'persisted-db-hydration',
       });
     }
 
@@ -281,8 +276,85 @@ async function callNextJSApi(
   }
 }
 
+function parseHydratedPosition(value: unknown): EnginePosition | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const id = typeof raw.id === 'string' ? raw.id : '';
+  const botId = typeof raw.botId === 'string' ? raw.botId : '';
+  const accountId = typeof raw.accountId === 'string' ? raw.accountId : '';
+  const symbol = typeof raw.symbol === 'string' ? raw.symbol.trim().toUpperCase() : '';
+  const side = raw.side === 'long' ? 'long' : raw.side === 'short' ? 'short' : null;
+  const qty = Number(raw.qty);
+  const avgEntryPrice = Number(raw.avgEntryPrice);
+  const currentPrice = Number(raw.currentPrice);
+  const unrealizedPnl = Number(raw.unrealizedPnl ?? 0);
+  const openedAt = Date.parse(String(raw.openedAt || ''));
+  const stopLoss = raw.stopLoss === null || raw.stopLoss === undefined ? null : Number(raw.stopLoss);
+  const takeProfit = raw.takeProfit === null || raw.takeProfit === undefined ? null : Number(raw.takeProfit);
+
+  if (
+    raw.executionEnvironment !== 'paper' ||
+    !id.startsWith('ppos_') || !botId || !accountId || !symbol || !side ||
+    !Number.isFinite(qty) || qty <= 0 ||
+    !Number.isFinite(avgEntryPrice) || avgEntryPrice <= 0 ||
+    !Number.isFinite(currentPrice) || currentPrice <= 0 ||
+    !Number.isFinite(unrealizedPnl) ||
+    !Number.isFinite(openedAt) ||
+    (stopLoss !== null && (!Number.isFinite(stopLoss) || stopLoss <= 0)) ||
+    (takeProfit !== null && (!Number.isFinite(takeProfit) || takeProfit <= 0))
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    botId,
+    accountId,
+    symbol,
+    side,
+    qty,
+    avgEntryPrice,
+    currentPrice,
+    stopLoss,
+    takeProfit,
+    openedAt,
+    unrealizedPnl,
+  };
+}
+
+async function hydrateAuthoritativePositions(): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  const result = await callNextJSApi('GET', '/api/trading/engine/positions');
+  if (!result.ok || !Array.isArray(result.data)) {
+    return { ok: false, error: result.error || 'Authoritative position feed returned no position array.' };
+  }
+
+  const nextPositions = new Map<string, EnginePosition>();
+  const exposureKeys = new Set<string>();
+  for (const value of result.data) {
+    const position = parseHydratedPosition(value);
+    if (!position) {
+      return { ok: false, error: 'Authoritative position feed contained an invalid paper position.' };
+    }
+    if (nextPositions.has(position.id)) {
+      return { ok: false, error: `Duplicate persisted paper position ID: ${position.id}` };
+    }
+    const exposureKey = `${position.botId}|${position.accountId}|${position.symbol}`;
+    if (exposureKeys.has(exposureKey)) {
+      return { ok: false, error: `Duplicate persisted paper exposure: ${exposureKey}` };
+    }
+    exposureKeys.add(exposureKey);
+    nextPositions.set(position.id, position);
+  }
+
+  // Replace only after the entire payload validates, so a partial/invalid feed
+  // can never erase known positions and accidentally create replacement risk.
+  positions.clear();
+  for (const [id, position] of nextPositions) positions.set(id, position);
+  return { ok: true, count: positions.size };
+}
+
 // ============================================================
-// Main Execution Cycle — one bot source only
+// Main Execution Cycle — one bot/config source, one position-truth source
 // ============================================================
 
 async function runCycle() {
@@ -299,14 +371,21 @@ async function runCycle() {
   }
 
   try {
+    // Restart/crash safety: authoritative persisted positions MUST hydrate
+    // successfully before bot analysis. If hydration fails, no strategy/risk
+    // processing occurs, so the engine cannot mistake unknown exposure for zero.
+    const hydration = await hydrateAuthoritativePositions();
+    if (!hydration.ok) {
+      throw new Error(`Position hydration failed: ${hydration.error}`);
+    }
+    console.log(`[AutoTrade] Hydrated ${hydration.count} persisted paper position(s)`);
+
     // The authenticated Next.js endpoint is the ONLY bot/config source. It
     // enforces account eligibility and the canonical bot policy before a bot
     // reaches this mini-service.
     const result = await callNextJSApi('GET', '/api/trading/engine/bots');
     if (!result.ok || !Array.isArray(result.data)) {
-      console.warn('[AutoTrade] Failed to fetch bots from API:', result.error);
-      lastCycleError = result.error || 'Failed to fetch bots';
-      return;
+      throw new Error(result.error || 'Failed to fetch bots from API');
     }
 
     const botConfigs = result.data as BotRow[];
@@ -337,6 +416,7 @@ async function runCycle() {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error('[AutoTrade] ✗ Cycle failed:', errMsg);
     lastCycleError = errMsg;
+    lastActiveBotCount = 0;
     addActivity({ type: 'error', botId: 'system', botName: 'System', symbol: '—', error: errMsg });
   }
 
@@ -362,6 +442,7 @@ async function processBot(config: BotRow) {
     addActivity: (entry) => addActivity(entry as ActivityInput),
     callNextJSApi,
     executeTrade,
+    closePosition,
     automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
     allSymbols: ALL_SYMBOLS,
     evaluateEngineAccountEligibility,
@@ -433,45 +514,26 @@ async function executeTrade(
     throw new Error('Paper execution adapter did not return persisted order and position truth.');
   }
 
-  const positionId = String(positionData.id || '');
-  const qty = Number(positionData.qty);
-  const avgEntryPrice = Number(positionData.avgEntryPrice);
-  const currentPrice = Number(positionData.currentPrice);
-  const side = positionData.side === 'short' ? 'short' : positionData.side === 'long' ? 'long' : null;
-  if (!positionId || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(avgEntryPrice) || avgEntryPrice <= 0 || !side) {
+  const hydrated = parseHydratedPosition({ ...positionData, executionEnvironment: 'paper' });
+  if (!hydrated || hydrated.botId !== config.id || hydrated.accountId !== config.accountId) {
     throw new Error('Paper execution adapter returned an invalid persisted position.');
   }
-
-  const openedAtMs = positionData.openedAt ? Date.parse(String(positionData.openedAt)) : Date.now();
-  positions.set(positionId, {
-    id: positionId,
-    botId: config.id,
-    accountId: config.accountId,
-    symbol: String(positionData.symbol || trade.symbol),
-    side,
-    qty,
-    avgEntryPrice,
-    currentPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : avgEntryPrice,
-    stopLoss: positionData.stopLoss === null || positionData.stopLoss === undefined ? null : Number(positionData.stopLoss),
-    takeProfit: positionData.takeProfit === null || positionData.takeProfit === undefined ? null : Number(positionData.takeProfit),
-    openedAt: Number.isFinite(openedAtMs) ? openedAtMs : Date.now(),
-    unrealizedPnl: Number.isFinite(Number(positionData.unrealizedPnl)) ? Number(positionData.unrealizedPnl) : 0,
-  });
+  positions.set(hydrated.id, hydrated);
 
   const orderId = String(orderData.id || intent.executionIntentId);
-  const fillPrice = Number(orderData.filledPrice ?? avgEntryPrice);
+  const fillPrice = Number(orderData.filledPrice ?? hydrated.avgEntryPrice);
   console.log(`  Paper order reconciled: id=${orderId} idempotent=${payload.idempotent === true}`);
 
   // Idempotent retries only rehydrate persisted truth; they do not create a
-  // second trade-open report/stat event.
+  // second trade-open activity/report event.
   if (payload.idempotent !== true) {
     void callNextJSApi('POST', '/api/trading/engine/report', {
       botId: config.id,
       tradeType: 'opened',
       symbol: trade.symbol,
       side: trade.side,
-      qty,
-      price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : avgEntryPrice,
+      qty: hydrated.qty,
+      price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : hydrated.avgEntryPrice,
       executionIntentId: intent.executionIntentId,
       executionEnvironment: 'paper',
     });
@@ -481,10 +543,67 @@ async function executeTrade(
       botName: config.name,
       symbol: trade.symbol,
       side: trade.side,
-      qty,
-      price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : avgEntryPrice,
+      qty: hydrated.qty,
+      price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : hydrated.avgEntryPrice,
     });
   }
+}
+
+// ============================================================
+// Close a Position — deterministic durable paper settlement only
+// ============================================================
+
+async function closePosition(
+  config: ProcessBotRow,
+  position: EnginePosition,
+  close: Parameters<ProcessBotDeps['closePosition']>[2],
+) {
+  if (!config.userId) throw new Error('Paper close requires a verified bot userId.');
+
+  const intent = buildPaperCloseIntent({
+    userId: config.userId,
+    botId: config.id,
+    accountId: config.accountId,
+    positionId: position.id,
+    symbol: position.symbol,
+    side: position.side,
+    quantity: position.qty,
+    referencePrice: close.price,
+    reason: close.reason,
+    marketData: close.marketData,
+  });
+
+  const result = await callNextJSApi(
+    'POST',
+    '/api/trading/engine/close',
+    intent as unknown as Record<string, unknown>,
+  );
+  if (!result.ok || !result.data || typeof result.data !== 'object') {
+    throw new Error(result.error || 'Paper close adapter returned no result.');
+  }
+
+  const payload = result.data as {
+    idempotent?: boolean;
+    order?: Record<string, unknown>;
+    position?: Record<string, unknown> | null;
+  };
+  const orderData = payload.order;
+  const positionData = payload.position;
+  if (!orderData || !positionData) {
+    throw new Error('Paper close adapter did not return persisted close order and position truth.');
+  }
+  if (
+    String(positionData.id || '') !== position.id ||
+    String(positionData.status || '') !== 'closed' ||
+    String(positionData.botId || '') !== config.id ||
+    String(positionData.accountId || '') !== config.accountId
+  ) {
+    throw new Error('Paper close adapter returned invalid persisted closed-position truth.');
+  }
+
+  console.log(
+    `  Paper close reconciled: position=${position.id} order=${String(orderData.id || '')} idempotent=${payload.idempotent === true}`,
+  );
 }
 
 // ============================================================
