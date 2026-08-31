@@ -3,7 +3,7 @@ import { validateProductionEnvDry } from '@/lib/production-check';
 
 const ORIGINAL_ENV = process.env;
 
-function validProductionEnv() {
+function validProductionEnv(): NodeJS.ProcessEnv {
   return {
     ...ORIGINAL_ENV,
     NODE_ENV: 'production',
