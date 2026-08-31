@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PAPER_SETTLEMENT_ACCOUNTING_VERSION,
+  POSITION_RECONCILIATION_CONTRACT_VERSION,
   buildPaperCloseIntent,
   buildPaperCloseOrderId,
+  buildPaperSettlementId,
   calculatePaperRawPnl,
   computePaperCloseIntentId,
   validatePaperCloseAgainstPosition,
   validatePaperCloseIntent,
+  validatePaperSettlement,
+  type PaperSettlementValues,
 } from '@/lib/trading-intelligence/position-reconciliation';
 
 function makeIntent(overrides: Record<string, unknown> = {}) {
@@ -46,7 +51,37 @@ function persistedPosition(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('Phase 2E paper close contract', () => {
+function settlementValues(overrides: Partial<PaperSettlementValues> = {}): PaperSettlementValues {
+  return {
+    positionId: 'ppos_abc123',
+    closeOrderId: buildPaperCloseOrderId('ppos_abc123'),
+    userId: 'user-1',
+    accountId: 'acc-1',
+    botId: 'bot-1',
+    symbol: 'BTC',
+    side: 'long',
+    quantity: 0.5,
+    entryPrice: 50_000,
+    exitPrice: 53_000,
+    rawPnl: 1_500,
+    adminLevyPercent: 10,
+    adminLevy: 150,
+    realizedPnl: 1_350,
+    balanceBefore: 100_000,
+    balanceAfter: 101_350,
+    closeReason: 'take_profit',
+    marketDataSource: 'coingecko',
+    marketObservedAt: '2026-08-31T07:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('Phase 2G paper close and settlement contract', () => {
+  it('uses the current Phase 2G close/accounting versions', () => {
+    expect(POSITION_RECONCILIATION_CONTRACT_VERSION).toBe('phase2g-paper-position-close-v2');
+    expect(PAPER_SETTLEMENT_ACCOUNTING_VERSION).toBe('phase2g-paper-settlement-v1');
+  });
+
   it('builds a deterministic integrity ID from the full close snapshot', () => {
     const a = makeIntent();
     const b = makeIntent({ marketData: { ...a.marketData } });
@@ -54,9 +89,43 @@ describe('Phase 2E paper close contract', () => {
     expect(a.closeIntentId).toBe(computePaperCloseIntentId(a));
   });
 
-  it('uses a position-stable close order ID for durable idempotency', () => {
+  it('uses position-stable close order and settlement IDs for durable idempotency', () => {
     expect(buildPaperCloseOrderId('ppos_abc123')).toBe(buildPaperCloseOrderId('ppos_abc123'));
     expect(buildPaperCloseOrderId('ppos_abc123')).not.toBe(buildPaperCloseOrderId('ppos_other'));
+    expect(buildPaperSettlementId('ppos_abc123')).toBe(buildPaperSettlementId('ppos_abc123'));
+    expect(buildPaperSettlementId('ppos_abc123')).not.toBe(buildPaperSettlementId('ppos_other'));
+    expect(buildPaperSettlementId('ppos_abc123')).toMatch(/^psett_[a-f0-9]{40}$/);
+  });
+
+  it('validates exact durable settlement truth', () => {
+    const expected = settlementValues();
+    const actual = {
+      id: buildPaperSettlementId(expected.positionId),
+      ...expected,
+      marketObservedAt: new Date(expected.marketObservedAt),
+    };
+    expect(validatePaperSettlement(expected, actual)).toEqual({ valid: true });
+  });
+
+  it('rejects tampered settlement money/balance truth', () => {
+    const expected = settlementValues();
+    const actual = {
+      id: buildPaperSettlementId(expected.positionId),
+      ...expected,
+      balanceAfter: expected.balanceAfter + 1,
+      marketObservedAt: new Date(expected.marketObservedAt),
+    };
+    expect(validatePaperSettlement(expected, actual)).toEqual(expect.objectContaining({
+      valid: false,
+      code: 'PAPER_SETTLEMENT_MISMATCH',
+    }));
+  });
+
+  it('rejects a missing deterministic settlement row', () => {
+    expect(validatePaperSettlement(settlementValues(), null)).toEqual(expect.objectContaining({
+      valid: false,
+      code: 'PAPER_SETTLEMENT_MISMATCH',
+    }));
   });
 
   it('rejects tampering after the close intent is built', () => {
