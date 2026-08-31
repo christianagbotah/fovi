@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:containment": "vitest run --reporter=verbose src/__tests__/containment/",
+    "test:soak": "vitest run --reporter=verbose src/__tests__/soak/",
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
