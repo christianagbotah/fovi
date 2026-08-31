@@ -1,15 +1,21 @@
 // ============================================================
 // POST/GET /api/trading/orders
-// Phase 1 CR2: Strict auth, demo provenance, hard-block live orders.
+// Manual demo orders remain available under containment.
+// Phase 2C: automated/AI orders stay blocked until the audited execution adapter.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, hasModel } from '@/lib/db';
-import { getUserId, getUserIdSync, AuthRequiredError, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserId, getUserIdSync, authRequiredResponse } from '@/lib/get-user-id';
 import { createBrokerFromAccount, BrokerFactoryError } from '@/lib/broker/factory';
-import { saveDemoPositionSLTP } from '@/lib/demo-sltp-store';
-import { enforceLiveTradingPolicy, CONTAINMENT_CODES, DEMO_PROVENANCE_HEADER, isExplicitlyDemo, logSecurityEvent } from '@/lib/trading-policy';
+import {
+  enforceLiveTradingPolicy,
+  CONTAINMENT_CODES,
+  DEMO_PROVENANCE_HEADER,
+  isExplicitlyDemo,
+  logSecurityEvent,
+} from '@/lib/trading-policy';
 import { v4 as uuidv4 } from 'uuid';
 
 const OrderSchema = z.object({
@@ -26,15 +32,9 @@ const OrderSchema = z.object({
   signalId: z.string().optional(),
 });
 
-type OrderInput = z.infer<typeof OrderSchema>;
-
 export async function GET(req: NextRequest) {
   let userId: string;
-  try {
-    userId = getUserIdSync(req);
-  } catch {
-    return authRequiredResponse();
-  }
+  try { userId = getUserIdSync(req); } catch { return authRequiredResponse(); }
 
   if (!db || !hasModel('tradingAccount')) {
     return NextResponse.json(
@@ -45,18 +45,13 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const accountId = searchParams.get('accountId');
-
     const account = await db.tradingAccount.findFirst({
       where: { userId, ...(accountId ? { id: accountId } : { isDefault: true }) },
     });
-    if (!account) {
-      return NextResponse.json([]);
-    }
+    if (!account) return NextResponse.json([]);
 
     const orders = await db.order.findMany({
-      where: { accountId: account.id },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
+      where: { accountId: account.id }, orderBy: { createdAt: 'desc' }, take: 50,
     });
     return NextResponse.json(orders);
   } catch (error) {
@@ -70,13 +65,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   let userId: string;
-  try {
-    userId = await getUserId(req);
-  } catch {
-    return authRequiredResponse();
-  }
+  try { userId = await getUserId(req); } catch { return authRequiredResponse(); }
 
-  const raw = await req.json();
+  const raw = await req.json().catch(() => null);
   const parsed = OrderSchema.safeParse(raw);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
@@ -85,7 +76,32 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { symbol, side, type, qty, limitPrice, stopLoss, takeProfit, assetType, accountId, aiGenerated, signalId } = parsed.data;
+
+  const {
+    symbol, side, type, qty, limitPrice, stopLoss, takeProfit,
+    assetType, accountId, aiGenerated, signalId,
+  } = parsed.data;
+
+  // Phase 2C builds the canonical strategy/risk decision contract, but it is
+  // intentionally NOT an execution authorization. Automated orders need a
+  // future server-to-server execution adapter that revalidates an auditable
+  // decision envelope. Never trust a client-supplied aiGenerated flag.
+  if (aiGenerated === true) {
+    logSecurityEvent({
+      eventType: 'AUTOMATED_ORDER_EXECUTION_BLOCKED',
+      route: '/api/trading/orders',
+      userId,
+      reason: `Blocked direct automated order submission for ${side} ${symbol}`,
+    });
+    return NextResponse.json(
+      {
+        error: 'Automated order execution is not enabled. Canonical strategy/risk approval is not execution authorization.',
+        code: 'PHASE2C_AUTOMATED_ORDER_EXECUTION_DISABLED',
+        remediationPhase: 'phase-2d-execution-adapter',
+      },
+      { status: 403 },
+    );
+  }
 
   if (!db || !hasModel('tradingAccount')) {
     logSecurityEvent({
@@ -101,11 +117,8 @@ export async function POST(req: NextRequest) {
   try {
     const whereClause = accountId ? { id: accountId, userId } : { userId, isDefault: true };
     const account = await db.tradingAccount.findFirst({ where: whereClause });
-    if (!account) {
-      return NextResponse.json({ error: 'No account found' }, { status: 404 });
-    }
+    if (!account) return NextResponse.json({ error: 'No account found' }, { status: 404 });
 
-    // ── CONTAINMENT: Enforce live-trading policy ──
     const policy = enforceLiveTradingPolicy(account, `order placement (${side} ${qty} ${symbol})`);
     if (policy.blocked) return policy.response;
 
@@ -124,46 +137,50 @@ export async function POST(req: NextRequest) {
         id: orderId, accountId: account.id, brokerOrderId: result.orderId,
         symbol, assetType: assetType || 'stock', side, type: type || 'market', qty,
         filledQty: result.filledQty, filledPrice: result.filledPrice,
-        status: result.status, aiGenerated: aiGenerated || false, signalId,
-        reason: signalId ? 'Signal-based entry' : 'Manual trade',
+        status: result.status, aiGenerated: false, signalId,
+        reason: signalId ? 'Signal reference on manual demo order' : 'Manual trade',
       },
     });
 
-    if (result.filledPrice && result.filledQty > 0 && side !== 'sell') {
-      if (hasModel('position')) {
-        const aType = assetType || 'stock';
-        try {
-          await db.position.upsert({
-            where: { id: `${account.id}_${symbol}` },
-            create: {
-              id: `${account.id}_${symbol}`, accountId: account.id, symbol, assetType: aType,
-              side: 'long', qty: result.filledQty, avgEntryPrice: result.filledPrice,
-              currentPrice: result.filledPrice, stopLoss: stopLoss ?? null,
-              takeProfit: takeProfit ?? null, status: 'open', openedAt: new Date(),
-            },
-            update: {
-              qty: { increment: result.filledQty }, avgEntryPrice: result.filledPrice,
-              currentPrice: result.filledPrice, stopLoss: stopLoss ?? undefined,
-              takeProfit: takeProfit ?? undefined,
-            },
-          });
-        } catch (posErr) {
-          logSecurityEvent({
-            eventType: 'ORDER_POSITION_UPSERT_ERROR', route: '/api/trading/orders', userId,
-            reason: posErr instanceof Error ? posErr.message : 'Unknown',
-          });
-        }
+    if (result.filledPrice && result.filledQty > 0 && side !== 'sell' && hasModel('position')) {
+      const aType = assetType || 'stock';
+      try {
+        await db.position.upsert({
+          where: { id: `${account.id}_${symbol}` },
+          create: {
+            id: `${account.id}_${symbol}`, accountId: account.id, symbol, assetType: aType,
+            side: 'long', qty: result.filledQty, avgEntryPrice: result.filledPrice,
+            currentPrice: result.filledPrice, stopLoss: stopLoss ?? null,
+            takeProfit: takeProfit ?? null, status: 'open', openedAt: new Date(),
+          },
+          update: {
+            qty: { increment: result.filledQty }, avgEntryPrice: result.filledPrice,
+            currentPrice: result.filledPrice, stopLoss: stopLoss ?? undefined,
+            takeProfit: takeProfit ?? undefined,
+          },
+        });
+      } catch (posErr) {
+        logSecurityEvent({
+          eventType: 'ORDER_POSITION_UPSERT_ERROR', route: '/api/trading/orders', userId,
+          reason: posErr instanceof Error ? posErr.message : 'Unknown',
+        });
       }
     }
 
-    // Submit SL/TP as actual broker orders
+    // Manual demo SL/TP behavior is preserved. Live accounts are blocked above.
     if (result.filledPrice && result.filledQty > 0 && (stopLoss || takeProfit)) {
       try {
         if (stopLoss) {
-          await broker.placeOrder({ symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'stop', qty: result.filledQty, stopPrice: stopLoss });
+          await broker.placeOrder({
+            symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'stop',
+            qty: result.filledQty, stopPrice: stopLoss,
+          });
         }
         if (takeProfit) {
-          await broker.placeOrder({ symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'limit', qty: result.filledQty, limitPrice: takeProfit });
+          await broker.placeOrder({
+            symbol, side: side === 'buy' ? 'sell' : 'buy', type: 'limit',
+            qty: result.filledQty, limitPrice: takeProfit,
+          });
         }
       } catch (sltpErr) {
         logSecurityEvent({
@@ -173,8 +190,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // CR4.3B: Tenant-scoped account mutation
-    const { count: syncCount } = await db.tradingAccount.updateMany({ where: { id: account.id, userId }, data: { lastSyncedAt: new Date() } });
+    const { count: syncCount } = await db.tradingAccount.updateMany({
+      where: { id: account.id, userId }, data: { lastSyncedAt: new Date() },
+    });
     if (syncCount === 0) {
       logSecurityEvent({
         eventType: 'ORDERS_POST_SYNC_FAILED', route: '/api/trading/orders', userId,
@@ -183,10 +201,7 @@ export async function POST(req: NextRequest) {
     }
 
     const responseHeaders: Record<string, string> = {};
-    if (isExplicitlyDemo(account)) {
-      Object.assign(responseHeaders, DEMO_PROVENANCE_HEADER);
-    }
-
+    if (isExplicitlyDemo(account)) Object.assign(responseHeaders, DEMO_PROVENANCE_HEADER);
     return NextResponse.json(order, { headers: responseHeaders });
   } catch (error) {
     logSecurityEvent({
