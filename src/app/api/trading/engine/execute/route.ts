@@ -1,12 +1,16 @@
 // ============================================================
 // POST /api/trading/engine/execute
-// Phase 2D: internal, idempotent PAPER execution adapter.
+// Phase 2F: internal, idempotent PAPER execution adapter.
 // ------------------------------------------------------------
 // This route never constructs a live broker and never accepts a user session
 // as execution authority. It requires internal-service authentication, an
-// explicitly demo-only account, a canonical Phase 2C strategy/risk envelope,
-// verified non-synthetic market-data provenance, and a separate paper-only
-// feature flag. Fills are deterministic at the verified reference snapshot.
+// explicitly demo-only account, a canonical strategy/risk envelope, verified
+// non-synthetic market-data provenance, and a separate paper-only feature
+// flag. Fills are deterministic at the verified reference snapshot.
+//
+// Phase 2F also verifies persisted opening Order + Position truth on every
+// idempotent replay. An orphan Order, mismatched Position, or replay of an
+// already-settled lifecycle fails closed instead of being reported as success.
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -20,6 +24,7 @@ import {
   buildPaperPositionId,
   nearlyEqual,
   validatePaperExecutionIntent,
+  validatePersistedPaperExecutionResult,
   type PaperExecutionIntent,
 } from '@/lib/trading-intelligence/execution-contract';
 import {
@@ -72,7 +77,7 @@ export function isPaperAutomatedExecutionEnabled(): boolean {
 
 function executionError(status: number, code: string, error: string) {
   return NextResponse.json(
-    { error, code, remediationPhase: 'phase-2d-execution-reconciliation' },
+    { error, code, remediationPhase: 'phase-2f-paper-lifecycle-recovery' },
     { status },
   );
 }
@@ -138,6 +143,8 @@ export async function POST(req: Request) {
     return executionError(503, 'SERVICE_UNAVAILABLE', 'Execution persistence is unavailable. No order was created.');
   }
 
+  const positionId = buildPaperPositionId(intent);
+
   try {
     const bot = await db.bot.findFirst({
       where: {
@@ -196,19 +203,37 @@ export async function POST(req: Request) {
       );
     }
 
-    // Durable idempotency: the deterministic execution-intent ID IS the Order ID.
-    // A retry can only return the already-persisted result; it cannot place a
-    // second paper fill for the same canonical decision.
+    // Durable idempotency: the deterministic execution-intent ID IS the Order
+    // ID. The corresponding Position ID is also derived from that same intent.
+    // A retry succeeds only when BOTH persisted records match the canonical
+    // intent and the position is still open.
     const existingOrder = await db.order.findUnique({ where: { id: intent.executionIntentId } });
     if (existingOrder) {
       const existingPosition = await db.position.findFirst({
         where: {
+          id: positionId,
           botId: intent.botId,
           accountId: intent.accountId,
           symbol: intent.symbol,
-          status: 'open',
         },
       });
+      const reconciliation = validatePersistedPaperExecutionResult(intent, existingOrder, existingPosition);
+      if (!reconciliation.valid) {
+        logSecurityEvent({
+          eventType: 'PAPER_EXECUTION_RECONCILIATION_INCONSISTENT',
+          route: '/api/trading/engine/execute',
+          userId: intent.userId,
+          reason: `${reconciliation.code}: ${reconciliation.reason}`,
+        });
+        return executionError(409, 'PAPER_EXECUTION_RECONCILIATION_INCONSISTENT', reconciliation.reason);
+      }
+      if (reconciliation.positionState === 'closed') {
+        return executionError(
+          409,
+          'PAPER_EXECUTION_ALREADY_SETTLED',
+          'This execution intent belongs to a paper position that has already been settled.',
+        );
+      }
       return NextResponse.json({
         executionEnvironment: 'paper',
         idempotent: true,
@@ -264,10 +289,10 @@ export async function POST(req: Request) {
       return executionError(409, 'POSITION_ALREADY_OPEN', 'An open position already exists for this bot and symbol.');
     }
 
-    const positionId = buildPaperPositionId(intent);
     const auditEnvelope = JSON.stringify({
       executionContractVersion: intent.contractVersion,
       executionEnvironment: 'paper',
+      positionId,
       strategy: intent.strategy,
       timeframe: intent.timeframe,
       strategyVersion: intent.strategyVersion,
@@ -346,23 +371,33 @@ export async function POST(req: Request) {
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;
     if (code === 'P2002') {
-      const existingOrder = await db.order.findUnique({ where: { id: intent.executionIntentId } }).catch(() => null);
-      if (existingOrder) {
-        const existingPosition = await db.position.findFirst({
+      const [existingOrder, existingPosition] = await Promise.all([
+        db.order.findUnique({ where: { id: intent.executionIntentId } }).catch(() => null),
+        db.position.findFirst({
           where: {
+            id: positionId,
             botId: intent.botId,
             accountId: intent.accountId,
             symbol: intent.symbol,
-            status: 'open',
           },
-        }).catch(() => null);
-        if (existingPosition) {
+        }).catch(() => null),
+      ]);
+      if (existingOrder) {
+        const reconciliation = validatePersistedPaperExecutionResult(intent, existingOrder, existingPosition);
+        if (reconciliation.valid && reconciliation.positionState === 'open') {
           return NextResponse.json({
             executionEnvironment: 'paper',
             idempotent: true,
             order: existingOrder,
             position: existingPosition,
           });
+        }
+        if (reconciliation.valid && reconciliation.positionState === 'closed') {
+          return executionError(
+            409,
+            'PAPER_EXECUTION_ALREADY_SETTLED',
+            'This execution intent belongs to a paper position that has already been settled.',
+          );
         }
       }
       return executionError(409, 'EXECUTION_CONFLICT', 'Concurrent paper execution conflicted with existing state.');
