@@ -151,22 +151,26 @@ export async function runSyncCycle(deps: SyncCycleDeps): Promise<SyncResult> {
 // createBalanceSyncHandler — Testable route handler factory
 // ============================================================
 
-export function createBalanceSyncHandler(deps: {
+export interface BalanceSyncHandlerDeps {
   internalServiceSecret: string;
   balanceSyncEnabled: boolean;
   syncIntervalMs: number;
   port: number;
   dbReady: boolean;
-}) {
+  getDbReady?: () => boolean;
+}
+
+export function createBalanceSyncHandler(deps: BalanceSyncHandlerDeps) {
   return (req: Request): Response => {
     const url = new URL(req.url);
 
     if (url.pathname === '/health' && req.method === 'GET') {
+      const dbReady = deps.getDbReady ? deps.getDbReady() : deps.dbReady;
       return Response.json({
-        status: 'ok', service: 'fovi-balance-sync', port: deps.port,
-        dbReady: deps.dbReady, balanceSyncEnabled: deps.balanceSyncEnabled,
+        status: dbReady ? 'ok' : 'degraded', service: 'fovi-balance-sync', port: deps.port,
+        dbReady, balanceSyncEnabled: deps.balanceSyncEnabled,
         uptime: process.uptime(), timestamp: new Date().toISOString(),
-      });
+      }, { status: dbReady ? 200 : 503 });
     }
 
     if (url.pathname === '/sync' && req.method === 'POST') {
