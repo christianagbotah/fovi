@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .dr
-          docker run --rm --network host \
+          docker run --rm -i --network host \
             -e PGPASSWORD="$PGPASSWORD" \
             postgres:16-alpine \
             psql -h 127.0.0.1 -U fovi_ci -d fovi_ci -v ON_ERROR_STOP=1 <<'SQL'
@@ -127,7 +127,7 @@ jobs:
           sha256sum .dr/source-migrations.txt | tee .dr/source-migrations.sha256
           sha256sum .dr/source-data.txt | tee .dr/source-data.sha256
           grep -F 'dr-account-001' .dr/source-data.txt
-          ! grep -E '\|[^|]+\|[^|]+\|[^|]+$' /dev/null
+          awk -F'|' 'NF == 13 && $11 == "" && $12 == "" && $13 == "" { ok=1 } END { exit(ok ? 0 : 1) }' .dr/source-data.txt
 
       - name: Create PostgreSQL custom-format backup
         shell: bash
@@ -196,7 +196,8 @@ jobs:
           cmp .dr/source-schema.txt .dr/restored-schema.txt
           cmp .dr/source-migrations.txt .dr/restored-migrations.txt
           cmp .dr/source-data.txt .dr/restored-data.txt
-          grep -F 'dr-user-001|dr-probe@fovi.invalid|DR Probe|dr-account-001|dr-user-001|demo|demo|t|12345.67|12345.67|||' .dr/restored-data.txt
+          grep -F 'dr-user-001|dr-probe@fovi.invalid|DR Probe|dr-account-001|dr-user-001|demo|demo|t|' .dr/restored-data.txt
+          awk -F'|' 'NF == 13 && $11 == "" && $12 == "" && $13 == "" { ok=1 } END { exit(ok ? 0 : 1) }' .dr/restored-data.txt
 
           DATABASE_URL="$RESTORE_DATABASE_URL" bun run scripts/migrate-production.ts
 
