@@ -1,6 +1,6 @@
 // ============================================================
 // process-bot-core.ts — Startup-free processBot extraction
-// Phase 2C/2D: eligibility first + verified data + canonical strategy/risk gates.
+// Phase 2C–2E: eligibility first + verified data + durable execution truth.
 // ============================================================
 
 import { type CandleData, type TradeSignal } from './strategies';
@@ -16,6 +16,21 @@ export interface BotRow {
     id: string; broker: string; accountType: string; isDemo: boolean | null; balance?: number;
     isActive?: boolean; apiKey?: string | null; apiSecret?: string | null; passphrase?: string | null;
   } | null;
+}
+
+export interface EnginePosition {
+  id: string;
+  botId: string;
+  accountId: string;
+  symbol: string;
+  side: 'long' | 'short';
+  qty: number;
+  avgEntryPrice: number;
+  currentPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  openedAt: number;
+  unrealizedPnl: number;
 }
 
 interface PriceResult {
@@ -46,13 +61,20 @@ export interface ProcessBotDeps {
   updateDCALastBuy: (symbol: string, price: number) => void;
   marketPriceDeps: { nextjsApi: string; fetchFn?: typeof fetch };
   candleDeps: { nextjsApi: string; fetchFn?: typeof fetch };
-  positions: Map<string, { id: string; botId: string; accountId: string; symbol: string; side: 'long' | 'short'; qty: number; avgEntryPrice: number; currentPrice: number; stopLoss: number | null; takeProfit: number | null; openedAt: number; unrealizedPnl: number }>;
+  positions: Map<string, EnginePosition>;
   addActivity: (entry: Record<string, unknown>) => void;
   callNextJSApi: (method: string, path: string, body?: Record<string, unknown>) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   executeTrade: (config: BotRow, trade: {
     symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number;
     confidence: number; reason: string; strategyVersion?: string; riskEngineVersion: string;
     positionNotional: number; riskAmount: number; riskPercentOfAllocation: number; riskReward: number;
+    marketData: {
+      environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string;
+    };
+  }) => Promise<void>;
+  closePosition: (config: BotRow, position: EnginePosition, close: {
+    reason: 'stop_loss' | 'take_profit';
+    price: number;
     marketData: {
       environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string;
     };
@@ -106,7 +128,10 @@ export async function processBotCore(
   );
   const closedSymbols: Set<string> = new Set();
 
-  // Existing positions may only be re-priced and closed from verified prices.
+  // Existing positions may only be re-priced and durably closed from verified
+  // market snapshots. Memory is released only AFTER persisted close truth is
+  // returned. A failed close keeps the position present and therefore blocks
+  // replacement trades for the same exposure.
   for (const pos of botPositions) {
     const priceResult = await deps.fetchMarketPrice(pos.symbol, deps.marketPriceDeps);
     if (!isVerifiedPrice(priceResult)) {
@@ -125,7 +150,7 @@ export async function processBotCore(
 
     const sl = pos.stopLoss;
     const tp = pos.takeProfit;
-    let closeReason: string | null = null;
+    let closeReason: 'stop_loss' | 'take_profit' | null = null;
     if (sl !== null && sl > 0) {
       if (pos.side === 'long' && priceResult.price <= sl) closeReason = 'stop_loss';
       else if (pos.side === 'short' && priceResult.price >= sl) closeReason = 'stop_loss';
@@ -137,17 +162,37 @@ export async function processBotCore(
 
     if (closeReason) {
       const pnl = pos.unrealizedPnl;
-      deps.positions.delete(pos.id);
-      closedSymbols.add(pos.symbol);
-      void deps.callNextJSApi('POST', '/api/trading/engine/report', {
-        botId: config.id, tradeType: 'closed', pnl, isWin: pnl > 0, reason: closeReason,
-        symbol: pos.symbol, side: pos.side, price: priceResult.price,
-      });
-      deps.addActivity({
-        type: closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit',
-        botId: config.id, botName: config.name, symbol: pos.symbol,
-        side: pos.side === 'long' ? 'sell' : 'buy', price: priceResult.price, pnl,
-      });
+      try {
+        await deps.closePosition(config, pos, {
+          reason: closeReason,
+          price: priceResult.price,
+          marketData: {
+            environment: priceResult.environment,
+            isSynthetic: priceResult.isDemoData,
+            source: priceResult.source,
+            observedAt: priceResult.observedAt,
+          },
+        });
+        deps.positions.delete(pos.id);
+        closedSymbols.add(pos.symbol);
+        deps.addActivity({
+          type: closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit',
+          botId: config.id, botName: config.name, symbol: pos.symbol,
+          side: pos.side === 'long' ? 'sell' : 'buy', price: priceResult.price, pnl,
+          settlement: 'persisted',
+        });
+      } catch (err) {
+        deps.addActivity({
+          type: 'position_close_failed',
+          botId: config.id,
+          botName: config.name,
+          symbol: pos.symbol,
+          side: pos.side === 'long' ? 'sell' : 'buy',
+          price: priceResult.price,
+          reason: closeReason,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 
