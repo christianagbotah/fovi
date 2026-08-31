@@ -5,7 +5,7 @@ import { join } from 'node:path';
 const { mockFindMany, mockHasModel, mockEligibility, mockBotPolicy } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockHasModel: vi.fn(() => true),
-  mockEligibility: vi.fn(() => ({ eligible: true })),
+  mockEligibility: vi.fn((): { eligible: boolean; reason?: string } => ({ eligible: true })),
   mockBotPolicy: vi.fn(() => ({ valid: true })),
 }));
 
