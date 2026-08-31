@@ -57,6 +57,8 @@ describe('production database bootstrap safety', () => {
 
   it('generates baseline SQL from empty, executes it, then deploys committed migrations', () => {
     expect(migrationScript).toContain("'--from-empty'");
+    expect(migrationScript).toContain("'--to-schema-datamodel'");
+    expect(migrationScript).not.toContain("'--to-schema',");
     expect(migrationScript).toContain('baseline.pre-containment.prisma');
     expect(migrationScript).toContain("'db', 'execute'");
     expect(migrationScript).toContain("'migrate', 'deploy'");
