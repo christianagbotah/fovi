@@ -269,7 +269,7 @@ model Backtest {
   avgWin          Float    @default(0)
   avgLoss         Float    @default(0)
   config          String   @default("{}") // JSON strategy config used
-  tradesJson      String   @default("[]") // JSON array of simulated trades
+  tradesJson      String   @default("[]") // JSON array: ["crypto","forex"]
   equityCurveJson String   @default("[]") // JSON array of balance snapshots
   createdAt       DateTime @default(now())
 }
@@ -449,4 +449,32 @@ model SubscriptionPlan {
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model PaperTradeSettlement {
+  id                 String   @id
+  closeOrderId       String   @unique
+  positionId         String   @unique
+  userId             String
+  accountId          String
+  botId              String
+  symbol             String
+  side               String
+  quantity           Float
+  entryPrice         Float
+  exitPrice          Float
+  rawPnl             Float
+  adminLevyPercent   Float
+  adminLevy          Float
+  realizedPnl        Float
+  balanceBefore      Float
+  balanceAfter       Float
+  closeReason        String
+  marketDataSource   String
+  marketObservedAt   DateTime
+  createdAt          DateTime @default(now())
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([botId])
 }
