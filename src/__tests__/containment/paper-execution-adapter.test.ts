@@ -42,6 +42,7 @@ vi.mock('@/lib/engine-eligibility', () => ({
 import { POST } from '@/app/api/trading/engine/execute/route';
 import {
   buildPaperExecutionIntent,
+  buildPaperPositionId,
   type PaperExecutionIntent,
 } from '@/lib/trading-intelligence/execution-contract';
 import { RISK_ENGINE_VERSION } from '@/lib/trading-intelligence/risk-engine';
@@ -86,6 +87,36 @@ function makeRequest(intent: PaperExecutionIntent): Request {
   });
 }
 
+function persistedOrder(intent: PaperExecutionIntent) {
+  return {
+    id: intent.executionIntentId,
+    accountId: intent.accountId,
+    botId: intent.botId,
+    symbol: intent.symbol,
+    side: intent.side,
+    qty: intent.quantity,
+    filledQty: intent.quantity,
+    filledPrice: intent.referencePrice,
+    status: 'filled',
+    aiGenerated: true,
+  };
+}
+
+function persistedPosition(intent: PaperExecutionIntent, status = 'open') {
+  return {
+    id: buildPaperPositionId(intent),
+    accountId: intent.accountId,
+    botId: intent.botId,
+    symbol: intent.symbol,
+    side: 'long',
+    status,
+    qty: intent.quantity,
+    avgEntryPrice: intent.referencePrice,
+    stopLoss: intent.stopLoss,
+    takeProfit: intent.takeProfit,
+  };
+}
+
 const eligibleBot = {
   id: 'bot-1',
   userId: 'user-1',
@@ -110,7 +141,7 @@ const eligibleBot = {
   },
 };
 
-describe('Phase 2D internal paper execution adapter', () => {
+describe('Phase 2F internal paper execution adapter', () => {
   const originalFlag = process.env.PAPER_AUTOMATED_EXECUTION_ENABLED;
 
   beforeEach(() => {
@@ -174,6 +205,7 @@ describe('Phase 2D internal paper execution adapter', () => {
     });
     expect(mockPositionCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        id: buildPaperPositionId(intent),
         accountId: intent.accountId,
         botId: intent.botId,
         symbol: intent.symbol,
@@ -187,27 +219,11 @@ describe('Phase 2D internal paper execution adapter', () => {
     });
   });
 
-  it('returns an existing persisted result on an idempotent retry without another transaction', async () => {
+  it('returns a fully reconciled existing result on an idempotent retry without another transaction', async () => {
     process.env.PAPER_AUTOMATED_EXECUTION_ENABLED = 'true';
     const intent = makeIntent();
-    mockOrderFindUnique.mockResolvedValue({
-      id: intent.executionIntentId,
-      accountId: intent.accountId,
-      botId: intent.botId,
-      symbol: intent.symbol,
-      status: 'filled',
-      filledQty: intent.quantity,
-      filledPrice: intent.referencePrice,
-    });
-    mockPositionFindFirst.mockResolvedValue({
-      id: 'ppos-existing',
-      accountId: intent.accountId,
-      botId: intent.botId,
-      symbol: intent.symbol,
-      status: 'open',
-      qty: intent.quantity,
-      avgEntryPrice: intent.referencePrice,
-    });
+    mockOrderFindUnique.mockResolvedValue(persistedOrder(intent));
+    mockPositionFindFirst.mockResolvedValue(persistedPosition(intent));
 
     const res = await POST(makeRequest(intent));
     const body = await res.json();
@@ -215,6 +231,52 @@ describe('Phase 2D internal paper execution adapter', () => {
     expect(res.status).toBe(200);
     expect(body.idempotent).toBe(true);
     expect(body.order.id).toBe(intent.executionIntentId);
+    expect(body.position.id).toBe(buildPaperPositionId(intent));
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when an idempotent opening order is orphaned from its deterministic position', async () => {
+    process.env.PAPER_AUTOMATED_EXECUTION_ENABLED = 'true';
+    const intent = makeIntent();
+    mockOrderFindUnique.mockResolvedValue(persistedOrder(intent));
+    mockPositionFindFirst.mockResolvedValue(null);
+
+    const res = await POST(makeRequest(intent));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('PAPER_EXECUTION_RECONCILIATION_INCONSISTENT');
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('does not reopen an execution intent whose deterministic position already settled', async () => {
+    process.env.PAPER_AUTOMATED_EXECUTION_ENABLED = 'true';
+    const intent = makeIntent();
+    mockOrderFindUnique.mockResolvedValue(persistedOrder(intent));
+    mockPositionFindFirst.mockResolvedValue(persistedPosition(intent, 'closed'));
+
+    const res = await POST(makeRequest(intent));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('PAPER_EXECUTION_ALREADY_SETTLED');
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when persisted idempotent position fields disagree with the opening intent', async () => {
+    process.env.PAPER_AUTOMATED_EXECUTION_ENABLED = 'true';
+    const intent = makeIntent();
+    mockOrderFindUnique.mockResolvedValue(persistedOrder(intent));
+    mockPositionFindFirst.mockResolvedValue({
+      ...persistedPosition(intent),
+      qty: intent.quantity * 2,
+    });
+
+    const res = await POST(makeRequest(intent));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('PAPER_EXECUTION_RECONCILIATION_INCONSISTENT');
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
@@ -227,5 +289,6 @@ describe('Phase 2D internal paper execution adapter', () => {
     expect(source).not.toContain('DemoBroker');
     expect(source).toContain('PAPER_AUTOMATED_EXECUTION_ENABLED');
     expect(source).toContain('evaluateAutomatedTradeRisk');
+    expect(source).toContain('validatePersistedPaperExecutionResult');
   });
 });
