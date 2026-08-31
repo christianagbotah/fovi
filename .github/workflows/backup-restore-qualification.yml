@@ -1,0 +1,283 @@
+name: Phase 3B Backup Restore DR Qualification
+
+on:
+  pull_request:
+    branches:
+      - phase-1-emergency-containment
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-restore-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: production
+  SOURCE_DATABASE_URL: postgresql://fovi_ci:fovi_ci_runtime_pw@127.0.0.1:5432/fovi_ci
+  RESTORE_DATABASE_URL: postgresql://fovi_ci:fovi_ci_runtime_pw@127.0.0.1:5432/fovi_restore
+  DATABASE_URL: postgresql://fovi_ci:fovi_ci_runtime_pw@127.0.0.1:5432/fovi_ci
+  JWT_SECRET: ci-dr-jwt-secret-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  AUTH_PEPPER: ci-dr-auth-pepper-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  ENCRYPTION_KEY: ci-dr-encryption-key-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  INTERNAL_SERVICE_SECRET: ci-dr-internal-secret-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  APP_URL: https://dr-runtime.fovi.invalid
+  NEXT_PUBLIC_APP_URL: https://dr-runtime.fovi.invalid
+  AUTOMATED_TRADING_ENABLED: 'false'
+  PAPER_AUTOMATED_EXECUTION_ENABLED: 'false'
+  ENABLE_BALANCE_SYNC: 'false'
+  BALANCE_SYNC_ENABLED: 'false'
+  ENABLE_BROKER_CREDENTIAL_INTAKE: 'false'
+
+jobs:
+  qualify:
+    name: PostgreSQL backup, restore, integrity, and contained boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fovi_ci
+          POSTGRES_PASSWORD: fovi_ci_runtime_pw
+          POSTGRES_DB: fovi_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fovi_ci -d fovi_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.4'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          for service in auto-trade-engine balance-sync market-service; do
+            (cd "mini-services/${service}" && bun install --frozen-lockfile)
+          done
+
+      - name: Bootstrap source database safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx prisma generate
+          DATABASE_URL="$SOURCE_DATABASE_URL" bun run scripts/migrate-production.ts
+
+      - name: Seed deterministic DR probe without broker credentials
+        shell: bash
+        env:
+          PGPASSWORD: fovi_ci_runtime_pw
+        run: |
+          set -euo pipefail
+          mkdir -p .dr
+          docker run --rm --network host \
+            -e PGPASSWORD="$PGPASSWORD" \
+            postgres:16-alpine \
+            psql -h 127.0.0.1 -U fovi_ci -d fovi_ci -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO "User" (
+            "id", "email", "name", "passwordHash", "isActive", "emailVerified", "createdAt", "updatedAt"
+          ) VALUES (
+            'dr-user-001', 'dr-probe@fovi.invalid', 'DR Probe', 'ci-only-not-a-real-password-hash', TRUE, TRUE,
+            '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z'
+          );
+
+          INSERT INTO "TradingAccount" (
+            "id", "userId", "broker", "accountType", "label", "isDemo",
+            "balance", "linkedBalance", "currency", "isActive", "createdAt", "updatedAt"
+          ) VALUES (
+            'dr-account-001', 'dr-user-001', 'demo', 'demo', 'DR Probe', TRUE,
+            12345.67, 12345.67, 'USD', TRUE,
+            '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z'
+          );
+          SQL
+
+      - name: Fingerprint source schema, migration history, and probe data
+        shell: bash
+        env:
+          PGPASSWORD: fovi_ci_runtime_pw
+        run: |
+          set -euo pipefail
+          pg() {
+            docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:16-alpine \
+              psql -h 127.0.0.1 -U fovi_ci -d "$1" -At -F '|' -v ON_ERROR_STOP=1 -c "$2"
+          }
+
+          pg fovi_ci "SELECT table_name, column_name, ordinal_position, data_type, is_nullable, COALESCE(column_default, '') FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name, ordinal_position" > .dr/source-schema.txt
+          pg fovi_ci "SELECT migration_name FROM \"_prisma_migrations\" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" > .dr/source-migrations.txt
+          pg fovi_ci "SELECT u.id, u.email, COALESCE(u.name,''), a.id, a.\"userId\", a.broker, a.\"accountType\", a.\"isDemo\", a.balance, a.\"linkedBalance\", COALESCE(a.\"apiKey\",''), COALESCE(a.\"apiSecret\",''), COALESCE(a.passphrase,'') FROM \"User\" u JOIN \"TradingAccount\" a ON a.\"userId\"=u.id WHERE u.id='dr-user-001' ORDER BY a.id" > .dr/source-data.txt
+
+          sha256sum .dr/source-schema.txt | tee .dr/source-schema.sha256
+          sha256sum .dr/source-migrations.txt | tee .dr/source-migrations.sha256
+          sha256sum .dr/source-data.txt | tee .dr/source-data.sha256
+          grep -F 'dr-account-001' .dr/source-data.txt
+          ! grep -E '\|[^|]+\|[^|]+\|[^|]+$' /dev/null
+
+      - name: Create PostgreSQL custom-format backup
+        shell: bash
+        env:
+          PGPASSWORD: fovi_ci_runtime_pw
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -e PGPASSWORD="$PGPASSWORD" \
+            -v "$PWD/.dr:/dr" \
+            postgres:16-alpine \
+            pg_dump -h 127.0.0.1 -U fovi_ci -d fovi_ci \
+              --format=custom --no-owner --no-privileges --file=/dr/fovi.dump
+
+          test -s .dr/fovi.dump
+          docker run --rm -v "$PWD/.dr:/dr" postgres:16-alpine pg_restore --list /dr/fovi.dump > .dr/backup-list.txt
+          grep -F 'TABLE DATA public User' .dr/backup-list.txt
+          grep -F 'TABLE DATA public TradingAccount' .dr/backup-list.txt
+          sha256sum .dr/fovi.dump | tee .dr/fovi.dump.sha256
+
+      - name: Prove truncated backup is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .dr/fovi.dump .dr/fovi-corrupt.dump
+          truncate -s 512 .dr/fovi-corrupt.dump
+          if docker run --rm -v "$PWD/.dr:/dr" postgres:16-alpine pg_restore --list /dr/fovi-corrupt.dump > .dr/corrupt-output.txt 2>&1; then
+            echo 'corrupted backup unexpectedly passed pg_restore validation' >&2
+            exit 1
+          fi
+          grep -Eiq 'end of file|input file|archive|could not read' .dr/corrupt-output.txt
+
+      - name: Restore backup into a clean database
+        shell: bash
+        env:
+          PGPASSWORD: fovi_ci_runtime_pw
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:16-alpine \
+            psql -h 127.0.0.1 -U fovi_ci -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS fovi_restore WITH (FORCE);'
+          docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:16-alpine \
+            psql -h 127.0.0.1 -U fovi_ci -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE fovi_restore OWNER fovi_ci;'
+
+          docker run --rm --network host \
+            -e PGPASSWORD="$PGPASSWORD" \
+            -v "$PWD/.dr:/dr" \
+            postgres:16-alpine \
+            pg_restore -h 127.0.0.1 -U fovi_ci -d fovi_restore \
+              --exit-on-error --no-owner --no-privileges /dr/fovi.dump
+
+      - name: Verify restored schema, migrations, and data integrity
+        shell: bash
+        env:
+          PGPASSWORD: fovi_ci_runtime_pw
+        run: |
+          set -euo pipefail
+          pg() {
+            docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:16-alpine \
+              psql -h 127.0.0.1 -U fovi_ci -d "$1" -At -F '|' -v ON_ERROR_STOP=1 -c "$2"
+          }
+
+          pg fovi_restore "SELECT table_name, column_name, ordinal_position, data_type, is_nullable, COALESCE(column_default, '') FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name, ordinal_position" > .dr/restored-schema.txt
+          pg fovi_restore "SELECT migration_name FROM \"_prisma_migrations\" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" > .dr/restored-migrations.txt
+          pg fovi_restore "SELECT u.id, u.email, COALESCE(u.name,''), a.id, a.\"userId\", a.broker, a.\"accountType\", a.\"isDemo\", a.balance, a.\"linkedBalance\", COALESCE(a.\"apiKey\",''), COALESCE(a.\"apiSecret\",''), COALESCE(a.passphrase,'') FROM \"User\" u JOIN \"TradingAccount\" a ON a.\"userId\"=u.id WHERE u.id='dr-user-001' ORDER BY a.id" > .dr/restored-data.txt
+
+          cmp .dr/source-schema.txt .dr/restored-schema.txt
+          cmp .dr/source-migrations.txt .dr/restored-migrations.txt
+          cmp .dr/source-data.txt .dr/restored-data.txt
+          grep -F 'dr-user-001|dr-probe@fovi.invalid|DR Probe|dr-account-001|dr-user-001|demo|demo|t|12345.67|12345.67|||' .dr/restored-data.txt
+
+          DATABASE_URL="$RESTORE_DATABASE_URL" bun run scripts/migrate-production.ts
+
+      - name: Build production application
+        env:
+          DATABASE_URL: ${{ env.RESTORE_DATABASE_URL }}
+        run: bun run build
+
+      - name: Start contained runtime against restored database
+        shell: bash
+        env:
+          DATABASE_URL: ${{ env.RESTORE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime-logs
+
+          bunx next start --port 3002 > .runtime-logs/next.log 2>&1 &
+          echo $! > .runtime-logs/next.pid
+
+          (cd mini-services/market-service && bun index.ts) > .runtime-logs/market.log 2>&1 &
+          echo $! > .runtime-logs/market.pid
+
+          (cd mini-services/auto-trade-engine && bun index.ts) > .runtime-logs/engine.log 2>&1 &
+          echo $! > .runtime-logs/engine.pid
+
+          (cd mini-services/balance-sync && bun index.ts) > .runtime-logs/balance.log 2>&1 &
+          echo $! > .runtime-logs/balance.pid
+
+      - name: Verify restored runtime health and containment
+        shell: bash
+        env:
+          DATABASE_URL: ${{ env.RESTORE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          wait_for() {
+            local name="$1"
+            local url="$2"
+            for attempt in $(seq 1 30); do
+              if curl -fsS "$url" > "/tmp/${name}-dr-health.json"; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "${name} did not become healthy against restored database" >&2
+            return 1
+          }
+
+          wait_for next http://127.0.0.1:3002/api/health
+          wait_for market http://127.0.0.1:3003/health
+          wait_for engine http://127.0.0.1:3012/health
+          wait_for balance http://127.0.0.1:3013/health
+
+          jq -e '.status == "healthy" and .checks.database.ok == true' /tmp/next-dr-health.json
+          jq -e '.status == "ok"' /tmp/market-dr-health.json
+          jq -e '.status == "ok" and .automatedTradingEnabled == false and .readiness == "disabled"' /tmp/engine-dr-health.json
+          jq -e '.status == "ok" and .balanceSyncEnabled == false and .dbReady == true' /tmp/balance-dr-health.json
+
+          engine_status=$(curl -sS -o /tmp/engine-dr-cycle.json -w '%{http_code}' \
+            -X POST -H "X-Internal-Service-Secret: ${INTERNAL_SERVICE_SECRET}" \
+            http://127.0.0.1:3012/cycle)
+          test "$engine_status" = "403"
+          jq -e '.code == "PHASE1_LIVE_TRADING_DISABLED"' /tmp/engine-dr-cycle.json
+
+          balance_status=$(curl -sS -o /tmp/balance-dr-sync.json -w '%{http_code}' \
+            -X POST -H "X-Internal-Service-Secret: ${INTERNAL_SERVICE_SECRET}" \
+            http://127.0.0.1:3013/sync)
+          test "$balance_status" = "403"
+          jq -e '.code == "PHASE1_LIVE_TRADING_DISABLED"' /tmp/balance-dr-sync.json
+
+      - name: Ensure backup is not retained as a CI artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .dr/fovi.dump .dr/fovi-corrupt.dump
+
+      - name: Upload runtime logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-3b-runtime-logs-${{ github.run_id }}
+          path: .runtime-logs/
+          if-no-files-found: ignore
+          retention-days: 7
