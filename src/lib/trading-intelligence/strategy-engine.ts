@@ -11,15 +11,17 @@ import type { CandleData, SignalType, Timeframe } from '../types';
 
 export const STRATEGY_ENGINE_VERSION = 'phase2c-strategy-v1';
 export const STRATEGY_VERIFIED_TIMEFRAMES = Object.freeze(['4h'] as const);
+export const CANONICAL_STRATEGIES = Object.freeze([
+  'signal_based',
+  'balanced',
+  'momentum',
+  'scalping',
+  'conservative',
+  'dca',
+  'grid',
+] as const);
 
-export type CanonicalStrategy =
-  | 'signal_based'
-  | 'balanced'
-  | 'momentum'
-  | 'scalping'
-  | 'conservative'
-  | 'dca'
-  | 'grid';
+export type CanonicalStrategy = typeof CANONICAL_STRATEGIES[number];
 
 export type StrategyHoldCode =
   | 'UNSUPPORTED_STRATEGY'
@@ -88,15 +90,15 @@ function hold(code: StrategyHoldCode, reason: string): StrategyDecision {
   return { action: 'hold', strategyVersion: STRATEGY_ENGINE_VERSION, code, reason };
 }
 
-function normalizeStrategy(strategy: string): CanonicalStrategy | null {
+export function normalizeCanonicalStrategy(strategy: string): CanonicalStrategy | null {
   const value = strategy.trim().toLowerCase();
-  if (
-    value === 'signal_based' || value === 'balanced' || value === 'momentum' ||
-    value === 'scalping' || value === 'conservative' || value === 'dca' || value === 'grid'
-  ) {
-    return value;
-  }
-  return null;
+  return CANONICAL_STRATEGIES.includes(value as CanonicalStrategy)
+    ? value as CanonicalStrategy
+    : null;
+}
+
+export function isCanonicalStrategy(strategy: string): boolean {
+  return normalizeCanonicalStrategy(strategy) !== null;
 }
 
 function isFinitePositive(value: number | undefined): value is number {
@@ -121,7 +123,7 @@ export function selectStrategyCandidate(
   rawCandidates: readonly StrategyCandidateInput[],
   context: { symbol: string; strategy: string; timeframe: Timeframe },
 ): StrategyDecision {
-  const strategy = normalizeStrategy(context.strategy);
+  const strategy = normalizeCanonicalStrategy(context.strategy);
   if (!strategy) {
     return hold('UNSUPPORTED_STRATEGY', `Unsupported strategy: ${context.strategy}`);
   }
