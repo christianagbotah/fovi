@@ -1,6 +1,10 @@
 // ============================================================
 // POST /api/trading/engine/report
-// Phase 1 CR1: P0-4 — enforceInternalAuth, remove no-DB success fallback.
+// Phase 2E: activity/error reporting only; durable close owns trade stats.
+// ------------------------------------------------------------
+// A completed trade is counted exactly once by /api/trading/engine/close in
+// the same transaction that closes the Position. Open reports are therefore
+// informational and closed reports are rejected to prevent double counting.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -20,18 +24,27 @@ interface ReportPayload {
 }
 
 export async function POST(req: NextRequest) {
-  // ── P0-4: Require internal service auth ──
   const authError = enforceInternalAuth(req);
   if (authError) return authError;
 
   const body: ReportPayload = await req.json().catch(() => ({}));
-  const { botId, tradeType, pnl, isWin, reason, symbol, side, qty, price } = body;
+  const { botId, tradeType, reason } = body;
 
   if (!botId) {
     return NextResponse.json({ error: 'botId is required' }, { status: 400 });
   }
 
-  // P0-4: No DB → return 503, NOT success with persisted:false
+  if (tradeType === 'closed') {
+    return NextResponse.json(
+      {
+        error: 'Closed-trade statistics are persisted atomically by the Phase 2E close adapter.',
+        code: 'DURABLE_CLOSE_REQUIRED',
+        remediationPhase: 'phase-2e-position-close-restart-reconciliation',
+      },
+      { status: 409 },
+    );
+  }
+
   if (!db || !hasModel('bot')) {
     return NextResponse.json(
       {
@@ -44,18 +57,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const updateData: Record<string, unknown> = {
-      lastTradeAt: new Date(),
-      updatedAt: new Date(),
-    };
+    const updateData: Record<string, unknown> = { updatedAt: new Date() };
 
     if (tradeType === 'opened') {
-      updateData.totalTrades = { increment: 1 };
-    } else if (tradeType === 'closed') {
-      updateData.totalTrades = { increment: 1 };
-      if (isWin) updateData.winTrades = { increment: 1 };
-      else updateData.lossTrades = { increment: 1 };
-      if (pnl !== undefined) updateData.totalPnl = { increment: pnl };
+      // Informational only. totalTrades is the count of completed round trips
+      // and is incremented by the atomic close transaction, never on open.
+      updateData.lastTradeAt = new Date();
     } else if (tradeType === 'error' && reason) {
       updateData.lastError = reason;
     }
