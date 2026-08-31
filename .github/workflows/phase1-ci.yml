@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Test, containment, lint, typecheck, and build
+    name: Test, containment, soak, lint, typecheck, and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -76,6 +76,9 @@ jobs:
 
       - name: Containment tests
         run: bun run test:containment
+
+      - name: Deterministic paper soak gate
+        run: bun run test:soak
 
       - name: Full Vitest suite
         run: bun run test
