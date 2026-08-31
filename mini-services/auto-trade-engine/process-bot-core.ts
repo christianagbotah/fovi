@@ -1,6 +1,6 @@
 // ============================================================
 // process-bot-core.ts — Startup-free processBot extraction
-// Phase 2C: eligibility first + verified data + canonical strategy/risk gates.
+// Phase 2C/2D: eligibility first + verified data + canonical strategy/risk gates.
 // ============================================================
 
 import { type CandleData, type TradeSignal } from './strategies';
@@ -53,6 +53,9 @@ export interface ProcessBotDeps {
     symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number;
     confidence: number; reason: string; strategyVersion?: string; riskEngineVersion: string;
     positionNotional: number; riskAmount: number; riskPercentOfAllocation: number; riskReward: number;
+    marketData: {
+      environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string;
+    };
   }) => Promise<void>;
   automatedTradingEnabled: boolean;
   allSymbols: string[];
@@ -282,6 +285,12 @@ export async function processBotCore(
     riskAmount: riskDecision.riskAmount,
     riskPercentOfAllocation: riskDecision.riskPercentOfAllocation,
     riskReward: riskDecision.riskReward,
+    marketData: {
+      environment: priceResult.environment,
+      isSynthetic: priceResult.isDemoData,
+      source: priceResult.source,
+      observedAt: priceResult.observedAt,
+    },
   });
 
   if (bestSignal.side === 'buy') deps.updateDCALastBuy(bestSignal.symbol, priceResult.price);
