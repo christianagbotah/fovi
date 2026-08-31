@@ -1,12 +1,13 @@
 // ============================================================
 // Fovi Auto-Trade Engine — Thin Startup Entry Point
-// Phase 2E:
+// Phase 2H:
 //   - Next.js internal APIs are the single control/persistence plane.
 //   - No direct database reads/writes from the mini-service.
 //   - Every enabled cycle hydrates authoritative persisted open positions.
 //   - process-bot-core owns eligibility + strategy + risk decisions.
 //   - Opens and closes go only to deterministic audited paper adapters.
 //   - Persisted API responses are the only accepted execution truth.
+//   - Execution cycles are single-flight and internal retries are bounded.
 // ============================================================
 
 import { createHash, timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
@@ -25,18 +26,21 @@ import {
   type EnginePosition,
   type ProcessBotDeps,
 } from './process-bot-core';
+import {
+  createEngineCycleCoordinator,
+  INTERNAL_API_MAX_ATTEMPTS,
+  retryDelayMsAfterAttempt,
+  shouldRetryInternalApi,
+} from './engine-reliability';
 import { evaluateEngineAccountEligibility } from '../../src/lib/engine-eligibility';
 import { buildPaperExecutionIntent } from '../../src/lib/trading-intelligence/execution-contract';
 import { buildPaperCloseIntent } from '../../src/lib/trading-intelligence/position-reconciliation';
 import { STRATEGY_ENGINE_VERSION } from '../../src/lib/trading-intelligence/strategy-engine';
 
-// ============================================================
-// Configuration
-// ============================================================
-
 const PORT = 3012;
 const POLL_INTERVAL_MS = 60_000;
 const NEXTJS_API = 'http://localhost:3002';
+const INTERNAL_API_TIMEOUT_MS = 30_000;
 
 function envBool(name: string): boolean {
   const raw = process.env[name];
@@ -47,13 +51,8 @@ function envBool(name: string): boolean {
 
 const AUTOMATED_TRADING_ENABLED = envBool('AUTOMATED_TRADING_ENABLED');
 const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET || '';
-
 const marketPriceDeps: FetchMarketPriceDeps = { nextjsApi: NEXTJS_API };
 const candleDeps: FetchCandlesDeps = { nextjsApi: NEXTJS_API };
-
-// ============================================================
-// Types
-// ============================================================
 
 interface BotRow {
   id: string;
@@ -105,17 +104,10 @@ interface ActivityEntry {
 
 type ActivityInput = Pick<ActivityEntry, 'type' | 'botId' | 'botName' | 'symbol'> & Record<string, unknown>;
 
-// ============================================================
-// In-Memory Read Cache
-// ============================================================
-// This cache is never execution truth. Before each enabled cycle it is
-// replaced atomically from /api/trading/engine/positions. New opens are also
-// accepted only from persisted /engine/execute responses. Durable closes are
-// removed only after /engine/close returns a persisted closed Position.
-
 const positions = new Map<string, EnginePosition>();
 const activityLog: ActivityEntry[] = [];
 const MAX_ACTIVITY = 200;
+const cycleCoordinator = createEngineCycleCoordinator();
 
 function addActivity(entry: ActivityInput) {
   activityLog.unshift({
@@ -125,10 +117,6 @@ function addActivity(entry: ActivityInput) {
   });
   if (activityLog.length > MAX_ACTIVITY) activityLog.length = MAX_ACTIVITY;
 }
-
-// ============================================================
-// Internal service auth
-// ============================================================
 
 function constantTimeEqual(a: string, b: string): boolean {
   try {
@@ -157,10 +145,6 @@ function authErrorResponse(status: number): Response {
   );
 }
 
-// ============================================================
-// HTTP Server
-// ============================================================
-
 const engineStartTime = Date.now();
 let cycleCount = 0;
 let lastCycleTime: string | null = null;
@@ -172,10 +156,11 @@ Bun.serve({
   hostname: '127.0.0.1',
   fetch(req) {
     const url = new URL(req.url);
+    const reliability = cycleCoordinator.snapshot(AUTOMATED_TRADING_ENABLED);
 
     if (url.pathname === '/health' || url.pathname === '/') {
       return Response.json({
-        status: 'ok',
+        status: reliability.readiness === 'degraded' ? 'degraded' : 'ok',
         service: 'fovi-auto-trade-engine',
         port: PORT,
         uptime: Math.floor((Date.now() - engineStartTime) / 1000),
@@ -186,6 +171,12 @@ Bun.serve({
         automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
         controlPlane: 'nextjs-internal-api',
         positionTruth: 'persisted-db-hydration',
+        readiness: reliability.readiness,
+        cycleInProgress: reliability.cycleInProgress,
+        consecutiveCycleFailures: reliability.consecutiveCycleFailures,
+        lastSuccessfulCycleTime: reliability.lastSuccessfulCycleTime,
+        lastFailedCycleTime: reliability.lastFailedCycleTime,
+        lastFailureReason: reliability.lastFailureReason,
       });
     }
 
@@ -202,6 +193,7 @@ Bun.serve({
         automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
         controlPlane: 'nextjs-internal-api',
         positionTruth: 'persisted-db-hydration',
+        ...reliability,
       });
     }
 
@@ -214,7 +206,13 @@ Bun.serve({
           { status: 403 },
         );
       }
-      runCycle().catch((e) => console.error('[AutoTrade] Manual cycle error:', e));
+      if (cycleCoordinator.isCycleInProgress()) {
+        return Response.json(
+          { triggered: false, code: 'ENGINE_CYCLE_ALREADY_RUNNING' },
+          { status: 409 },
+        );
+      }
+      void runCycle();
       return Response.json({ triggered: true });
     }
 
@@ -237,43 +235,66 @@ Bun.serve({
 console.log(`[AutoTrade] Engine HTTP server running on 127.0.0.1:${PORT}`);
 console.log(`[AutoTrade] AUTOMATED_TRADING_ENABLED: ${AUTOMATED_TRADING_ENABLED}`);
 console.log('[AutoTrade] Control plane: Next.js internal API only');
+console.log('[AutoTrade] Reliability: single-flight cycles + bounded deterministic internal retries');
 console.log(`[AutoTrade] Endpoints: GET /health, GET /status, POST /cycle, GET /activity, GET /positions`);
 console.log(`[AutoTrade] Next.js API target: ${NEXTJS_API}`);
 
-// ============================================================
-// HTTP API Calls to Next.js
-// ============================================================
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 async function callNextJSApi(
   method: string,
   path: string,
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-  try {
-    const url = `${NEXTJS_API}${path}`;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (INTERNAL_SERVICE_SECRET) headers['X-Internal-Service-Secret'] = INTERNAL_SERVICE_SECRET;
+  const url = `${NEXTJS_API}${path}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (INTERNAL_SERVICE_SECRET) headers['X-Internal-Service-Secret'] = INTERNAL_SERVICE_SECRET;
 
-    const opts: RequestInit = { method, headers, signal: AbortSignal.timeout(30_000) };
-    if (body) opts.body = JSON.stringify(body);
+  for (let attempt = 1; attempt <= INTERNAL_API_MAX_ATTEMPTS; attempt++) {
+    try {
+      const opts: RequestInit = {
+        method,
+        headers,
+        signal: AbortSignal.timeout(INTERNAL_API_TIMEOUT_MS),
+      };
+      if (body) opts.body = JSON.stringify(body);
 
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    let data: unknown;
-    try { data = JSON.parse(text); } catch { data = text; }
+      const res = await fetch(url, opts);
+      const text = await res.text();
+      let data: unknown;
+      try { data = JSON.parse(text); } catch { data = text; }
 
-    let error: string | undefined;
-    if (!res.ok) {
+      if (res.ok) return { ok: true, data };
+
+      let error: string;
       if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: unknown }).error === 'string') {
         error = (data as { error: string }).error;
       } else {
         error = `HTTP ${res.status}`;
       }
+
+      if (!shouldRetryInternalApi({ method, path, attempt, status: res.status })) {
+        return { ok: false, data, error };
+      }
+
+      const delayMs = retryDelayMsAfterAttempt(attempt);
+      console.warn(`[AutoTrade] Internal API retry ${attempt + 1}/${INTERNAL_API_MAX_ATTEMPTS}: ${method} ${path} after HTTP ${res.status}`);
+      await sleep(delayMs);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (!shouldRetryInternalApi({ method, path, attempt, transportError: true })) {
+        return { ok: false, error };
+      }
+
+      const delayMs = retryDelayMsAfterAttempt(attempt);
+      console.warn(`[AutoTrade] Internal API retry ${attempt + 1}/${INTERNAL_API_MAX_ATTEMPTS}: ${method} ${path} after transport failure`);
+      await sleep(delayMs);
     }
-    return { ok: res.ok, data, error };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+
+  return { ok: false, error: 'Internal API retry budget exhausted.' };
 }
 
 function parseHydratedPosition(value: unknown): EnginePosition | null {
@@ -346,43 +367,41 @@ async function hydrateAuthoritativePositions(): Promise<{ ok: true; count: numbe
     nextPositions.set(position.id, position);
   }
 
-  // Replace only after the entire payload validates, so a partial/invalid feed
-  // can never erase known positions and accidentally create replacement risk.
   positions.clear();
   for (const [id, position] of nextPositions) positions.set(id, position);
   return { ok: true, count: positions.size };
 }
 
-// ============================================================
-// Main Execution Cycle — one bot/config source, one position-truth source
-// ============================================================
-
-async function runCycle() {
-  const cycleStart = Date.now();
-  console.log(`[AutoTrade] ═══ Cycle #${cycleCount + 1} starting at ${new Date().toISOString()} ═══`);
-
-  if (!AUTOMATED_TRADING_ENABLED) {
-    console.log('[AutoTrade] AUTOMATED_TRADING_ENABLED=false — skipping cycle');
-    lastCycleTime = new Date().toISOString();
-    lastCycleError = null;
-    lastActiveBotCount = 0;
-    cycleCount++;
-    return;
+async function runCycle(): Promise<boolean> {
+  if (!cycleCoordinator.tryStartCycle()) {
+    console.warn('[AutoTrade] Cycle skipped because another cycle is still in progress.');
+    addActivity({
+      type: 'cycle_overlap_blocked',
+      botId: 'system',
+      botName: 'System',
+      symbol: '—',
+      reason: 'ENGINE_CYCLE_ALREADY_RUNNING',
+    });
+    return false;
   }
 
+  const cycleStart = Date.now();
+  let cycleFailure: string | null = null;
+  console.log(`[AutoTrade] ═══ Cycle #${cycleCount + 1} starting at ${new Date().toISOString()} ═══`);
+
   try {
-    // Restart/crash safety: authoritative persisted positions MUST hydrate
-    // successfully before bot analysis. If hydration fails, no strategy/risk
-    // processing occurs, so the engine cannot mistake unknown exposure for zero.
+    if (!AUTOMATED_TRADING_ENABLED) {
+      console.log('[AutoTrade] AUTOMATED_TRADING_ENABLED=false — skipping cycle');
+      lastActiveBotCount = 0;
+      return true;
+    }
+
     const hydration = await hydrateAuthoritativePositions();
     if (!hydration.ok) {
       throw new Error(`Position hydration failed: ${hydration.error}`);
     }
     console.log(`[AutoTrade] Hydrated ${hydration.count} persisted paper position(s)`);
 
-    // The authenticated Next.js endpoint is the ONLY bot/config source. It
-    // enforces account eligibility and the canonical bot policy before a bot
-    // reaches this mini-service.
     const result = await callNextJSApi('GET', '/api/trading/engine/bots');
     if (!result.ok || !Array.isArray(result.data)) {
       throw new Error(result.error || 'Failed to fetch bots from API');
@@ -398,8 +417,8 @@ async function runCycle() {
         await processBot(config);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        if (!cycleFailure) cycleFailure = `Bot ${config.id}: ${errMsg}`;
         console.error(`[AutoTrade] ✗ Error processing bot ${config.id}:`, errMsg);
-        lastCycleError = errMsg;
         addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: errMsg });
         void callNextJSApi('POST', '/api/trading/engine/report', {
           botId: config.id,
@@ -411,24 +430,25 @@ async function runCycle() {
       }
     }
 
-    lastCycleError = null;
+    return true;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
+    cycleFailure = errMsg;
     console.error('[AutoTrade] ✗ Cycle failed:', errMsg);
-    lastCycleError = errMsg;
     lastActiveBotCount = 0;
     addActivity({ type: 'error', botId: 'system', botName: 'System', symbol: '—', error: errMsg });
+    return true;
+  } finally {
+    cycleCount++;
+    lastCycleTime = new Date().toISOString();
+    lastCycleError = cycleFailure;
+    if (cycleFailure) cycleCoordinator.completeCycleFailure(cycleFailure);
+    else cycleCoordinator.completeCycleSuccess();
+
+    const elapsed = Date.now() - cycleStart;
+    console.log(`[AutoTrade] ═══ Cycle #${cycleCount} completed in ${elapsed}ms state=${cycleCoordinator.snapshot(AUTOMATED_TRADING_ENABLED).readiness} ═══\n`);
   }
-
-  cycleCount++;
-  lastCycleTime = new Date().toISOString();
-  const elapsed = Date.now() - cycleStart;
-  console.log(`[AutoTrade] ═══ Cycle #${cycleCount} completed in ${elapsed}ms ═══\n`);
 }
-
-// ============================================================
-// Process a Single Bot
-// ============================================================
 
 async function processBot(config: BotRow) {
   await processBotCore(config as ProcessBotRow, {
@@ -448,10 +468,6 @@ async function processBot(config: BotRow) {
     evaluateEngineAccountEligibility,
   });
 }
-
-// ============================================================
-// Execute a Trade — audited paper adapter only
-// ============================================================
 
 async function executeTrade(
   config: ProcessBotRow,
@@ -524,8 +540,6 @@ async function executeTrade(
   const fillPrice = Number(orderData.filledPrice ?? hydrated.avgEntryPrice);
   console.log(`  Paper order reconciled: id=${orderId} idempotent=${payload.idempotent === true}`);
 
-  // Idempotent retries only rehydrate persisted truth; they do not create a
-  // second trade-open activity/report event.
   if (payload.idempotent !== true) {
     void callNextJSApi('POST', '/api/trading/engine/report', {
       botId: config.id,
@@ -548,10 +562,6 @@ async function executeTrade(
     });
   }
 }
-
-// ============================================================
-// Close a Position — deterministic durable paper settlement only
-// ============================================================
 
 async function closePosition(
   config: ProcessBotRow,
@@ -606,14 +616,10 @@ async function closePosition(
   );
 }
 
-// ============================================================
-// Start the Engine
-// ============================================================
-
-runCycle().catch((err) => console.error('[AutoTrade] Initial cycle failed:', err));
+void runCycle();
 
 setInterval(() => {
-  runCycle().catch((err) => console.error('[AutoTrade] Scheduled cycle failed:', err));
+  void runCycle();
 }, POLL_INTERVAL_MS);
 
 process.on('SIGTERM', () => {
