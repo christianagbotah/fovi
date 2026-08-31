@@ -348,7 +348,22 @@ export async function POST(req: Request) {
     if (code === 'P2002') {
       const existingOrder = await db.order.findUnique({ where: { id: intent.executionIntentId } }).catch(() => null);
       if (existingOrder) {
-        return NextResponse.json({ executionEnvironment: 'paper', idempotent: true, order: existingOrder, position: null });
+        const existingPosition = await db.position.findFirst({
+          where: {
+            botId: intent.botId,
+            accountId: intent.accountId,
+            symbol: intent.symbol,
+            status: 'open',
+          },
+        }).catch(() => null);
+        if (existingPosition) {
+          return NextResponse.json({
+            executionEnvironment: 'paper',
+            idempotent: true,
+            order: existingOrder,
+            position: existingPosition,
+          });
+        }
       }
       return executionError(409, 'EXECUTION_CONFLICT', 'Concurrent paper execution conflicted with existing state.');
     }
