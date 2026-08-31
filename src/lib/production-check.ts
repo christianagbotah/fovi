@@ -103,6 +103,12 @@ function validateInternalServiceSecret(value: string): string | null {
   return null;
 }
 
+function isTrueLike(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
 export interface ValidationResult {
   fatals: string[];
   warnings: string[];
@@ -182,6 +188,15 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('NEXT_PUBLIC_APP_URL must be a valid HTTPS URL in production (got: ' + publicAppUrl + ')');
   } else if (isExampleHostname(publicAppUrl)) {
     fatals.push('NEXT_PUBLIC_APP_URL contains a known example/placeholder domain. Replace it with the real production domain.');
+  }
+
+  // --- Phase 2D paper execution containment ---
+  // The open-fill adapter exists for controlled validation, but production must
+  // not activate it until durable close + restart reconciliation is complete.
+  if (isTrueLike(process.env.PAPER_AUTOMATED_EXECUTION_ENABLED)) {
+    fatals.push(
+      'PAPER_AUTOMATED_EXECUTION_ENABLED must remain false in production until durable close/restart reconciliation is approved.',
+    );
   }
 
   return { fatals, warnings };
