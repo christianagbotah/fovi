@@ -1,0 +1,188 @@
+name: Phase 3A Staging Runtime Qualification
+
+on:
+  pull_request:
+    branches:
+      - phase-1-emergency-containment
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-runtime-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: production
+  DATABASE_URL: postgresql://fovi_ci:fovi_ci_runtime_pw@127.0.0.1:5432/fovi_ci
+  JWT_SECRET: ci-runtime-jwt-secret-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  AUTH_PEPPER: ci-runtime-auth-pepper-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  ENCRYPTION_KEY: ci-runtime-encryption-key-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  INTERNAL_SERVICE_SECRET: ci-runtime-internal-secret-${{ github.run_id }}-${{ github.run_attempt }}-0123456789abcdef
+  APP_URL: https://staging-runtime.fovi.invalid
+  NEXT_PUBLIC_APP_URL: https://staging-runtime.fovi.invalid
+  AUTOMATED_TRADING_ENABLED: 'false'
+  PAPER_AUTOMATED_EXECUTION_ENABLED: 'false'
+  ENABLE_BALANCE_SYNC: 'false'
+  BALANCE_SYNC_ENABLED: 'false'
+  ENABLE_BROKER_CREDENTIAL_INTAKE: 'false'
+
+jobs:
+  qualify:
+    name: PostgreSQL, runtime health, containment, and restart recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fovi_ci
+          POSTGRES_PASSWORD: fovi_ci_runtime_pw
+          POSTGRES_DB: fovi_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fovi_ci -d fovi_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.4'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          for service in auto-trade-engine balance-sync market-service; do
+            (cd "mini-services/${service}" && bun install --frozen-lockfile)
+          done
+
+      - name: Generate Prisma and apply migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx prisma generate
+          bunx prisma migrate deploy
+          bunx prisma migrate deploy
+
+      - name: Build production application
+        run: bun run build
+
+      - name: Start contained runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime-logs
+
+          bunx next start --port 3002 > .runtime-logs/next.log 2>&1 &
+          echo $! > .runtime-logs/next.pid
+
+          (cd mini-services/market-service && bun index.ts) > .runtime-logs/market.log 2>&1 &
+          echo $! > .runtime-logs/market.pid
+
+          (cd mini-services/auto-trade-engine && bun index.ts) > .runtime-logs/engine.log 2>&1 &
+          echo $! > .runtime-logs/engine.pid
+
+          (cd mini-services/balance-sync && bun index.ts) > .runtime-logs/balance.log 2>&1 &
+          echo $! > .runtime-logs/balance.pid
+
+      - name: Wait for runtime health
+        shell: bash
+        run: |
+          set -euo pipefail
+          wait_for() {
+            local name="$1"
+            local url="$2"
+            for attempt in $(seq 1 30); do
+              if curl -fsS "$url" > "/tmp/${name}-health.json"; then
+                echo "${name} became healthy on attempt ${attempt}"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "${name} did not become healthy" >&2
+            return 1
+          }
+
+          wait_for next http://127.0.0.1:3002/api/health
+          wait_for market http://127.0.0.1:3003/health
+          wait_for engine http://127.0.0.1:3012/health
+          wait_for balance http://127.0.0.1:3013/health
+
+      - name: Verify database and containment truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.status == "healthy" and .checks.database.ok == true' /tmp/next-health.json
+          jq -e '.status == "ok"' /tmp/market-health.json
+          jq -e '.status == "ok" and .automatedTradingEnabled == false and .readiness == "disabled"' /tmp/engine-health.json
+          jq -e '.status == "ok" and .balanceSyncEnabled == false and .dbReady == true' /tmp/balance-health.json
+
+          engine_status=$(curl -sS -o /tmp/engine-cycle.json -w '%{http_code}' \
+            -X POST \
+            -H "X-Internal-Service-Secret: ${INTERNAL_SERVICE_SECRET}" \
+            http://127.0.0.1:3012/cycle)
+          test "$engine_status" = "403"
+          jq -e '.code == "PHASE1_LIVE_TRADING_DISABLED"' /tmp/engine-cycle.json
+
+          balance_status=$(curl -sS -o /tmp/balance-sync.json -w '%{http_code}' \
+            -X POST \
+            -H "X-Internal-Service-Secret: ${INTERNAL_SERVICE_SECRET}" \
+            http://127.0.0.1:3013/sync)
+          test "$balance_status" = "403"
+          jq -e '.code == "PHASE1_LIVE_TRADING_DISABLED"' /tmp/balance-sync.json
+
+      - name: Restart auto-trade engine and verify recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          kill "$(cat .runtime-logs/engine.pid)"
+          for attempt in $(seq 1 20); do
+            if ! kill -0 "$(cat .runtime-logs/engine.pid)" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          (cd mini-services/auto-trade-engine && bun index.ts) >> .runtime-logs/engine.log 2>&1 &
+          echo $! > .runtime-logs/engine.pid
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3012/health > /tmp/engine-restarted-health.json; then
+              jq -e '.status == "ok" and .automatedTradingEnabled == false and .readiness == "disabled"' /tmp/engine-restarted-health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'auto-trade engine did not recover after restart' >&2
+          exit 1
+
+      - name: Recheck database health after runtime restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:3002/api/health > /tmp/next-final-health.json
+          jq -e '.status == "healthy" and .checks.database.ok == true' /tmp/next-final-health.json
+
+      - name: Upload runtime logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-3a-runtime-logs-${{ github.run_id }}
+          path: .runtime-logs/
+          if-no-files-found: ignore
+          retention-days: 7
