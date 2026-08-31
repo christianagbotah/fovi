@@ -1,126 +1,74 @@
-// ============================================================
-// GET /api/trading/market/symbols — Market data
-// CR4.3A R7: Replace static DEMO_PROVENANCE import with fresh
-//   factory calls (createDemoProvenance, createLiveProvenance).
-//   Each call creates a fresh observedAt timestamp.
-// ============================================================
-
 import { NextResponse } from 'next/server';
-import { getAllDemoSymbols, getDemoCandles } from '@/lib/broker/demo';
-import { fetchAllRealPrices, fetchCryptoPrices, type MarketPrice } from '@/lib/market-data';
+import { getAllDemoSymbols } from '@/lib/broker/demo';
+import { fetchAllRealPrices } from '@/lib/market-data';
+import { provenanceHeaders, createDemoProvenance, type Provenance } from '@/lib/provenance';
 import {
-  type Provenance,
-  provenanceHeaders,
-  createDemoProvenance,
-  createLiveProvenance,
-} from '@/lib/provenance';
+  getVerifiedQuote,
+  getVerifiedCandles,
+  normalizeMarketSymbol,
+  toProvenance,
+  type MarketDataFailureCode,
+} from '@/lib/verified-market-data';
+import type { Timeframe } from '@/lib/types';
 
-const COINGECKO_IDS: Record<string, string> = {
-  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
-  XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano', AVAX: 'avalanche-2',
-  DOT: 'polkadot', LINK: 'chainlink',
-};
-
-const COINGECKO_DAYS_MAP: Record<string, number> = {
-  '1m': 1, '5m': 1, '15m': 1, '1h': 1, '4h': 1, '1d': 30, '1w': 90,
-};
-
-// Cache stores provenance alongside data so cached data retains original provenance
-interface CacheEntry<T> {
-  data: T;
-  provenance: Provenance;
-  ts: number;
+function failureStatus(code: MarketDataFailureCode): number {
+  if (code === 'UNSUPPORTED_MARKET_DATA' || code === 'TIMEFRAME_MISMATCH') return 422;
+  return 503;
 }
 
-const ohlcCache = new Map<string, CacheEntry<unknown>>();
-const OHLC_CACHE_TTL = 30_000;
-
-function getCached<T>(key: string): { data: T; provenance: Provenance } | null {
-  const entry = ohlcCache.get(key);
-  if (entry && Date.now() - entry.ts < OHLC_CACHE_TTL) return { data: entry.data as T, provenance: entry.provenance };
-  return null;
-}
-
-function setCache(key: string, data: unknown, provenance: Provenance) {
-  ohlcCache.set(key, { data, provenance, ts: Date.now() });
-}
-
-async function fetchCryptoCandles(
-  symbol: string,
-  timeframe: string,
-  limit: number,
-): Promise<{ candles: ReturnType<typeof getDemoCandles> | null; provenance: Provenance }> {
-  const coinId = COINGECKO_IDS[symbol];
-  if (!coinId) return { candles: null, provenance: createDemoProvenance() };
-
-  const cacheKey = `candles_${symbol}_${timeframe}`;
-  const cached = getCached<ReturnType<typeof getDemoCandles>>(cacheKey);
-  if (cached) return { candles: cached.data, provenance: cached.provenance };
-
-  try {
-    const days = COINGECKO_DAYS_MAP[timeframe] ?? 30;
-    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`;
-    const res = await fetch(url, {
-      next: { revalidate: 30 },
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) throw new Error(`CoinGecko OHLC HTTP ${res.status}`);
-
-    const raw = (await res.json()) as number[][];
-    const candles = raw.slice(-limit).map((c) => ({
-      timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: 0,
-    }));
-
-    if (candles.length === 0) {
-      return { candles: null, provenance: createDemoProvenance() };
-    }
-
-    const provenance = createLiveProvenance('coingecko');
-    setCache(cacheKey, candles, provenance);
-    return { candles, provenance };
-  } catch {
-    return { candles: null, provenance: createDemoProvenance() };
-  }
+function failureResponse(code: MarketDataFailureCode, message: string) {
+  return NextResponse.json(
+    { error: message, code, dataPolicy: 'verified-only' },
+    { status: failureStatus(code), headers: { 'x-data-policy': 'verified-only' } },
+  );
 }
 
 export async function GET(req: globalThis.Request) {
   const { searchParams } = new URL(req.url);
-  const symbol = searchParams.get('symbol');
+  const rawSymbol = searchParams.get('symbol');
   const timeframeParam = searchParams.get('timeframe');
-  const limit = parseInt(searchParams.get('limit') || '100');
+  const limit = Math.max(1, Math.min(500, Number.parseInt(searchParams.get('limit') || '100', 10) || 100));
 
-  // --- Single symbol price lookup (no timeframe requested) ---
-  if (symbol && !timeframeParam) {
-    const { getSinglePrice } = await import('@/lib/market-data');
-    const price = await getSinglePrice(symbol);
-    const provenance: Provenance = price._realData
-      ? createLiveProvenance('market-data-service')
-      : createDemoProvenance();
+  if (rawSymbol && !timeframeParam) {
+    const result = await getVerifiedQuote(rawSymbol);
+    if (!result.ok) return failureResponse(result.code, result.message);
+
+    const provenance = toProvenance(result.metadata);
     return NextResponse.json(
-      { ...price, provenance },
-      { headers: provenanceHeaders(provenance) },
+      {
+        symbol: result.quote.symbol,
+        price: result.quote.price,
+        volume: result.quote.volume,
+        changePercent: result.quote.changePercent24h,
+        _realData: true,
+        provenance,
+        dataPolicy: 'verified-only',
+      },
+      { headers: { ...provenanceHeaders(provenance), 'x-data-policy': 'verified-only' } },
     );
   }
 
-  // --- Candles for a specific symbol ---
-  if (symbol && timeframeParam) {
-    const { candles: cryptoCandles, provenance } = await fetchCryptoCandles(symbol, timeframeParam, limit);
-    if (cryptoCandles && cryptoCandles.length > 0) {
-      return NextResponse.json(
-        { candles: cryptoCandles, provenance },
-        { headers: provenanceHeaders(provenance) },
-      );
-    }
-    // Demo fallback — tagged with demo provenance, never live
-    const demoCandles = getDemoCandles(symbol, timeframeParam, limit);
-    const demoProv = createDemoProvenance();
+  if (rawSymbol && timeframeParam) {
+    const symbol = normalizeMarketSymbol(rawSymbol);
+    const timeframe = timeframeParam as Timeframe;
+    const result = await getVerifiedCandles(symbol, timeframe, limit);
+    if (!result.ok) return failureResponse(result.code, result.message);
+
+    const provenance = toProvenance(result.metadata);
     return NextResponse.json(
-      { candles: demoCandles, provenance: demoProv },
-      { headers: provenanceHeaders(demoProv) },
+      {
+        candles: result.candles,
+        provenance,
+        timeframe: result.metadata.timeframe,
+        volumeAvailable: result.metadata.volumeAvailable,
+        dataPolicy: 'verified-only',
+      },
+      { headers: { ...provenanceHeaders(provenance), 'x-data-policy': 'verified-only' } },
     );
   }
 
-  // --- Full symbol list (merged real data + demo fallback) ---
+  // Presentation-only market overview. Auto-trade and signal generation never
+  // consume this mixed real/demo list.
   const [realPricesMap, demoSymbols] = await Promise.all([
     fetchAllRealPrices(),
     Promise.resolve(getAllDemoSymbols()),
@@ -129,17 +77,27 @@ export async function GET(req: globalThis.Request) {
   const enrichedSymbols = demoSymbols.map((sym) => {
     const real = realPricesMap.get(sym.symbol);
     if (real) {
-      const prov = createLiveProvenance('market-data-service');
+      const provenance: Provenance = {
+        environment: 'unknown',
+        isSynthetic: false,
+        source: 'legacy-market-overview',
+        observedAt: new Date().toISOString(),
+      };
       return {
         ...sym,
-        price: real.price, change: real.change, changePercent: real.changePercent,
-        volume: real.volume, high24h: real.high24h, low24h: real.low24h,
-        provenance: prov,
+        price: real.price,
+        change: real.change,
+        changePercent: real.changePercent,
+        volume: real.volume,
+        high24h: real.high24h,
+        low24h: real.low24h,
+        provenance,
+        tradeable: false,
       };
     }
-    const prov = createDemoProvenance();
-    return { ...sym, provenance: prov };
+    const provenance = createDemoProvenance();
+    return { ...sym, provenance, tradeable: false };
   });
 
-  return NextResponse.json(enrichedSymbols);
+  return NextResponse.json(enrichedSymbols, { headers: { 'x-data-policy': 'presentation-only' } });
 }
