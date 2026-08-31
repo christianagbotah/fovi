@@ -27,7 +27,7 @@ const {
   mockBotUpdateMany: vi.fn(),
   mockPositionFindUnique: vi.fn(),
   mockTransaction: vi.fn(),
-  mockHasModel: vi.fn(() => true),
+  mockHasModel: vi.fn((_name: string) => true),
 }));
 
 vi.mock('@/lib/db', () => ({
