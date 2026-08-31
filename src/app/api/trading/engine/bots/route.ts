@@ -66,8 +66,10 @@ export async function GET(req: Request) {
       return botPolicy.valid;
     });
 
-    // Credential fields were fetched only for eligibility verification and are
-    // never returned to the mini-service.
+    // Credential values were fetched only for server-side eligibility. Since
+    // strict engine eligibility requires the credential fields to exist and be
+    // exactly null, return an explicit null attestation after eligibility has
+    // succeeded. No credential value is ever returned to the mini-service.
     const safe = active.map((b) => ({
       ...b,
       positionSizing: 'canonical_risk_v1',
@@ -78,6 +80,9 @@ export async function GET(req: Request) {
         isDemo: b.account.isDemo,
         balance: b.account.balance,
         isActive: b.account.isActive,
+        apiKey: null,
+        apiSecret: null,
+        passphrase: null,
       } : null,
     }));
 
