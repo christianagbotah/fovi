@@ -1,15 +1,21 @@
 // ============================================================
-// Phase 2D — Audited Paper Execution Contract
+// Phase 2F — Audited Paper Execution Contract
 // ------------------------------------------------------------
 // Pure, deterministic execution envelope used between the auto-trade
 // engine and the internal Next.js execution adapter. It carries the exact
 // strategy/risk decision plus verified market-data provenance. No broker
 // I/O, database access, or live-trading enablement happens in this module.
+//
+// Phase 2F changes persisted Position identity from a bot/account/symbol
+// lifetime key to the audited execution-intent ID. This preserves retry
+// idempotency for the same decision while allowing a later completed trade
+// lifecycle to reopen the same symbol with a distinct Position row.
 // ============================================================
 
 import { createHash } from 'node:crypto';
 
-export const EXECUTION_CONTRACT_VERSION = 'phase2d-paper-execution-v1';
+export const LEGACY_EXECUTION_CONTRACT_VERSION = 'phase2d-paper-execution-v1';
+export const EXECUTION_CONTRACT_VERSION = 'phase2f-paper-execution-v2';
 export const EXECUTION_MAX_MARKET_SNAPSHOT_AGE_MS = 120_000;
 export const EXECUTION_MAX_FUTURE_SKEW_MS = 5_000;
 
@@ -51,6 +57,44 @@ export interface PaperExecutionIntent extends PaperExecutionIntentInput {
   contractVersion: typeof EXECUTION_CONTRACT_VERSION;
   executionIntentId: string;
 }
+
+export interface PersistedPaperOpeningOrderForExecution {
+  id: string;
+  accountId: string;
+  botId: string | null;
+  symbol: string;
+  side: string;
+  qty: number;
+  filledQty: number;
+  filledPrice: number | null;
+  status: string;
+  aiGenerated: boolean;
+}
+
+export interface PersistedPaperPositionForExecution {
+  id: string;
+  accountId: string;
+  botId: string | null;
+  symbol: string;
+  side: string;
+  qty: number;
+  avgEntryPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  status: string;
+}
+
+export type PersistedPaperExecutionValidation =
+  | { valid: true; positionState: 'open' | 'closed' }
+  | {
+      valid: false;
+      code:
+        | 'PERSISTED_OPEN_ORDER_MISMATCH'
+        | 'PERSISTED_POSITION_MISSING'
+        | 'PERSISTED_POSITION_MISMATCH'
+        | 'PERSISTED_POSITION_STATUS_INVALID';
+      reason: string;
+    };
 
 export type ExecutionIntentValidationCode =
   | 'INVALID_CONTRACT_VERSION'
@@ -128,8 +172,17 @@ export function buildPaperExecutionIntent(input: PaperExecutionIntentInput): Pap
   };
 }
 
-export function buildPaperPositionId(intent: Pick<PaperExecutionIntent, 'accountId' | 'botId' | 'symbol'>): string {
-  const key = `${normalizeText(intent.accountId)}|${normalizeText(intent.botId)}|${normalizeSymbol(intent.symbol)}`;
+export function buildPaperPositionId(intent: Pick<PaperExecutionIntent, 'executionIntentId'>): string {
+  return `ppos_${digest(normalizeText(intent.executionIntentId)).slice(0, 40)}`;
+}
+
+// Compatibility-only helper for persisted Phase 2D positions that were
+// created before lifecycle-scoped Position IDs existed. New writes MUST use
+// buildPaperPositionId().
+export function buildLegacyPaperPositionId(
+  scope: Pick<PaperExecutionIntent, 'accountId' | 'botId' | 'symbol'>,
+): string {
+  const key = `${normalizeText(scope.accountId)}|${normalizeText(scope.botId)}|${normalizeSymbol(scope.symbol)}`;
   return `ppos_${digest(key).slice(0, 40)}`;
 }
 
@@ -142,6 +195,70 @@ export function nearlyEqual(a: number, b: number, relativeTolerance = 1e-9): boo
   if (a === b) return true;
   const scale = Math.max(1, Math.abs(a), Math.abs(b));
   return Math.abs(a - b) <= scale * relativeTolerance;
+}
+
+export function validatePersistedPaperExecutionResult(
+  intent: PaperExecutionIntent,
+  order: PersistedPaperOpeningOrderForExecution,
+  position: PersistedPaperPositionForExecution | null,
+): PersistedPaperExecutionValidation {
+  if (
+    order.id !== intent.executionIntentId ||
+    order.accountId !== intent.accountId ||
+    order.botId !== intent.botId ||
+    normalizeSymbol(order.symbol) !== normalizeSymbol(intent.symbol) ||
+    order.side !== intent.side ||
+    order.status !== 'filled' ||
+    order.aiGenerated !== true ||
+    !nearlyEqual(order.qty, intent.quantity) ||
+    !nearlyEqual(order.filledQty, intent.quantity) ||
+    order.filledPrice === null ||
+    !nearlyEqual(order.filledPrice, intent.referencePrice)
+  ) {
+    return {
+      valid: false,
+      code: 'PERSISTED_OPEN_ORDER_MISMATCH',
+      reason: 'Persisted opening order does not match the canonical paper execution intent.',
+    };
+  }
+
+  if (!position) {
+    return {
+      valid: false,
+      code: 'PERSISTED_POSITION_MISSING',
+      reason: 'Persisted opening order exists without its deterministic paper position.',
+    };
+  }
+
+  const expectedPositionId = buildPaperPositionId(intent);
+  const expectedSide = intent.side === 'buy' ? 'long' : 'short';
+  if (
+    position.id !== expectedPositionId ||
+    position.accountId !== intent.accountId ||
+    position.botId !== intent.botId ||
+    normalizeSymbol(position.symbol) !== normalizeSymbol(intent.symbol) ||
+    position.side !== expectedSide ||
+    !nearlyEqual(position.qty, intent.quantity) ||
+    !nearlyEqual(position.avgEntryPrice, intent.referencePrice) ||
+    position.stopLoss === null || !nearlyEqual(position.stopLoss, intent.stopLoss) ||
+    position.takeProfit === null || !nearlyEqual(position.takeProfit, intent.takeProfit)
+  ) {
+    return {
+      valid: false,
+      code: 'PERSISTED_POSITION_MISMATCH',
+      reason: 'Persisted paper position does not match the canonical opening execution intent.',
+    };
+  }
+
+  if (position.status !== 'open' && position.status !== 'closed') {
+    return {
+      valid: false,
+      code: 'PERSISTED_POSITION_STATUS_INVALID',
+      reason: 'Persisted paper position has an invalid lifecycle status.',
+    };
+  }
+
+  return { valid: true, positionState: position.status };
 }
 
 export function validatePaperExecutionIntent(
