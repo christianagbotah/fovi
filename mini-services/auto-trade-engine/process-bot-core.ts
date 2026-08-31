@@ -4,6 +4,8 @@
 // ============================================================
 
 import { type CandleData, type TradeSignal } from './strategies';
+import { evaluateStrategyDecision } from '../../src/lib/trading-intelligence/strategy-engine';
+import { evaluateAutomatedTradeRisk } from '../../src/lib/trading-intelligence/risk-engine';
 
 export interface BotRow {
   id: string; userId?: string; accountId: string; name: string; strategy: string;
@@ -33,31 +35,14 @@ export interface GeneratedTradeSignal extends TradeSignal {
   strategyVersion?: string;
 }
 
-export type StrategyEvaluation =
-  | { action: 'trade'; trade: GeneratedTradeSignal }
-  | { action: 'hold'; code: string; reason: string };
-
-export type RiskEvaluation =
-  | {
-      approved: true;
-      engineVersion: string;
-      quantity: number;
-      positionNotional: number;
-      riskAmount: number;
-      riskPercentOfAllocation: number;
-      riskReward: number;
-    }
-  | { approved: false; engineVersion: string; code: string; reason: string };
-
 export interface ProcessBotDeps {
   fetchMarketPrice: (symbol: string, deps: { nextjsApi: string; fetchFn?: typeof fetch }) => Promise<PriceResult>;
   fetchCandles: (symbol: string, limit: number, deps: { nextjsApi: string; fetchFn?: typeof fetch }) => Promise<CandlesResult>;
   validateEngineProvenance: (prov: { environment: string; isSynthetic: boolean; source: string; observedAt?: string }) => { valid: boolean; reason?: string };
-  evaluateStrategy: (candles: CandleData[], context: { symbol: string; strategy: string; timeframe: string }) => StrategyEvaluation;
-  evaluateTradeRisk: (
-    candidate: { symbol: string; side: 'buy' | 'sell'; entryPrice: number; stopLoss: number; takeProfit: number; confidence: number; strategy: string; timeframe: string },
-    context: { accountBalance: number; allocationAmount: number; riskPerTradePct: number; maxPositions: number; currentOpenPositions: number; maxPositionNotional?: number | null },
-  ) => RiskEvaluation;
+  /** @deprecated Phase 2C production decisions use the canonical strategy engine directly. */
+  generateSignal?: (candles: CandleData[], strategy: string, risk: string, symbol: string) => TradeSignal | null;
+  /** @deprecated Phase 2C production sizing uses the canonical risk engine directly. */
+  calculatePositionSize?: (balance: number, risk: string, price: number, stopLoss: number, maxSize: number, allocAmount: number) => number;
   updateDCALastBuy: (symbol: string, price: number) => void;
   marketPriceDeps: { nextjsApi: string; fetchFn?: typeof fetch };
   candleDeps: { nextjsApi: string; fetchFn?: typeof fetch };
@@ -200,8 +185,10 @@ export async function processBotCore(
         continue;
       }
 
-      const strategyDecision = deps.evaluateStrategy(candleResult.candles, {
-        symbol, strategy, timeframe,
+      const strategyDecision = evaluateStrategyDecision(candleResult.candles, {
+        symbol,
+        strategy,
+        timeframe,
       });
       if (strategyDecision.action === 'hold') {
         if (strategyDecision.code !== 'NO_VALID_CANDIDATE') {
@@ -213,7 +200,7 @@ export async function processBotCore(
         continue;
       }
 
-      const signal = strategyDecision.trade;
+      const signal: GeneratedTradeSignal = strategyDecision.trade;
       if (
         !bestSignal ||
         signal.confidence > bestSignal.confidence ||
@@ -239,7 +226,7 @@ export async function processBotCore(
     return { processed: true, reason: 'market-data-unavailable' };
   }
 
-  const riskDecision = deps.evaluateTradeRisk(
+  const riskDecision = evaluateAutomatedTradeRisk(
     {
       symbol: bestSignal.symbol,
       side: bestSignal.side,
