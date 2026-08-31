@@ -1,4 +1,4 @@
-name: Phase 3D Bun Type Alignment Probe
+name: Phase 3D Bun Type Alignment Apply
 
 on:
   push:
@@ -6,31 +6,32 @@ on:
       - phase-3d-supply-chain-security
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: phase3d-bun-type-probe-${{ github.ref }}
+  group: phase3d-bun-type-apply-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  probe:
-    name: Bun 1.3.4 type alignment
+  apply:
+    if: "${{ github.event.head_commit.message == 'ci: apply Bun type alignment' }}"
+    name: Apply Bun 1.3.4 type alignment
     runs-on: ubuntu-24.04
     timeout-minutes: 12
 
     steps:
-      - name: Checkout
+      - name: Checkout candidate branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.3.4'
 
-      - name: Align Bun types to runtime
+      - name: Align Bun types to runtime and re-prove
         shell: bash
         run: |
           set -euo pipefail
@@ -41,15 +42,22 @@ jobs:
             (cd "mini-services/${service}" && bun install --frozen-lockfile >/dev/null)
           done
           grep -F '"bun-types": "1.3.4"' package.json
-
-      - name: Re-prove security and TypeScript
-        shell: bash
-        run: |
-          set -euo pipefail
           bun audit --audit-level=high
           bunx prisma generate >/dev/null
           bunx tsc --noEmit --pretty false
           bunx tsc -p mini-services/tsconfig.json --pretty false
           git diff --check
-          git diff -- package.json bun.lock > /tmp/bun-type-alignment.patch
-          test -s /tmp/bun-type-alignment.patch
+
+      - name: Commit only package and lock alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add package.json bun.lock
+          test -n "$(git diff --cached --name-only)"
+          test "$(git diff --cached --name-only | wc -l)" -eq 2
+          git diff --cached --name-only | grep -Fx 'package.json'
+          git diff --cached --name-only | grep -Fx 'bun.lock'
+          git config user.name 'CHRISTIAN AGBOTAH'
+          git config user.email '148919415+christianagbotah@users.noreply.github.com'
+          git commit -m 'deps: align Bun types with CI runtime'
+          git push origin HEAD:phase-3d-supply-chain-security
