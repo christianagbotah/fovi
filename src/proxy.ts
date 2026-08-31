@@ -1,6 +1,6 @@
 // ============================================================
 // proxy.ts — Next.js 16 Request Boundary
-// Phase 1 CR2: Three explicit route classes with strict partitioning.
+// Phase 1 CR2 / Phase 2E: Three explicit route classes with strict partitioning.
 //   1. PUBLIC_PATHS — exact match, no auth needed
 //   2. INTERNAL_SERVICE_PATHS — exact match, internal secret only
 //   3. Everything else — requires valid access JWT
@@ -46,13 +46,17 @@ const PUBLIC_PATHS: string[] = [
   '/api/trading/webhook',
 ];
 
-// ── CLASS 2: Internal-service routes (exact match, secret only) ──
+// ── CLASS 2: Internal service routes (exact match, secret only) ──
 // These routes accept ONLY internal service secret auth.
 // A valid JWT must NOT authorize these routes.
 // Caller-supplied X-User-Id is never trusted as internal-service identity.
+// Keep this list exact: do not widen it to an /api/trading/engine/* prefix.
 const INTERNAL_SERVICE_PATHS: string[] = [
   '/api/trading/engine/report',
   '/api/trading/engine/bots',
+  '/api/trading/engine/execute',
+  '/api/trading/engine/positions',
+  '/api/trading/engine/close',
   '/api/trading/bots/engine/activity',
   '/api/trading/bots/engine/status',
   '/api/trading/bots/engine/trigger',
