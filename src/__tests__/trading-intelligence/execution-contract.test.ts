@@ -3,9 +3,12 @@ import {
   EXECUTION_CONTRACT_VERSION,
   EXECUTION_MAX_FUTURE_SKEW_MS,
   EXECUTION_MAX_MARKET_SNAPSHOT_AGE_MS,
+  buildLegacyPaperPositionId,
   buildPaperExecutionIntent,
   buildPaperPositionId,
   validatePaperExecutionIntent,
+  validatePersistedPaperExecutionResult,
+  type PaperExecutionIntent,
   type PaperExecutionIntentInput,
 } from '@/lib/trading-intelligence/execution-contract';
 
@@ -43,7 +46,37 @@ function validInput(overrides: Partial<PaperExecutionIntentInput> = {}): PaperEx
   };
 }
 
-describe('Phase 2D execution contract', () => {
+function persistedOpening(intent: PaperExecutionIntent) {
+  return {
+    id: intent.executionIntentId,
+    accountId: intent.accountId,
+    botId: intent.botId,
+    symbol: intent.symbol,
+    side: intent.side,
+    qty: intent.quantity,
+    filledQty: intent.quantity,
+    filledPrice: intent.referencePrice,
+    status: 'filled',
+    aiGenerated: true,
+  };
+}
+
+function persistedPosition(intent: PaperExecutionIntent, status = 'open') {
+  return {
+    id: buildPaperPositionId(intent),
+    accountId: intent.accountId,
+    botId: intent.botId,
+    symbol: intent.symbol,
+    side: intent.side === 'buy' ? 'long' : 'short',
+    qty: intent.quantity,
+    avgEntryPrice: intent.referencePrice,
+    stopLoss: intent.stopLoss,
+    takeProfit: intent.takeProfit,
+    status,
+  };
+}
+
+describe('Phase 2F execution contract', () => {
   it('builds the same deterministic intent ID for the same canonical input', () => {
     const first = buildPaperExecutionIntent(validInput());
     const second = buildPaperExecutionIntent(validInput());
@@ -139,12 +172,65 @@ describe('Phase 2D execution contract', () => {
     expect(validatePaperExecutionIntent(intent, NOW)).toEqual({ valid: true });
   });
 
-  it('builds stable paper position IDs scoped by account, bot, and symbol', () => {
+  it('keeps a stable position ID for an idempotent retry of the same execution intent', () => {
     const intent = buildPaperExecutionIntent(validInput());
     expect(buildPaperPositionId(intent)).toBe(buildPaperPositionId(intent));
     expect(buildPaperPositionId(intent)).toMatch(/^ppos_[a-f0-9]{40}$/);
+  });
 
-    const otherBot = { ...intent, botId: 'bot-2' };
-    expect(buildPaperPositionId(otherBot)).not.toBe(buildPaperPositionId(intent));
+  it('gives a later execution intent on the same bot/account/symbol a distinct position ID', () => {
+    const first = buildPaperExecutionIntent(validInput());
+    const later = buildPaperExecutionIntent(validInput({
+      referencePrice: 50_500,
+      stopLoss: 49_490,
+      takeProfit: 52_520,
+      marketData: {
+        ...validInput().marketData,
+        observedAt: new Date(NOW - 5_000).toISOString(),
+      },
+    }));
+
+    expect(first.accountId).toBe(later.accountId);
+    expect(first.botId).toBe(later.botId);
+    expect(first.symbol).toBe(later.symbol);
+    expect(first.executionIntentId).not.toBe(later.executionIntentId);
+    expect(buildPaperPositionId(first)).not.toBe(buildPaperPositionId(later));
+  });
+
+  it('retains a compatibility helper for legacy Phase 2D position identity', () => {
+    const intent = buildPaperExecutionIntent(validInput());
+    const legacy = buildLegacyPaperPositionId(intent);
+    expect(legacy).toMatch(/^ppos_[a-f0-9]{40}$/);
+    expect(legacy).not.toBe(buildPaperPositionId(intent));
+  });
+
+  it('reconciles a matching persisted opening order and open position', () => {
+    const intent = buildPaperExecutionIntent(validInput());
+    expect(validatePersistedPaperExecutionResult(
+      intent,
+      persistedOpening(intent),
+      persistedPosition(intent),
+    )).toEqual({ valid: true, positionState: 'open' });
+  });
+
+  it('fails reconciliation when an opening order exists without its deterministic position', () => {
+    const intent = buildPaperExecutionIntent(validInput());
+    expect(validatePersistedPaperExecutionResult(
+      intent,
+      persistedOpening(intent),
+      null,
+    )).toEqual(expect.objectContaining({
+      valid: false,
+      code: 'PERSISTED_POSITION_MISSING',
+    }));
+  });
+
+  it('recognizes a matching persisted position that has already settled', () => {
+    const intent = buildPaperExecutionIntent(validInput());
+    expect(validatePersistedPaperExecutionResult(
+      intent,
+      persistedOpening(intent),
+      persistedPosition(intent, 'closed'),
+    )).toEqual({ valid: true, positionState: 'closed' });
   });
 });
