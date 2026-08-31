@@ -1,0 +1,13 @@
+-- Fovi historical PostgreSQL baseline marker.
+--
+-- The actual baseline DDL is deterministically generated from
+-- prisma/baseline.pre-containment.prisma by scripts/migrate-production.ts,
+-- executed only against a truly empty PostgreSQL database, verified, and then
+-- this migration is recorded as applied with `prisma migrate resolve`.
+--
+-- Existing non-empty databases without Prisma migration history are rejected
+-- by the production migration policy and are never auto-baselined.
+--
+-- This marker intentionally contains no DDL. Deployments must use the shared
+-- scripts/migrate-production.ts gate rather than invoking migrate deploy
+-- directly on an uninitialized database.
