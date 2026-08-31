@@ -36,6 +36,25 @@ describe('createBalanceSyncHandler', () => {
     expect(res.status).toBe(200);
     expect(body.status).toBe('ok');
     expect(body.service).toBe('fovi-balance-sync');
+    expect(body.dbReady).toBe(true);
+  });
+
+  it('GET /health → 503 degraded while the live DB readiness probe is false, then recovers', async () => {
+    let ready = false;
+    const handler = makeHandler({ getDbReady: () => ready });
+
+    const degraded = handler(makeRequest('GET', '/health'));
+    const degradedBody = await degraded.json();
+    expect(degraded.status).toBe(503);
+    expect(degradedBody.status).toBe('degraded');
+    expect(degradedBody.dbReady).toBe(false);
+
+    ready = true;
+    const recovered = handler(makeRequest('GET', '/health'));
+    const recoveredBody = await recovered.json();
+    expect(recovered.status).toBe(200);
+    expect(recoveredBody.status).toBe('ok');
+    expect(recoveredBody.dbReady).toBe(true);
   });
 
   // ── 2. POST /sync without auth → 401 ──
