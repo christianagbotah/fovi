@@ -16,6 +16,8 @@ import {
   type ExecutionMarketSnapshot,
 } from './execution-contract';
 
+export { nearlyEqual };
+
 export const LEGACY_POSITION_RECONCILIATION_CONTRACT_VERSION = 'phase2e-paper-position-close-v1';
 export const POSITION_RECONCILIATION_CONTRACT_VERSION = 'phase2g-paper-position-close-v2';
 export const PAPER_SETTLEMENT_ACCOUNTING_VERSION = 'phase2g-paper-settlement-v1';
