@@ -69,7 +69,7 @@ async function main(): Promise<void> {
       runPrisma([
         'migrate', 'diff',
         '--from-empty',
-        '--to-schema', BASELINE_SCHEMA,
+        '--to-schema-datamodel', BASELINE_SCHEMA,
         '--script',
         '--output', sqlPath,
       ]);
