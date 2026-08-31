@@ -136,14 +136,14 @@ build_app() {
 # ----------------------------- Database migration ------------------------------
 
 db_migrate() {
-  info "Running database migrations..."
+  info "Running safe production database migration gate..."
   cd "${DEPLOY_PATH}"
 
-  if [ -d "${DEPLOY_PATH}/prisma/migrations" ]; then
-    bunx prisma migrate deploy
-    ok "Database migrations applied"
+  if [ -d "${DEPLOY_PATH}/prisma/migrations" ] && [ -f "${DEPLOY_PATH}/scripts/migrate-production.ts" ]; then
+    bun run scripts/migrate-production.ts
+    ok "Database migration gate passed"
   else
-    err "No prisma/migrations directory found. Deployment requires migrations. Stop."
+    err "Production migration assets are missing. Deployment requires prisma/migrations and scripts/migrate-production.ts. Stop."
   fi
 }
 
@@ -301,7 +301,7 @@ first_deploy() {
   # Production build
   build_app
 
-  # Database migrations (never db push)
+  # Database migrations (safe wrapper; never db push)
   db_migrate
 
   # Verify ecosystem.config.cjs exists (committed to repo — NOT regenerated)
@@ -391,7 +391,7 @@ update_deploy() {
   # Production build
   build_app
 
-  # Database migrations (never db push)
+  # Database migrations (safe wrapper; never db push)
   db_migrate
 
   # Verify ecosystem.config.cjs exists (committed to repo — NOT regenerated)
@@ -444,14 +444,17 @@ Deployment order:
   7. TypeScript gate
   8. Containment tests
   9. Production build
-  10. Prisma migrate deploy
+  10. Safe production migration gate (empty DB baseline + Prisma migrate deploy)
   11. Restart services
   12. Health checks (fail-closed, containment-verified)
   13. Report deployed SHA
 
 IMPORTANT:
   - The .env file is NEVER overwritten by this script.
-  - Prisma migrate deploy is used exclusively (no db-push fallback).
+  - The shared production migration gate bootstraps only a truly empty PostgreSQL
+    database from the immutable pre-containment schema, then runs Prisma migrate deploy.
+  - Non-empty databases without Prisma migration history are rejected for explicit reconciliation.
+  - Prisma db push is never used as a deployment fallback.
   - Dirty source trees are rejected.
   - The configured deploy ref is used (default: phase-1-emergency-containment).
   - main is NOT used as a deploy target.
