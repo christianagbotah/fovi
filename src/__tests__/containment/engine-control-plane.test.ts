@@ -12,7 +12,7 @@ describe('auto-trade engine control-plane containment', () => {
     expect(source).not.toContain('SELECT');
     expect(source).not.toContain('UPDATE "Bot"');
     expect(source).toContain("callNextJSApi('GET', '/api/trading/engine/bots')");
-    expect(source).toContain("callNextJSApi('POST', '/api/trading/engine/execute'");
+    expect(source).toMatch(/callNextJSApi\(\s*'POST',\s*'\/api\/trading\/engine\/execute'/);
   });
 
   it('has no postgres runtime dependency in the mini-service manifest', () => {
