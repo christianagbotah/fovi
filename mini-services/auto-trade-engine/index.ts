@@ -1,11 +1,9 @@
 // ============================================================
 // Fovi Auto-Trade Engine — Thin Startup Entry Point
-// CR4.3A R7:
-//   Imports all core logic from engine-core.ts.
-//   processBot extracted to process-bot-core.ts with eligibility gate.
-//   This file ONLY contains: config, DB setup, Bun.serve,
-//   in-memory state, auth, SQL helpers, execution cycle, startup.
-//   No duplicate fetch/cache/eligibility logic.
+// CR4.3A R7 / Phase 2D:
+//   Imports core logic from engine-core.ts and process-bot-core.ts.
+//   Automated order intents are sent only to the audited internal paper
+//   execution adapter; returned persisted positions are treated as truth.
 // ============================================================
 
 import postgres from 'postgres';
@@ -27,6 +25,8 @@ import {
 import { validateEngineProvenance } from './market-provenance';
 import { processBotCore, type BotRow as ProcessBotRow, type ProcessBotDeps } from './process-bot-core';
 import { evaluateEngineAccountEligibility } from '../../src/lib/engine-eligibility';
+import { buildPaperExecutionIntent } from '../../src/lib/trading-intelligence/execution-contract';
+import { STRATEGY_ENGINE_VERSION } from '../../src/lib/trading-intelligence/strategy-engine';
 
 // ============================================================
 // Configuration
@@ -382,7 +382,15 @@ async function callNextJSApi(
     const text = await res.text();
     let data: unknown;
     try { data = JSON.parse(text); } catch { data = text; }
-    return { ok: res.ok, data };
+    let error: string | undefined;
+    if (!res.ok) {
+      if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: unknown }).error === 'string') {
+        error = (data as { error: string }).error;
+      } else {
+        error = `HTTP ${res.status}`;
+      }
+    }
+    return { ok: res.ok, data, error };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -427,7 +435,7 @@ async function runCycle() {
         console.error(`[AutoTrade] ✗ Error processing bot ${config.id}:`, errMsg);
         lastCycleError = errMsg;
         addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: '—', error: errMsg });
-        callNextJSApi('POST', '/api/trading/engine/report', { botId: config.id, tradeType: 'error', reason: errMsg });
+        void callNextJSApi('POST', '/api/trading/engine/report', { botId: config.id, tradeType: 'error', reason: errMsg });
       }
     }
 
@@ -545,37 +553,119 @@ async function processBot(config: BotRow) {
 }
 
 // ============================================================
-// Execute a Trade
+// Execute a Trade — audited paper adapter only
 // ============================================================
 
 async function executeTrade(
   config: BotRow,
-  trade: { symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number; confidence: number; reason: string },
+  trade: {
+    symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number;
+    confidence: number; reason: string; strategyVersion?: string; riskEngineVersion: string;
+    positionNotional: number; riskAmount: number; riskPercentOfAllocation: number; riskReward: number;
+    marketData: {
+      environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string;
+    };
+  },
 ) {
-  const orderBody = {
-    symbol: trade.symbol, side: trade.side, type: 'market', qty: trade.qty,
-    stopLoss: trade.stopLoss, takeProfit: trade.takeProfit, aiGenerated: true,
-    accountId: config.accountId, reason: trade.reason,
-  };
+  if (!config.userId) {
+    throw new Error('Paper execution requires a verified bot userId.');
+  }
 
-  const result = await callNextJSApi('POST', '/api/trading/orders', orderBody);
+  const source = trade.marketData.source.toLowerCase();
+  const assetType = source.includes('coingecko') ? 'crypto' : 'unknown';
+  const intent = buildPaperExecutionIntent({
+    userId: config.userId,
+    botId: config.id,
+    accountId: config.accountId,
+    symbol: trade.symbol,
+    assetType,
+    side: trade.side,
+    quantity: trade.qty,
+    referencePrice: trade.price,
+    stopLoss: trade.stopLoss,
+    takeProfit: trade.takeProfit,
+    confidence: trade.confidence,
+    strategy: config.strategy,
+    timeframe: config.timeframe,
+    strategyVersion: trade.strategyVersion || STRATEGY_ENGINE_VERSION,
+    riskEngineVersion: trade.riskEngineVersion,
+    positionNotional: trade.positionNotional,
+    riskAmount: trade.riskAmount,
+    riskPercentOfAllocation: trade.riskPercentOfAllocation,
+    riskReward: trade.riskReward,
+    reason: trade.reason,
+    marketData: trade.marketData,
+  });
 
-  if (result.ok && result.data) {
-    const orderData = result.data as Record<string, unknown>;
-    console.log(`  Order placed via API: id=${orderData.id} status=${orderData.status}`);
-    const positionId = `eng_${config.id}_${trade.symbol}_${Date.now()}`;
-    positions.set(positionId, {
-      id: positionId, botId: config.id, accountId: config.accountId,
-      symbol: trade.symbol, side: trade.side === 'buy' ? 'long' : 'short',
-      qty: trade.qty, avgEntryPrice: trade.price, currentPrice: trade.price,
-      stopLoss: trade.stopLoss, takeProfit: trade.takeProfit,
-      openedAt: Date.now(), unrealizedPnl: 0,
+  const result = await callNextJSApi('POST', '/api/trading/engine/execute', intent as unknown as Record<string, unknown>);
+  if (!result.ok || !result.data || typeof result.data !== 'object') {
+    const message = result.error || 'Paper execution adapter returned no result.';
+    console.warn(`  Paper execution failed: ${message}`);
+    addActivity({
+      type: 'error', botId: config.id, botName: config.name,
+      symbol: trade.symbol, side: trade.side, error: `Paper execution failed: ${message}`,
     });
-    callNextJSApi('POST', '/api/trading/engine/report', { botId: config.id, tradeType: 'opened', symbol: trade.symbol, side: trade.side, qty: trade.qty, price: trade.price });
-    addActivity({ type: 'trade_opened', botId: config.id, botName: config.name, symbol: trade.symbol, side: trade.side, qty: trade.qty, price: trade.price });
-  } else {
-    console.warn(`  Order failed: ${result.error}`);
-    addActivity({ type: 'error', botId: config.id, botName: config.name, symbol: trade.symbol, side: trade.side, error: `Order failed: ${result.error}` });
+    throw new Error(message);
+  }
+
+  const payload = result.data as {
+    idempotent?: boolean;
+    order?: Record<string, unknown>;
+    position?: Record<string, unknown> | null;
+  };
+  const orderData = payload.order;
+  const positionData = payload.position;
+  if (!orderData || !positionData) {
+    throw new Error('Paper execution adapter did not return persisted order and position truth.');
+  }
+
+  const positionId = String(positionData.id || '');
+  const qty = Number(positionData.qty);
+  const avgEntryPrice = Number(positionData.avgEntryPrice);
+  const currentPrice = Number(positionData.currentPrice);
+  const side = positionData.side === 'short' ? 'short' : positionData.side === 'long' ? 'long' : null;
+  if (!positionId || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(avgEntryPrice) || avgEntryPrice <= 0 || !side) {
+    throw new Error('Paper execution adapter returned an invalid persisted position.');
+  }
+
+  const openedAtMs = positionData.openedAt ? Date.parse(String(positionData.openedAt)) : Date.now();
+  positions.set(positionId, {
+    id: positionId,
+    botId: config.id,
+    accountId: config.accountId,
+    symbol: String(positionData.symbol || trade.symbol),
+    side,
+    qty,
+    avgEntryPrice,
+    currentPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : avgEntryPrice,
+    stopLoss: positionData.stopLoss === null || positionData.stopLoss === undefined ? null : Number(positionData.stopLoss),
+    takeProfit: positionData.takeProfit === null || positionData.takeProfit === undefined ? null : Number(positionData.takeProfit),
+    openedAt: Number.isFinite(openedAtMs) ? openedAtMs : Date.now(),
+    unrealizedPnl: Number.isFinite(Number(positionData.unrealizedPnl)) ? Number(positionData.unrealizedPnl) : 0,
+  });
+
+  const orderId = String(orderData.id || intent.executionIntentId);
+  const fillPrice = Number(orderData.filledPrice ?? avgEntryPrice);
+  console.log(`  Paper order reconciled: id=${orderId} idempotent=${payload.idempotent === true}`);
+
+  // Only a new fill contributes a new trade event/stat. Idempotent retries merely
+  // rehydrate the same persisted position and must not double-count.
+  if (payload.idempotent !== true) {
+    void callNextJSApi('POST', '/api/trading/engine/report', {
+      botId: config.id,
+      tradeType: 'opened',
+      symbol: trade.symbol,
+      side: trade.side,
+      qty,
+      price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : avgEntryPrice,
+      executionIntentId: intent.executionIntentId,
+      executionEnvironment: 'paper',
+    });
+    addActivity({
+      type: 'trade_opened', botId: config.id, botName: config.name,
+      symbol: trade.symbol, side: trade.side, qty,
+      price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : avgEntryPrice,
+    });
   }
 }
 
