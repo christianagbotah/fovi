@@ -172,7 +172,7 @@ const httpServer = createServer((req, res) => {
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not Found')
 })
-const io = new Server(httpServer, { path: '/', cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000 })
+const io = new Server(httpServer, { cors: { origin: '*', methods: ['GET', 'POST'] }, pingTimeout: 60000, pingInterval: 25000 })
 
 io.on('connection', (socket) => {
   socket.emit('prices:update', { prices: ALL_SYMBOLS.map(getPriceTick), timestamp: Date.now() })
