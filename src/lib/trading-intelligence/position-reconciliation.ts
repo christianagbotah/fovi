@@ -1,11 +1,11 @@
 // ============================================================
-// Phase 2E — Paper Position Close / Reconciliation Contract
+// Phase 2G — Paper Position Close / Settlement Contract
 // ------------------------------------------------------------
 // Pure deterministic contract shared by the auto-trade engine and the
 // internal Next.js close adapter. No broker I/O or database access occurs
-// here. The full close snapshot is integrity-hashed, while the persisted
-// close-order ID is derived only from the position ID so a paper position
-// can settle at most once across retries and engine restarts.
+// here. The full close snapshot is integrity-hashed, while close Order and
+// settlement IDs are derived from the Position ID so one paper position can
+// affect money/accounting at most once across retries and engine restarts.
 // ============================================================
 
 import { createHash } from 'node:crypto';
@@ -16,7 +16,9 @@ import {
   type ExecutionMarketSnapshot,
 } from './execution-contract';
 
-export const POSITION_RECONCILIATION_CONTRACT_VERSION = 'phase2e-paper-position-close-v1';
+export const LEGACY_POSITION_RECONCILIATION_CONTRACT_VERSION = 'phase2e-paper-position-close-v1';
+export const POSITION_RECONCILIATION_CONTRACT_VERSION = 'phase2g-paper-position-close-v2';
+export const PAPER_SETTLEMENT_ACCOUNTING_VERSION = 'phase2g-paper-settlement-v1';
 
 export type PaperPositionSide = 'long' | 'short';
 export type PaperCloseReason = 'stop_loss' | 'take_profit';
@@ -51,6 +53,36 @@ export interface PersistedPaperPositionForClose {
   takeProfit: number | null;
   status: string;
 }
+
+export interface PaperSettlementValues {
+  positionId: string;
+  closeOrderId: string;
+  userId: string;
+  accountId: string;
+  botId: string;
+  symbol: string;
+  side: PaperPositionSide;
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number;
+  rawPnl: number;
+  adminLevyPercent: number;
+  adminLevy: number;
+  realizedPnl: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  closeReason: PaperCloseReason;
+  marketDataSource: string;
+  marketObservedAt: Date | string;
+}
+
+export interface PersistedPaperSettlement extends PaperSettlementValues {
+  id: string;
+}
+
+export type PaperSettlementValidation =
+  | { valid: true }
+  | { valid: false; code: 'PAPER_SETTLEMENT_MISMATCH'; reason: string };
 
 export type PaperCloseValidationCode =
   | 'INVALID_CLOSE_CONTRACT_VERSION'
@@ -128,6 +160,61 @@ export function buildPaperCloseIntent(input: PaperCloseIntentInput): PaperCloseI
 
 export function buildPaperCloseOrderId(positionId: string): string {
   return `pclose_${digest(normalizeText(positionId)).slice(0, 40)}`;
+}
+
+export function buildPaperSettlementId(positionId: string): string {
+  return `psett_${digest(normalizeText(positionId)).slice(0, 40)}`;
+}
+
+export function validatePaperSettlement(
+  expected: PaperSettlementValues,
+  actual: PersistedPaperSettlement | null,
+): PaperSettlementValidation {
+  if (!actual) {
+    return {
+      valid: false,
+      code: 'PAPER_SETTLEMENT_MISMATCH',
+      reason: 'Deterministic paper settlement row is missing.',
+    };
+  }
+
+  const expectedObservedAt = new Date(expected.marketObservedAt).getTime();
+  const actualObservedAt = new Date(actual.marketObservedAt).getTime();
+  const identityMatches =
+    actual.id === buildPaperSettlementId(expected.positionId)
+    && actual.positionId === expected.positionId
+    && actual.closeOrderId === expected.closeOrderId
+    && actual.userId === expected.userId
+    && actual.accountId === expected.accountId
+    && actual.botId === expected.botId
+    && normalizeSymbol(actual.symbol) === normalizeSymbol(expected.symbol)
+    && actual.side === expected.side
+    && actual.closeReason === expected.closeReason
+    && normalizeText(actual.marketDataSource) === normalizeText(expected.marketDataSource);
+
+  const amountsMatch =
+    nearlyEqual(actual.quantity, expected.quantity)
+    && nearlyEqual(actual.entryPrice, expected.entryPrice)
+    && nearlyEqual(actual.exitPrice, expected.exitPrice)
+    && nearlyEqual(actual.rawPnl, expected.rawPnl)
+    && nearlyEqual(actual.adminLevyPercent, expected.adminLevyPercent)
+    && nearlyEqual(actual.adminLevy, expected.adminLevy)
+    && nearlyEqual(actual.realizedPnl, expected.realizedPnl)
+    && nearlyEqual(actual.balanceBefore, expected.balanceBefore)
+    && nearlyEqual(actual.balanceAfter, expected.balanceAfter)
+    && Number.isFinite(expectedObservedAt)
+    && Number.isFinite(actualObservedAt)
+    && expectedObservedAt === actualObservedAt;
+
+  if (!identityMatches || !amountsMatch) {
+    return {
+      valid: false,
+      code: 'PAPER_SETTLEMENT_MISMATCH',
+      reason: 'Persisted paper settlement does not match deterministic close/accounting truth.',
+    };
+  }
+
+  return { valid: true };
 }
 
 export function validatePaperCloseIntent(
