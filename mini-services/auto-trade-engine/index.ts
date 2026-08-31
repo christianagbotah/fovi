@@ -111,6 +111,8 @@ interface ActivityEntry {
   [key: string]: unknown;
 }
 
+type ActivityInput = Pick<ActivityEntry, 'type' | 'botId' | 'botName' | 'symbol'> & Record<string, unknown>;
+
 // ============================================================
 // In-Memory Read Cache
 // ============================================================
@@ -122,7 +124,7 @@ const positions = new Map<string, InMemoryPosition>();
 const activityLog: ActivityEntry[] = [];
 const MAX_ACTIVITY = 200;
 
-function addActivity(entry: Omit<ActivityEntry, 'id' | 'timestamp'>) {
+function addActivity(entry: ActivityInput) {
   activityLog.unshift({
     ...entry,
     id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -357,7 +359,7 @@ async function processBot(config: BotRow) {
     marketPriceDeps,
     candleDeps,
     positions,
-    addActivity: (entry) => addActivity(entry as Omit<ActivityEntry, 'id' | 'timestamp'>),
+    addActivity: (entry) => addActivity(entry as ActivityInput),
     callNextJSApi,
     executeTrade,
     automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
