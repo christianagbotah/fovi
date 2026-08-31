@@ -6,8 +6,10 @@ import { classifyProductionDatabaseState } from '@/lib/production-migration-poli
 
 const baselinePath = resolve(__dirname, '../../../prisma/baseline.pre-containment.prisma');
 const migrationScriptPath = resolve(__dirname, '../../../scripts/migrate-production.ts');
+const deployScriptPath = resolve(__dirname, '../../../deploy.sh');
 const baseline = readFileSync(baselinePath, 'utf8');
 const migrationScript = readFileSync(migrationScriptPath, 'utf8');
+const deployScript = readFileSync(deployScriptPath, 'utf8');
 
 function gitBlobSha(content: string): string {
   const bytes = Buffer.from(content, 'utf8');
@@ -61,5 +63,12 @@ describe('production database bootstrap safety', () => {
     expect(migrationScript).toContain("'migrate', 'status'");
     expect(migrationScript).not.toContain('db push');
     expect(migrationScript).not.toContain("'migrate', 'resolve'");
+  });
+
+  it('keeps VPS deployment on the same shared migration decision gate', () => {
+    const migrationFunction = deployScript.split('db_migrate()')[1]?.split('resolve_deploy_sha()')[0] ?? '';
+    expect(migrationFunction).toContain('bun run scripts/migrate-production.ts');
+    expect(migrationFunction).not.toContain('bunx prisma migrate deploy');
+    expect(migrationFunction).not.toContain('prisma db push');
   });
 });
