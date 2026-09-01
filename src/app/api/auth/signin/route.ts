@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
-import { verifyPassword, generateAccessToken, generateTwoFactorChallenge } from '@/lib/auth';
+import { verifyPassword, generateAccessToken } from '@/lib/auth';
 import {
   createAuthSession,
   readRefreshCookie,
@@ -8,6 +8,7 @@ import {
   setRefreshCookie,
 } from '@/lib/auth-sessions';
 import { authJson } from '@/lib/auth-response';
+import { issueTwoFactorChallenge } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -81,11 +82,17 @@ export async function POST(request: NextRequest) {
       }
 
       if (user.settings?.twoFactorEnabled) {
-        const twoFactorChallenge = await generateTwoFactorChallenge(user.id, user.email);
+        const issuedChallenge = await issueTwoFactorChallenge(user.id, user.email);
+        if (!issuedChallenge) {
+          return authJson(
+            { error: 'Two-factor challenge service unavailable.' },
+            { status: 503 },
+          );
+        }
         return authJson({
           success: true,
           requiresTwoFactor: true,
-          twoFactorChallenge,
+          twoFactorChallenge: issuedChallenge.token,
           user: {
             id: user.id,
             email: user.email,

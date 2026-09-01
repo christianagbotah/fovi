@@ -8,6 +8,7 @@ import {
   setRefreshCookie,
 } from '@/lib/auth-sessions';
 import { authJson } from '@/lib/auth-response';
+import { consumeTwoFactorChallenge } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -40,7 +41,11 @@ export async function POST(request: NextRequest) {
 
     const { challenge, code, rememberMe } = parsed.data;
     const challengePayload = await verifyToken(challenge);
-    if (!challengePayload || challengePayload.type !== 'two_factor') {
+    if (
+      !challengePayload ||
+      challengePayload.type !== 'two_factor' ||
+      !challengePayload.jti
+    ) {
       return authJson({ error: 'Invalid or expired two-factor challenge.' }, { status: 401 });
     }
 
@@ -70,6 +75,14 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Invalid code.' }, { status: 401 });
     }
 
+    // Consume only after a valid TOTP so ordinary mistakes do not burn the
+    // password-verified challenge. The atomic UPDATE guarantees only one
+    // concurrent successful request can create a session from this challenge.
+    const consumed = await consumeTwoFactorChallenge(challengePayload.jti, user.id);
+    if (!consumed) {
+      return authJson({ error: 'Two-factor challenge was already used or expired.' }, { status: 401 });
+    }
+
     const existingRefreshToken = readRefreshCookie(request);
     if (existingRefreshToken) {
       await revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED');
@@ -79,7 +92,7 @@ export async function POST(request: NextRequest) {
     try {
       session = await createAuthSession(user.id, rememberMe);
     } catch {
-      return authJson({ error: 'Authentication session service unavailable.' }, { status: 503 });
+      return authJson({ error: 'Authentication session service unavailable. Please sign in again.' }, { status: 503 });
     }
 
     const isAdmin = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL.toLowerCase();

@@ -116,6 +116,7 @@ export interface TwoFactorChallengePayload {
   sub: string;
   email: string;
   type: 'two_factor';
+  jti?: string;
   iat?: number;
   exp?: number;
 }
@@ -151,12 +152,15 @@ export async function generateAccessToken(
 }
 
 /**
- * Create a short-lived challenge after password verification. The public
- * 2FA completion endpoint must require this token so a TOTP cannot act as
- * an alternative single-factor login credential.
+ * Create a short-lived challenge after password verification. Phase 3N binds
+ * each challenge to a server-side one-time record through the JWT jti claim.
  */
-export async function generateTwoFactorChallenge(userId: string, email: string): Promise<string> {
-  const payload: Omit<TwoFactorChallengePayload, 'iat' | 'exp'> = {
+export async function generateTwoFactorChallenge(
+  userId: string,
+  email: string,
+  challengeId: string,
+): Promise<string> {
+  const payload: Omit<TwoFactorChallengePayload, 'iat' | 'exp' | 'jti'> = {
     sub: userId,
     email,
     type: 'two_factor',
@@ -164,6 +168,7 @@ export async function generateTwoFactorChallenge(userId: string, email: string):
 
   return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
+    .setJti(challengeId)
     .setIssuedAt()
     .setExpirationTime('5m')
     .sign(getSecretKey());
