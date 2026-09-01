@@ -220,9 +220,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   authToken: null,
   isAuthenticated: false,
   setAuth: (user, token) => {
+    // Phase 3I: access JWTs are memory-only. Persistent browser session
+    // continuity is provided exclusively by the HttpOnly refresh cookie.
     set({ authUser: user, authToken: token, isAuthenticated: true });
-    localStorage.setItem('fovi_token', token);
-    localStorage.setItem('fovi_user', JSON.stringify(user));
   },
   clearAuth: () => {
     if (typeof window !== 'undefined') {
