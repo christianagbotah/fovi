@@ -4,6 +4,8 @@ import { relative, resolve } from 'node:path';
 
 const ROOT = resolve(__dirname, '../../..');
 const SRC = resolve(ROOT, 'src');
+const PAGE = resolve(ROOT, 'src/app/page.tsx');
+const API_FETCH = resolve(ROOT, 'src/lib/api-fetch.ts');
 
 const APPROVED_BROWSER_AUTH_BOUNDARIES = new Set([
   'src/lib/api-fetch.ts',
@@ -71,5 +73,22 @@ function browserAccessTokenViolations(): string[] {
 describe('Phase 3G browser access-token boundary', () => {
   it('keeps browser access-token reads, writes, and Bearer construction inside approved boundaries', () => {
     expect(browserAccessTokenViolations()).toEqual([]);
+  });
+
+  it('routes dashboard authentication through the central refresh-aware boundary', () => {
+    const page = readFileSync(PAGE, 'utf8');
+    expect(page).toContain("import { authFetch, hydrateBrowserAuthFromStorage } from '@/lib/api-fetch';");
+    expect(page).toContain('hydrateBrowserAuthFromStorage()');
+    expect(page).toContain("authFetch('/api/auth/me')");
+    expect(page).not.toContain("localStorage.getItem('fovi_token')");
+    expect(page).not.toMatch(/Authorization:\s*`Bearer\s+\$\{/);
+  });
+
+  it('allows protected auth endpoints to refresh without recursive refresh/logout retries', () => {
+    const apiFetch = readFileSync(API_FETCH, 'utf8');
+    expect(apiFetch).toContain("url.includes('/api/auth/refresh')");
+    expect(apiFetch).toContain("url.includes('/api/auth/logout')");
+    expect(apiFetch).toContain('!isRefreshBoundaryEndpoint(url)');
+    expect(apiFetch).not.toContain("return url.includes('/api/auth/');");
   });
 });
