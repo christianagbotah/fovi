@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 
+export { isSameOriginMutation } from '@/lib/same-origin';
+
 export const REFRESH_COOKIE_NAME = 'fovi_refresh';
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -206,10 +208,4 @@ export function clearRefreshCookie(response: NextResponse): void {
     path: '/api/auth',
     maxAge: 0,
   });
-}
-
-export function isSameOriginMutation(request: NextRequest): boolean {
-  const origin = request.headers.get('origin');
-  if (!origin) return true;
-  return origin === request.nextUrl.origin;
 }
