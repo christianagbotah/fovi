@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
+import { cleanupExpiredAuthSessionHistory } from '@/lib/auth-session-retention';
 
 export { isSameOriginMutation } from '@/lib/same-origin';
 
@@ -8,6 +9,8 @@ export const REFRESH_COOKIE_NAME = 'fovi_refresh';
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const REMEMBERED_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const AUTH_SESSION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let nextAuthSessionCleanupAt = 0;
 
 function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -44,10 +47,26 @@ function authSessionModelAvailable(): boolean {
   return isDbAvailable() && !!db && hasModel('authSession');
 }
 
+async function maybeCleanupExpiredAuthSessions(): Promise<void> {
+  if (!db || !authSessionModelAvailable()) return;
+
+  const nowMs = Date.now();
+  if (nowMs < nextAuthSessionCleanupAt) return;
+  nextAuthSessionCleanupAt = nowMs + AUTH_SESSION_CLEANUP_INTERVAL_MS;
+
+  try {
+    await cleanupExpiredAuthSessionHistory(db, new Date(nowMs));
+  } catch {
+    // Retention cleanup is best-effort and must never interrupt authentication.
+  }
+}
+
 export async function createAuthSession(userId: string, rememberMe: boolean): Promise<IssuedAuthSession> {
   if (!authSessionModelAvailable() || !db) {
     throw new Error('AUTH_SESSION_STORE_UNAVAILABLE');
   }
+
+  await maybeCleanupExpiredAuthSessions();
 
   const refreshToken = generateRefreshSecret();
   const expiresAt = new Date(Date.now() + sessionTtlMs(rememberMe));
@@ -69,6 +88,8 @@ export async function rotateAuthSession(refreshToken: string): Promise<RotatedAu
   if (!authSessionModelAvailable() || !db) {
     return { status: 'unavailable' };
   }
+
+  await maybeCleanupExpiredAuthSessions();
 
   const tokenHash = hashRefreshToken(refreshToken);
   const now = new Date();
