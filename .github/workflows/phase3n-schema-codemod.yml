@@ -24,8 +24,8 @@ jobs:
       - name: Apply deterministic Prisma schema update
         run: node scripts/phase3n-schema-codemod.mjs
 
-      - name: Validate Prisma schema
-        run: npx prisma validate
+      - name: Validate Prisma schema with repository-pinned major
+        run: npx --yes prisma@6.19.3 validate
 
       - name: Commit schema and remove one-shot tooling
         run: |
