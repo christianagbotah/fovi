@@ -20,6 +20,12 @@ function isAuthEndpoint(url: string): boolean {
   return url.includes('/api/auth/');
 }
 
+function clearBrowserAccessState(): void {
+  localStorage.removeItem('fovi_token');
+  localStorage.removeItem('fovi_user');
+  useTradingStore.setState({ authUser: null, authToken: null, isAuthenticated: false });
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   if (typeof window === 'undefined') return null;
 
@@ -31,21 +37,25 @@ async function refreshAccessToken(): Promise<string | null> {
 
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        localStorage.removeItem('fovi_token');
-        localStorage.removeItem('fovi_user');
+        clearBrowserAccessState();
       }
       return null;
     }
 
     const data = await response.json();
-    if (!data || typeof data.token !== 'string' || data.token.length === 0) {
+    if (
+      !data ||
+      typeof data.token !== 'string' ||
+      data.token.length === 0 ||
+      !data.user ||
+      typeof data.user.id !== 'string' ||
+      typeof data.user.email !== 'string'
+    ) {
       return null;
     }
 
-    localStorage.setItem('fovi_token', data.token);
-    if (data.user) {
-      localStorage.setItem('fovi_user', JSON.stringify(data.user));
-    }
+    // Keep in-memory Zustand auth and localStorage on the same rotated access token.
+    useTradingStore.getState().setAuth(data.user, data.token);
     return data.token;
   } catch {
     return null;
