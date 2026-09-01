@@ -27,11 +27,11 @@ describe('Phase 3E authentication boundary hardening', () => {
     expect(authLib).toContain('generateTwoFactorChallenge');
     expect(authLib).toContain(".setExpirationTime('5m')");
     expect(signinRoute).toContain('const valid = verifyPassword(password, user.passwordHash)');
-    expect(signinRoute).toContain('const twoFactorChallenge = await generateTwoFactorChallenge(user.id, user.email)');
-    expect(signinRoute).toContain('twoFactorChallenge,');
+    expect(signinRoute).toContain('const issuedChallenge = await issueTwoFactorChallenge(user.id, user.email)');
+    expect(signinRoute).toContain('twoFactorChallenge: issuedChallenge.token');
 
     const passwordVerification = signinRoute.indexOf('const valid = verifyPassword(password, user.passwordHash)');
-    const challengeIssue = signinRoute.indexOf('const twoFactorChallenge = await generateTwoFactorChallenge(user.id, user.email)');
+    const challengeIssue = signinRoute.indexOf('const issuedChallenge = await issueTwoFactorChallenge(user.id, user.email)');
     expect(challengeIssue).toBeGreaterThan(passwordVerification);
   });
 
