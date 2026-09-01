@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
+import { revokeOutstandingTwoFactorChallenges } from '@/lib/two-factor-challenges';
 
 // ============================================================
 // Zod schemas
@@ -52,6 +53,7 @@ export async function PATCH(
         });
         if (!nextActive) {
           await revokeAllAuthSessionsForUser(tx, id, 'ACCOUNT_INACTIVE');
+          await revokeOutstandingTwoFactorChallenges(tx, id);
         }
         return result;
       });
@@ -71,6 +73,7 @@ export async function PATCH(
           data: { passwordHash },
         });
         await revokeAllAuthSessionsForUser(tx, id, 'ADMIN_PASSWORD_RESET');
+        await revokeOutstandingTwoFactorChallenges(tx, id);
       });
       return NextResponse.json({
         success: true,
@@ -119,8 +122,8 @@ export async function DELETE(
     }
 
     if (hardDelete) {
-      // AuthSession has an onDelete:Cascade relation to User, so deleting the
-      // user removes all remaining session rows in the same database mutation.
+      // AuthSession and TwoFactorChallenge both cascade from User, so deleting
+      // the user removes all remaining session and challenge rows.
       await db.user.delete({ where: { id } });
       return NextResponse.json({ success: true, message: 'User permanently deleted.' });
     }
@@ -131,6 +134,7 @@ export async function DELETE(
         data: { isActive: false },
       });
       await revokeAllAuthSessionsForUser(tx, id, 'ACCOUNT_INACTIVE');
+      await revokeOutstandingTwoFactorChallenges(tx, id);
     });
     return NextResponse.json({ success: true, message: 'User deactivated (soft delete).' });
   } catch (err) {
