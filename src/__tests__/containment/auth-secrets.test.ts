@@ -66,13 +66,8 @@ describe('auth token operations with test env', () => {
     }
   });
 
-  it('can generate and verify refresh token', async () => {
-    const token = await auth.generateRefreshToken('user1');
-    expect(token).toBeDefined();
-    const payload = await auth.verifyToken(token);
-    expect(payload).not.toBeNull();
-    expect(payload!.sub).toBe('user1');
-    expect(payload!.type).toBe('refresh');
+  it('does not expose legacy stateless refresh-token minting', () => {
+    expect('generateRefreshToken' in auth).toBe(false);
   });
 
   it('rejects invalid token', async () => {

@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { verifyPassword, generateAccessToken, generateTwoFactorChallenge } from '@/lib/auth';
+import {
+  createAuthSession,
+  readRefreshCookie,
+  revokeAuthSessionFamily,
+  setRefreshCookie,
+} from '@/lib/auth-sessions';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
 const signinSchema = z.object({
   email: z.email(),
   password: z.string().min(8),
+  rememberMe: z.boolean().optional().default(false),
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'signin' });
@@ -33,7 +40,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, password } = parsed.data;
+    const { email, password, rememberMe } = parsed.data;
     const emailLower = email.toLowerCase().trim();
 
     if (isDbAvailable() && db && hasModel('user')) {
@@ -86,10 +93,25 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      const existingRefreshToken = readRefreshCookie(request);
+      if (existingRefreshToken) {
+        await revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED');
+      }
+
+      let session;
+      try {
+        session = await createAuthSession(user.id, rememberMe);
+      } catch {
+        return NextResponse.json(
+          { error: 'Authentication session service unavailable.' },
+          { status: 503 }
+        );
+      }
+
       const isAdmin = process.env.ADMIN_EMAIL && emailLower === process.env.ADMIN_EMAIL.toLowerCase();
       const token = await generateAccessToken(user.id, user.email, user.name || undefined, isAdmin ? 'admin' : undefined);
 
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         user: {
           id: user.id,
@@ -98,10 +120,13 @@ export async function POST(request: NextRequest) {
         },
         token,
       });
+      setRefreshCookie(response, session);
+      return response;
     }
 
     // Local/demo authentication is opt-in and MUST never become a production
-    // fallback when the database is missing or unavailable.
+    // fallback when the database is missing or unavailable. Demo auth does not
+    // receive a persistent refresh session.
     const allowDemoAuth = process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_AUTH === 'true';
     if (allowDemoAuth && emailLower === 'demo@fovi.ai' && password === 'password123') {
       const token = await generateAccessToken('demo-user', 'demo@fovi.ai', 'Demo User');

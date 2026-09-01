@@ -34,6 +34,7 @@ const PUBLIC_PATHS: string[] = [
   '/api/auth/email-otp/send',
   '/api/auth/email-otp/verify',
   '/api/auth/refresh',
+  '/api/auth/logout',
   '/api/auth/verify-email',
   '/api/auth/resend-verification',
   '/api/payments/hubtel/callback',

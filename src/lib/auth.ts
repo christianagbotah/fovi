@@ -111,15 +111,6 @@ export interface AccessTokenPayload {
   exp?: number;
 }
 
-export interface RefreshTokenPayload {
-  sub: string;
-  type: 'refresh';
-  email?: string;
-  name?: string;
-  iat?: number;
-  exp?: number;
-}
-
 export interface TwoFactorChallengePayload {
   sub: string;
   email: string;
@@ -128,10 +119,15 @@ export interface TwoFactorChallengePayload {
   exp?: number;
 }
 
-export type JwtPayload = AccessTokenPayload | RefreshTokenPayload | TwoFactorChallengePayload;
+export type JwtPayload = AccessTokenPayload | TwoFactorChallengePayload;
 
 /**
  * Create a JWT access token with 24h expiry.
+ *
+ * Phase 3F keeps this lifetime unchanged while the new refresh-session path
+ * is introduced so existing direct API callers are not broken mid-hardening.
+ * A later browser-auth migration can shorten this once every caller uses the
+ * refresh-aware API boundary.
  */
 export async function generateAccessToken(
   userId: string,
@@ -170,20 +166,6 @@ export async function generateTwoFactorChallenge(userId: string, email: string):
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('5m')
-    .sign(getSecretKey());
-}
-
-/**
- * Create a JWT refresh token with 7d expiry.
- */
-export async function generateRefreshToken(userId: string, email?: string, name?: string): Promise<string> {
-  const payload: Record<string, unknown> = { sub: userId, type: 'refresh' };
-  if (email) payload.email = email;
-  if (name) payload.name = name;
-  return new SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('7d')
     .sign(getSecretKey());
 }
 
