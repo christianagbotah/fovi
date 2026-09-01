@@ -62,6 +62,13 @@ describe('Phase 3F revocable refresh-session containment', () => {
     expect(apiFetch).not.toContain("localStorage.getItem('fovi_refresh'");
   });
 
+  it('synchronizes successful access-token rotation across browser auth state', () => {
+    expect(apiFetch).toContain('useTradingStore.getState().setAuth(data.user, data.token)');
+    expect(apiFetch).toContain(
+      'useTradingStore.setState({ authUser: null, authToken: null, isAuthenticated: false })',
+    );
+  });
+
   it('creates server-side sessions only after password or password-plus-2FA authentication', () => {
     expect(signinRoute).toContain('createAuthSession(user.id, rememberMe)');
     expect(signinRoute).toContain('setRefreshCookie(response, session)');
