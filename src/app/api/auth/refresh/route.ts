@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { generateAccessToken } from '@/lib/auth';
 import {
   clearRefreshCookie,
@@ -7,18 +7,19 @@ import {
   rotateAuthSession,
   setRefreshCookie,
 } from '@/lib/auth-sessions';
+import { authJson } from '@/lib/auth-response';
 import { rateLimit } from '@/lib/rate-limit';
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 30, keyPrefix: 'auth-refresh' });
 
 export async function POST(request: NextRequest) {
   if (!isSameOriginMutation(request)) {
-    return NextResponse.json({ error: 'Cross-origin refresh is not allowed.' }, { status: 403 });
+    return authJson({ error: 'Cross-origin refresh is not allowed.' }, { status: 403 });
   }
 
   const rateResult = limiter(request);
   if (!rateResult.allowed) {
-    return NextResponse.json(
+    return authJson(
       { error: 'Too many refresh attempts. Please try again later.' },
       {
         status: 429,
@@ -29,23 +30,23 @@ export async function POST(request: NextRequest) {
 
   const refreshToken = readRefreshCookie(request);
   if (!refreshToken) {
-    return NextResponse.json({ error: 'Refresh session is not available.' }, { status: 401 });
+    return authJson({ error: 'Refresh session is not available.' }, { status: 401 });
   }
 
   const rotation = await rotateAuthSession(refreshToken);
 
   if (rotation.status === 'unavailable') {
-    return NextResponse.json({ error: 'Authentication session service unavailable.' }, { status: 503 });
+    return authJson({ error: 'Authentication session service unavailable.' }, { status: 503 });
   }
 
   if (rotation.status === 'inactive') {
-    const response = NextResponse.json({ error: 'Account is deactivated.' }, { status: 403 });
+    const response = authJson({ error: 'Account is deactivated.' }, { status: 403 });
     clearRefreshCookie(response);
     return response;
   }
 
   if (rotation.status === 'invalid' || rotation.status === 'reused') {
-    const response = NextResponse.json({ error: 'Refresh session is invalid or expired.' }, { status: 401 });
+    const response = authJson({ error: 'Refresh session is invalid or expired.' }, { status: 401 });
     clearRefreshCookie(response);
     return response;
   }
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
     isAdmin ? 'admin' : undefined,
   );
 
-  const response = NextResponse.json({
+  const response = authJson({
     success: true,
     token,
     user: {
