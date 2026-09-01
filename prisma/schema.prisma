@@ -27,6 +27,7 @@ model User {
   bots           Bot[]
   backtests      Backtest[]
   subscriptions  Subscription[]
+  authSessions   AuthSession[]
 }
 
 model UserSettings {
@@ -46,6 +47,25 @@ model UserSettings {
   emailOtpEnabled Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model AuthSession {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyId     String
+  tokenHash    String   @unique
+  rememberMe   Boolean  @default(false)
+  expiresAt    DateTime
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  revokeReason String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@index([familyId, revokedAt])
 }
 
 model TradingAccount {
