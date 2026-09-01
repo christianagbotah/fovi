@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { generateAccessToken, verifyToken } from '@/lib/auth';
 import {
@@ -7,6 +7,7 @@ import {
   revokeAuthSessionFamily,
   setRefreshCookie,
 } from '@/lib/auth-sessions';
+import { authJson } from '@/lib/auth-response';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
   try {
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many 2FA attempts. Please try again later.' },
         {
           status: 429,
@@ -34,17 +35,17 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = twoFactorAuthSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+      return authJson({ error: parsed.error.issues[0].message }, { status: 400 });
     }
 
     const { challenge, code, rememberMe } = parsed.data;
     const challengePayload = await verifyToken(challenge);
     if (!challengePayload || challengePayload.type !== 'two_factor') {
-      return NextResponse.json({ error: 'Invalid or expired two-factor challenge.' }, { status: 401 });
+      return authJson({ error: 'Invalid or expired two-factor challenge.' }, { status: 401 });
     }
 
     if (!isDbAvailable() || !db) {
-      return NextResponse.json({ error: 'Authentication service unavailable.' }, { status: 503 });
+      return authJson({ error: 'Authentication service unavailable.' }, { status: 503 });
     }
 
     const user = await safeDbQuery(() =>
@@ -55,18 +56,18 @@ export async function POST(request: NextRequest) {
     );
 
     if (!user || user.email !== challengePayload.email) {
-      return NextResponse.json({ error: 'Invalid two-factor challenge.' }, { status: 401 });
+      return authJson({ error: 'Invalid two-factor challenge.' }, { status: 401 });
     }
     if (!user.settings?.twoFactorEnabled || !user.settings.twoFactorSecret) {
-      return NextResponse.json({ error: '2FA not enabled.' }, { status: 400 });
+      return authJson({ error: '2FA not enabled.' }, { status: 400 });
     }
     if (!user.isActive) {
-      return NextResponse.json({ error: 'Account deactivated' }, { status: 403 });
+      return authJson({ error: 'Account deactivated' }, { status: 403 });
     }
 
     const otplib = await import('otplib');
     if (!otplib.verify({ token: code, secret: user.settings.twoFactorSecret })) {
-      return NextResponse.json({ error: 'Invalid code.' }, { status: 401 });
+      return authJson({ error: 'Invalid code.' }, { status: 401 });
     }
 
     const existingRefreshToken = readRefreshCookie(request);
@@ -78,13 +79,13 @@ export async function POST(request: NextRequest) {
     try {
       session = await createAuthSession(user.id, rememberMe);
     } catch {
-      return NextResponse.json({ error: 'Authentication session service unavailable.' }, { status: 503 });
+      return authJson({ error: 'Authentication session service unavailable.' }, { status: 503 });
     }
 
     const isAdmin = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL.toLowerCase();
     const token = await generateAccessToken(user.id, user.email, user.name || undefined, isAdmin ? 'admin' : undefined);
 
-    const response = NextResponse.json({
+    const response = authJson({
       success: true,
       user: { id: user.id, email: user.email, name: user.name },
       token,
@@ -92,6 +93,6 @@ export async function POST(request: NextRequest) {
     setRefreshCookie(response, session);
     return response;
   } catch {
-    return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
+    return authJson({ error: 'Unexpected error' }, { status: 500 });
   }
 }
