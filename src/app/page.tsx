@@ -13,7 +13,7 @@ import {
   CheckCircle2, Circle, MessageCircle, Receipt, Crown, Server, Save,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
-import { bootstrapBrowserAuth } from '@/lib/api-fetch';
+import { authFetch, bootstrapBrowserAuth } from '@/lib/api-fetch';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
 import { AdminBrokersPanel } from '@/components/trading/admin-brokers-panel';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
