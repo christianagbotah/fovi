@@ -120,6 +120,15 @@ describe('Phase 3G/3I browser access-token boundary', () => {
     expect(signin).not.toContain("window.location.href = '/';");
   });
 
+  it('serializes one-time refresh rotation across concurrent 401 recovery', () => {
+    const apiFetch = readFileSync(API_FETCH, 'utf8');
+    expect(apiFetch).toContain('let refreshInFlight: Promise<string | null> | null = null;');
+    expect(apiFetch).toContain('if (refreshInFlight) return refreshInFlight;');
+    expect(apiFetch).toContain('const pending = performRefreshAccessToken();');
+    expect(apiFetch).toContain('refreshInFlight = pending;');
+    expect(apiFetch).toContain('if (refreshInFlight === pending) refreshInFlight = null;');
+  });
+
   it('allows a 401 without an in-memory token to recover through refresh once', () => {
     const apiFetch = readFileSync(API_FETCH, 'utf8');
     expect(apiFetch).toContain('if (res.status === 401 && !isRefreshBoundaryEndpoint(url))');
