@@ -1,0 +1,45 @@
+name: Phase 3G Codemod
+
+on:
+  push:
+    branches:
+      - phase-3g-access-token-boundary
+    paths:
+      - '.github/workflows/phase3g-codemod.yml'
+      - 'scripts/phase3g-access-boundary-codemod.mjs'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Phase 3G branch
+        uses: actions/checkout@v4
+        with:
+          ref: phase-3g-access-token-boundary
+          fetch-depth: 0
+
+      - name: Apply deterministic auth-boundary migration
+        run: node scripts/phase3g-access-boundary-codemod.mjs
+
+      - name: Verify migration removed direct page credentials
+        run: |
+          if grep -q "localStorage.getItem('fovi_token')" src/app/page.tsx; then
+            echo 'Direct fovi_token read remains in src/app/page.tsx' >&2
+            exit 1
+          fi
+          if grep -Eq 'Authorization:.*Bearer.*token' src/app/page.tsx; then
+            echo 'Manual Bearer header remains in src/app/page.tsx' >&2
+            exit 1
+          fi
+
+      - name: Commit migrated page and remove one-shot tooling
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/page.tsx
+          git rm scripts/phase3g-access-boundary-codemod.mjs .github/workflows/phase3g-codemod.yml
+          git commit -m "fix(auth): centralize dashboard access-token boundary"
+          git push origin HEAD:phase-3g-access-token-boundary
