@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { revokeOutstandingTwoFactorChallenges } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: '2fa-setup' });
@@ -52,10 +53,13 @@ export async function POST(request: NextRequest) {
     const qrCodeBase64 = await QRCode.toDataURL(otpauthUrl);
 
     const updated = await safeDbQuery(() =>
-      db!.userSettings.upsert({
-        where: { userId: user.id },
-        create: { userId: user.id, twoFactorSecret: secret, twoFactorEnabled: false },
-        update: { twoFactorSecret: secret },
+      db!.$transaction(async (tx) => {
+        await revokeOutstandingTwoFactorChallenges(tx, user.id);
+        return tx.userSettings.upsert({
+          where: { userId: user.id },
+          create: { userId: user.id, twoFactorSecret: secret, twoFactorEnabled: false },
+          update: { twoFactorSecret: secret, twoFactorEnabled: false },
+        });
       })
     );
     if (!updated) return NextResponse.json({ error: 'Failed to save 2FA secret.' }, { status: 500 });
