@@ -33,7 +33,10 @@ export type RotatedAuthSession =
       rememberMe: boolean;
       user: { id: string; email: string; name: string | null; isActive: boolean };
     }
-  | { status: 'invalid' | 'reused' | 'inactive' | 'unavailable' };
+  | { status: 'invalid' }
+  | { status: 'reused' }
+  | { status: 'inactive' }
+  | { status: 'unavailable' };
 
 function authSessionModelAvailable(): boolean {
   return isDbAvailable() && !!db && hasModel('authSession');
