@@ -26,12 +26,12 @@ jobs:
 
       - name: Verify access JWT is not persisted
         run: |
-          if grep -R "localStorage.setItem(['\"]fovi_token" -n src --include='*.ts' --include='*.tsx'; then
-            echo 'Persistent fovi_token write remains' >&2
+          if grep -R "localStorage.setItem(['\"]fovi_token" -n src --include='*.ts' --include='*.tsx' --exclude-dir='__tests__'; then
+            echo 'Persistent fovi_token write remains in runtime source' >&2
             exit 1
           fi
-          if grep -R "localStorage.getItem(['\"]fovi_token" -n src --include='*.ts' --include='*.tsx'; then
-            echo 'Persistent fovi_token read remains' >&2
+          if grep -R "localStorage.getItem(['\"]fovi_token" -n src --include='*.ts' --include='*.tsx' --exclude-dir='__tests__'; then
+            echo 'Persistent fovi_token read remains in runtime source' >&2
             exit 1
           fi
 
