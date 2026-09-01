@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useTradingStore } from '@/lib/store/trading-store';
 
 export default function SignInPage() {
+  const router = useRouter();
   const setAuth = useTradingStore(state => state.setAuth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,7 +31,10 @@ export default function SignInPage() {
 
   function completeSignIn(user: { id: string; email: string; name: string | null; role?: string }, token: string) {
     setAuth(user, token);
-    window.location.href = '/';
+    // Preserve the memory-only access token by staying inside the App Router.
+    // Production sessions can also recover from the HttpOnly refresh cookie,
+    // while contained demo/local auth intentionally has no refresh session.
+    router.replace('/');
   }
 
   function validateForm(): boolean {
