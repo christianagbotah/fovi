@@ -1,66 +1,40 @@
 // ============================================================
 // API Fetch Wrapper
 // Central browser access-token boundary:
-// 1. Auto-attach the access token
-// 2. Rotate a server-side refresh session after an authenticated 401
-// 3. Retry the original request once with the rotated access token
-// 4. Hydrate browser auth without exposing storage access to page components
-// 5. Detect x-demo response headers for typed API callers
+// 1. Keep the short-lived access token in memory only
+// 2. Auto-attach the in-memory access token
+// 3. Rotate a server-side refresh session after an authenticated 401
+// 4. Serialize refresh rotation so concurrent 401s cannot reuse a token
+// 5. Retry the original request once with the rotated access token
+// 6. Bootstrap browser auth from the HttpOnly refresh session after reload
+// 7. Detect x-demo response headers for typed API callers
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
 
-// Access token is still read from localStorage for compatibility with the
-// current browser auth boundary. Refresh secrets remain HttpOnly cookies and
-// are never exposed to JavaScript.
+let refreshInFlight: Promise<string | null> | null = null;
+
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('fovi_token');
+  return useTradingStore.getState().authToken;
 }
 
 function isRefreshBoundaryEndpoint(url: string): boolean {
   return url.includes('/api/auth/refresh') || url.includes('/api/auth/logout');
 }
 
+function purgeLegacyPersistedAuth(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('fovi_token');
+  localStorage.removeItem('fovi_user');
+}
+
 function clearBrowserAccessState(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('fovi_token');
-    localStorage.removeItem('fovi_user');
-  }
+  purgeLegacyPersistedAuth();
   useTradingStore.setState({ authUser: null, authToken: null, isAuthenticated: false });
 }
 
-/**
- * Restore the last browser access identity into Zustand without allowing page
- * components to read access credentials from localStorage directly. The
- * caller should validate it through authFetch('/api/auth/me'); a 401 can then
- * rotate the HttpOnly refresh session once before the identity is cleared.
- */
-export function hydrateBrowserAuthFromStorage(): boolean {
-  if (typeof window === 'undefined') return false;
-
-  const token = getToken();
-  const rawUser = localStorage.getItem('fovi_user');
-  if (!token || !rawUser) return false;
-
-  try {
-    const user = JSON.parse(rawUser);
-    if (!user || typeof user.id !== 'string' || typeof user.email !== 'string') {
-      clearBrowserAccessState();
-      return false;
-    }
-
-    useTradingStore.setState({ authUser: user, authToken: token, isAuthenticated: true });
-    return true;
-  } catch {
-    clearBrowserAccessState();
-    return false;
-  }
-}
-
-async function refreshAccessToken(): Promise<string | null> {
-  if (typeof window === 'undefined') return null;
-
+async function performRefreshAccessToken(): Promise<string | null> {
   try {
     const response = await fetch('/api/auth/refresh', {
       method: 'POST',
@@ -83,15 +57,43 @@ async function refreshAccessToken(): Promise<string | null> {
       typeof data.user.id !== 'string' ||
       typeof data.user.email !== 'string'
     ) {
+      clearBrowserAccessState();
       return null;
     }
 
-    // Keep in-memory Zustand auth and localStorage on the same rotated access token.
+    // Access JWTs are intentionally memory-only. The revocable refresh secret
+    // remains in the HttpOnly cookie and is the only persistent browser session.
     useTradingStore.getState().setAuth(data.user, data.token);
     return data.token;
   } catch {
     return null;
   }
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  if (refreshInFlight) return refreshInFlight;
+
+  const pending = performRefreshAccessToken();
+  refreshInFlight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight === pending) refreshInFlight = null;
+  }
+}
+
+/**
+ * Bootstrap browser authentication after a page reload. No access credential
+ * is restored from Web Storage; instead, the HttpOnly refresh session rotates
+ * once and supplies a fresh short-lived access JWT into memory.
+ */
+export async function bootstrapBrowserAuth(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  purgeLegacyPersistedAuth();
+
+  if (getToken()) return true;
+  return (await refreshAccessToken()) !== null;
 }
 
 function requestHeaders(options: RequestInit, token: string | null): Headers {
@@ -105,8 +107,9 @@ function requestHeaders(options: RequestInit, token: string | null): Headers {
 
 /**
  * Response-preserving authenticated fetch boundary for browser callers that
- * need status codes or response headers. It performs at most one refresh and
- * one retry. Refresh/logout are explicitly excluded to prevent recursion.
+ * need status codes or response headers. It performs at most one shared
+ * refresh rotation and one retry. Refresh/logout are explicitly excluded to
+ * prevent recursion.
  */
 export async function authFetch(
   url: string,
@@ -119,7 +122,7 @@ export async function authFetch(
     credentials: options.credentials || 'same-origin',
   });
 
-  if (res.status === 401 && token && !isRefreshBoundaryEndpoint(url)) {
+  if (res.status === 401 && !isRefreshBoundaryEndpoint(url)) {
     const nextToken = await refreshAccessToken();
     if (nextToken) {
       res = await fetch(url, {

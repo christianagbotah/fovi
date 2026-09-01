@@ -13,7 +13,7 @@ import {
   CheckCircle2, Circle, MessageCircle, Receipt, Crown, Server, Save,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
-import { authFetch, hydrateBrowserAuthFromStorage } from '@/lib/api-fetch';
+import { authFetch, bootstrapBrowserAuth } from '@/lib/api-fetch';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
 import { AdminBrokersPanel } from '@/components/trading/admin-brokers-panel';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
@@ -2264,31 +2264,11 @@ export default function TradingDashboard() {
 
   const { prices: wsPrices, connected: wsConnected } = useMarketSocket();
 
-  // Hydrate alerts, accounts & auth from localStorage on first mount
-  // Validates JWT token with the server to ensure session is still valid
+  // Hydrate non-auth browser state on first mount. Authentication itself is
+  // bootstrapped from the revocable HttpOnly refresh session into memory only.
   useEffect(() => {
     hydrateAlertsFromStorage();
-    // Restore browser auth through the central boundary, then validate it server-side.
-    // authFetch can rotate the HttpOnly refresh session once if the access token is stale.
-    const restoredAuth = hydrateBrowserAuthFromStorage();
-    if (restoredAuth) {
-      void (async () => {
-        try {
-          const res = await authFetch('/api/auth/me');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && data.user) {
-              const currentToken = useTradingStore.getState().authToken;
-              if (currentToken) {
-                useTradingStore.getState().setAuth(data.user, currentToken);
-              }
-            }
-          }
-        } catch {
-          // Keep the hydrated identity during a transient network failure.
-        }
-      })();
-    }
+    void bootstrapBrowserAuth();
     // If no accounts loaded yet, seed from localStorage
     // Also always restore the active account ID from localStorage
     const { accounts: currentAccounts, setActiveAccount: doSetActive } = useTradingStore.getState();
