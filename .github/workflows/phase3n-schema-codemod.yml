@@ -25,6 +25,8 @@ jobs:
         run: node scripts/phase3n-schema-codemod.mjs
 
       - name: Validate Prisma schema with repository-pinned major
+        env:
+          DATABASE_URL: postgresql://phase3n:phase3n@localhost:5432/phase3n
         run: npx --yes prisma@6.19.3 validate
 
       - name: Commit schema and remove one-shot tooling
