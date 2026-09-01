@@ -225,9 +225,20 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     localStorage.setItem('fovi_user', JSON.stringify(user));
   },
   clearAuth: () => {
+    if (typeof window !== 'undefined') {
+      // Dispatch server-side refresh-family revocation before local cleanup.
+      // keepalive lets the request complete even when the caller immediately redirects.
+      void fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        keepalive: true,
+      }).catch(() => {
+        // Local sign-out must remain available during transient network failures.
+      });
+      localStorage.removeItem('fovi_token');
+      localStorage.removeItem('fovi_user');
+    }
     set({ authUser: null, authToken: null, isAuthenticated: false });
-    localStorage.removeItem('fovi_token');
-    localStorage.removeItem('fovi_user');
   },
 
   // Accounts
