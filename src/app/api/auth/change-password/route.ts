@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
+import { clearRefreshCookie } from '@/lib/auth-sessions';
+import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -13,7 +15,6 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'change
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return NextResponse.json(
@@ -25,7 +26,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Zod validation
     const body = await request.json();
     const parsed = changePasswordSchema.safeParse(body);
     if (!parsed.success) {
@@ -35,7 +35,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use userId from middleware (set from verified JWT)
     const userId = request.headers.get('X-User-Id');
     if (!userId) {
       return NextResponse.json(
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     const { currentPassword, newPassword } = parsed.data;
 
-    if (!isDbAvailable() || !db || !hasModel('user')) {
+    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
       return NextResponse.json(
         { error: 'Password change is not available in demo mode. This feature requires a database connection.' },
         { status: 503 }
@@ -74,24 +73,34 @@ export async function POST(request: NextRequest) {
 
     const newHash = hashPassword(newPassword);
 
-    const updated = await safeDbQuery(() =>
-      db!.user.update({
-        where: { id: user.id },
-        data: { passwordHash: newHash },
+    const changed = await safeDbQuery(() =>
+      db!.$transaction(async (tx) => {
+        await tx.user.update({
+          where: { id: user.id },
+          data: { passwordHash: newHash },
+        });
+        await revokeAllAuthSessionsForUser(tx, user.id, 'PASSWORD_CHANGED');
+        return true;
       })
     );
 
-    if (!updated) {
+    if (!changed) {
       return NextResponse.json(
         { error: 'Failed to update password. Please try again.' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Password has been changed successfully.',
-    });
+    const response = NextResponse.json(
+      {
+        success: true,
+        message: 'Password has been changed successfully. Please sign in again.',
+        reauthenticate: true,
+      },
+      { headers: { 'x-auth-session-invalidated': 'true' } },
+    );
+    clearRefreshCookie(response);
+    return response;
   } catch {
     return NextResponse.json(
       { error: 'An unexpected error occurred' },
