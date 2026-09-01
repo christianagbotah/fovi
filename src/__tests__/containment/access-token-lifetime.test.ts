@@ -1,14 +1,34 @@
 import { decodeJwt } from 'jose';
-import { describe, expect, it } from 'vitest';
-import { ACCESS_TOKEN_TTL, generateAccessToken } from '@/lib/auth';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const ORIGINAL_ENV = process.env;
+const TEST_JWT = 'phase3h-test-jwt-secret-32chars!!';
+const TEST_PEPPER = 'phase3h-test-pepper-minimum';
 
 describe('Phase 3H short-lived access tokens', () => {
-  it('pins the access-token TTL to 15 minutes', () => {
-    expect(ACCESS_TOKEN_TTL).toBe('15m');
+  let auth: typeof import('@/lib/auth');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    process.env = {
+      ...ORIGINAL_ENV,
+      NODE_ENV: 'test',
+      JWT_SECRET: TEST_JWT,
+      AUTH_PEPPER: TEST_PEPPER,
+    };
+    auth = await import('@/lib/auth');
   });
 
-  it('mints access tokens with an approximately 15-minute lifetime', async () => {
-    const token = await generateAccessToken('phase3h-user', 'phase3h@example.test', 'Phase 3H');
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it('pins the access-token TTL to 15 minutes', () => {
+    expect(auth.ACCESS_TOKEN_TTL).toBe('15m');
+  });
+
+  it('mints access tokens with an exact 15-minute lifetime', async () => {
+    const token = await auth.generateAccessToken('phase3h-user', 'phase3h@example.test', 'Phase 3H');
     const payload = decodeJwt(token);
 
     expect(payload.iat).toBeTypeOf('number');
