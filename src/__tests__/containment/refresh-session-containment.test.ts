@@ -14,6 +14,7 @@ const authSessions = source('../../../src/lib/auth-sessions.ts');
 const auth = source('../../../src/lib/auth.ts');
 const apiFetch = source('../../../src/lib/api-fetch.ts');
 const tradingStore = source('../../../src/lib/store/trading-store.ts');
+const proxy = source('../../../src/proxy.ts');
 const schema = source('../../../prisma/schema.prisma');
 const migration = source(
   '../../../prisma/migrations/20260901112500_revocable_auth_sessions/migration.sql',
@@ -73,6 +74,7 @@ describe('Phase 3F revocable refresh-session containment', () => {
     expect(logoutRoute).toContain('isSameOriginMutation(request)');
     expect(logoutRoute).toContain("revokeAuthSessionFamily(refreshToken, 'LOGOUT')");
     expect(logoutRoute).toContain('clearRefreshCookie(response)');
+    expect(proxy).toContain("'/api/auth/logout'");
   });
 
   it('revokes the server refresh family when the browser signs out', () => {
