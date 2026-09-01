@@ -13,6 +13,7 @@ import {
   CheckCircle2, Circle, MessageCircle, Receipt, Crown, Server, Save,
 } from 'lucide-react';
 import { useTradingStore, hydrateAlertsFromStorage } from '@/lib/store/trading-store';
+import { authFetch, hydrateBrowserAuthFromStorage } from '@/lib/api-fetch';
 import { SettingsAccountRow } from '@/components/trading/settings-account-row';
 import { AdminBrokersPanel } from '@/components/trading/admin-brokers-panel';
 import { AccountSwitcher } from '@/components/trading/account-switcher';
@@ -872,7 +873,6 @@ function SecuritySettings() {
   const [newPlanForm, setNewPlanForm] = useState({ name: '', displayName: '', price: '', features: '', maxBots: '5', maxAccounts: '2' });
 
   const isAdmin = authUser?.role === 'admin' || authUser?.email === 'admin@fovi.ai';
-  const token = typeof window !== 'undefined' ? localStorage.getItem('fovi_token') || '' : '';
 
   const showMsg = (type: 'success' | 'error', text: string) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 5000); };
 
@@ -881,32 +881,32 @@ function SecuritySettings() {
     if (!authUser?.id) return;
     (async () => {
       try {
-        const res = await fetch('/api/auth/two-factor/setup', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        const res = await authFetch('/api/auth/two-factor/setup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ _check: true }),
         });
         if (res.ok) { const d = await res.json(); if (d.twoFactorEnabled) setTwoFactorEnabled(true); }
       } catch { /* ignore */ }
       // Load subscription
       try {
-        const subRes = await fetch('/api/subscriptions/current', { headers: { Authorization: `Bearer ${token}` } });
+        const subRes = await authFetch('/api/subscriptions/current', { headers: { } });
         if (subRes.ok) { const subData = await subRes.json(); if (subData.subscription) setCurrentPlan(subData.subscription); }
       } catch { /* ignore */ }
       // Load plans
       try {
-        const plansRes = await fetch('/api/subscriptions/plans');
+        const plansRes = await authFetch('/api/subscriptions/plans');
         if (plansRes.ok) { const plansData = await plansRes.json(); if (Array.isArray(plansData)) setPlans(plansData); }
       } catch { /* ignore */ }
       // Load admin configs
       if (isAdmin) {
         try {
           const [smsRes, payRes, smtpRes, tradingRes, otpRes, platformRes] = await Promise.all([
-            fetch('/api/admin/config/hubtel-sms', { headers: { Authorization: `Bearer ${token}` } }),
-            fetch('/api/admin/config/hubtel-payment', { headers: { Authorization: `Bearer ${token}` } }),
-            fetch('/api/admin/config/smtp', { headers: { Authorization: `Bearer ${token}` } }),
-            fetch('/api/admin/config/trading', { headers: { Authorization: `Bearer ${token}` } }),
-            fetch('/api/admin/config/otp', { headers: { Authorization: `Bearer ${token}` } }),
-            fetch('/api/admin/config/platform', { headers: { Authorization: `Bearer ${token}` } }),
+            authFetch('/api/admin/config/hubtel-sms', { headers: { } }),
+            authFetch('/api/admin/config/hubtel-payment', { headers: { } }),
+            authFetch('/api/admin/config/smtp', { headers: { } }),
+            authFetch('/api/admin/config/trading', { headers: { } }),
+            authFetch('/api/admin/config/otp', { headers: { } }),
+            authFetch('/api/admin/config/platform', { headers: { } }),
           ]);
           if (smsRes.ok) { const d = await smsRes.json(); if (d.config) setHubtelSmsConfig(p => ({ ...p, ...d.config })); }
           if (payRes.ok) { const d = await payRes.json(); if (d.config) setHubtelPayConfig(p => ({ ...p, ...d.config })); }
@@ -929,7 +929,7 @@ function SecuritySettings() {
     if (!authUser?.id) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
+      const res = await authFetch('/api/auth/two-factor/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to setup 2FA'); return; }
       setQrCode(data.qr_code_base64); setSetupSecret(data.secret); setShowSetup(true);
@@ -938,7 +938,7 @@ function SecuritySettings() {
   const handleVerify2FA = async () => {
     if (!authUser?.id) return; setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/verify', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ code: verifyCode }) });
+      const res = await authFetch('/api/auth/two-factor/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: verifyCode }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
       setTwoFactorEnabled(true); setShowSetup(false); setVerifyCode(''); showMsg('success', 'Two-factor authentication enabled!');
@@ -947,7 +947,7 @@ function SecuritySettings() {
   const handleDisable2FA = async () => {
     if (!authUser?.id) return; setLoading(true);
     try {
-      const res = await fetch('/api/auth/two-factor/disable', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ code: disableCode }) });
+      const res = await authFetch('/api/auth/two-factor/disable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: disableCode }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid code'); return; }
       setTwoFactorEnabled(false); setDisableCode(''); showMsg('success', '2FA disabled');
@@ -961,7 +961,7 @@ function SecuritySettings() {
     if (passwords.newPw.length < 8) { showMsg('error', 'Password must be at least 8 characters'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ currentPassword: passwords.current, newPassword: passwords.newPw }) });
+      const res = await authFetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword: passwords.current, newPassword: passwords.newPw }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to change password'); return; }
       setPasswords({ current: '', newPw: '', confirm: '' }); showMsg('success', 'Password changed successfully');
@@ -973,7 +973,7 @@ function SecuritySettings() {
     if (!smsPhone || !/^\+\d{10,15}$/.test(smsPhone)) { showMsg('error', 'Enter a valid phone number (e.g. +233XXXXXXXXX)'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/sms-otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ phoneNumber: smsPhone, purpose: 'verification' }) });
+      const res = await authFetch('/api/auth/sms-otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumber: smsPhone, purpose: 'verification' }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to send SMS OTP'); return; }
       setSmsOtpSent(true); setSmsCountdown(60); showMsg('success', 'SMS OTP sent!');
@@ -982,7 +982,7 @@ function SecuritySettings() {
   const handleVerifySmsOtp = async () => {
     if (smsOtpCode.length !== 6) return; setLoading(true);
     try {
-      const res = await fetch('/api/auth/sms-otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: smsOtpCode, phoneNumber: smsPhone, purpose: 'verification' }) });
+      const res = await authFetch('/api/auth/sms-otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: smsOtpCode, phoneNumber: smsPhone, purpose: 'verification' }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid OTP'); return; }
       setSmsOtpEnabled(true); setSmsOtpCode(''); setSmsOtpSent(false); showMsg('success', 'SMS OTP verified and enabled!');
@@ -993,7 +993,7 @@ function SecuritySettings() {
   const handleSendEmailOtp = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/email-otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ email: authUser?.email, purpose: 'verification' }) });
+      const res = await authFetch('/api/auth/email-otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: authUser?.email, purpose: 'verification' }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to send Email OTP'); return; }
       setEmailOtpSent(true); setEmailCountdown(60); showMsg('success', 'Email OTP sent!');
@@ -1002,7 +1002,7 @@ function SecuritySettings() {
   const handleVerifyEmailOtp = async () => {
     if (emailOtpCode.length !== 6) return; setLoading(true);
     try {
-      const res = await fetch('/api/auth/email-otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: emailOtpCode, email: authUser?.email, purpose: 'verification' }) });
+      const res = await authFetch('/api/auth/email-otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: emailOtpCode, email: authUser?.email, purpose: 'verification' }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Invalid OTP'); return; }
       setEmailOtpEnabled(true); setEmailOtpCode(''); setEmailOtpSent(false); showMsg('success', 'Email OTP verified and enabled!');
@@ -1013,7 +1013,7 @@ function SecuritySettings() {
   const handleSubscribe = async (planId: string) => {
     setSubscribingPlan(planId); setLoading(true);
     try {
-      const res = await fetch('/api/subscriptions/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ planId, phoneNumber: smsPhone, email: authUser?.email }) });
+      const res = await authFetch('/api/subscriptions/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId, phoneNumber: smsPhone, email: authUser?.email }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Subscription failed'); return; }
       if (data.invoiceUrl) { window.open(data.invoiceUrl, '_blank'); showMsg('success', 'Payment page opened! Complete payment to activate.'); }
@@ -1024,7 +1024,7 @@ function SecuritySettings() {
   const saveHubtelSms = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/hubtel-sms', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(hubtelSmsConfig) });
+      const res = await authFetch('/api/admin/config/hubtel-sms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hubtelSmsConfig) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
       showMsg('success', 'Hubtel SMS config saved!');
@@ -1033,7 +1033,7 @@ function SecuritySettings() {
   const saveHubtelPay = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/hubtel-payment', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(hubtelPayConfig) });
+      const res = await authFetch('/api/admin/config/hubtel-payment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hubtelPayConfig) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
       showMsg('success', 'Hubtel Payment config saved!');
@@ -1042,7 +1042,7 @@ function SecuritySettings() {
   const saveSmtp = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/smtp', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(smtpConfig) });
+      const res = await authFetch('/api/admin/config/smtp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(smtpConfig) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
       showMsg('success', 'SMTP config saved!');
@@ -1052,7 +1052,7 @@ function SecuritySettings() {
     if (!testPhone) { showMsg('error', 'Enter a phone number'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/hubtel-sms', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ _action: 'test', phoneNumber: testPhone }) });
+      const res = await authFetch('/api/admin/config/hubtel-sms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _action: 'test', phoneNumber: testPhone }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Test failed'); return; }
       showMsg('success', 'Test SMS sent!');
@@ -1062,7 +1062,7 @@ function SecuritySettings() {
     if (!testEmail) { showMsg('error', 'Enter an email address'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/email-test', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ to: testEmail }) });
+      const res = await authFetch('/api/admin/config/email-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: testEmail }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Test failed'); return; }
       showMsg('success', 'Test email sent!');
@@ -1080,9 +1080,9 @@ function SecuritySettings() {
     if (!isAdmin) return;
     try {
       const [usersRes, subsRes, plansRes] = await Promise.all([
-        fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/admin/subscriptions', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/subscriptions/plans', { headers: { Authorization: `Bearer ${token}` } }),
+        authFetch('/api/admin/users', { headers: { } }),
+        authFetch('/api/admin/subscriptions', { headers: { } }),
+        authFetch('/api/subscriptions/plans', { headers: { } }),
       ]);
       if (usersRes.ok) { const d = await usersRes.json(); if (d.users) setAdminUsers(d.users); }
       if (subsRes.ok) { const d = await subsRes.json(); if (d.subscriptions) setAdminSubs(d.subscriptions); }
@@ -1094,8 +1094,8 @@ function SecuritySettings() {
     if (!sendLinkUser || !sendLinkPlan) { showMsg('error', 'Select a user and a plan'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/subscriptions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      const res = await authFetch('/api/admin/subscriptions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: sendLinkUser, planId: sendLinkPlan, phoneNumber: sendLinkPhone || undefined }),
       });
       const data = await res.json();
@@ -1110,7 +1110,7 @@ function SecuritySettings() {
   const saveTradingConfig = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/trading', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(tradingConfig) });
+      const res = await authFetch('/api/admin/config/trading', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tradingConfig) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
       showMsg('success', 'Trading config saved!');
@@ -1121,7 +1121,7 @@ function SecuritySettings() {
   const saveOtpConfig = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/otp', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(otpConfig) });
+      const res = await authFetch('/api/admin/config/otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(otpConfig) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
       showMsg('success', 'OTP config saved!');
@@ -1132,7 +1132,7 @@ function SecuritySettings() {
   const savePlatformConfig = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/config/platform', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(platformConfig) });
+      const res = await authFetch('/api/admin/config/platform', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(platformConfig) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to save'); return; }
       showMsg('success', 'Platform config saved!');
@@ -1143,7 +1143,7 @@ function SecuritySettings() {
   const handleToggleUserActive = async (userId: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'toggle_active' }) });
+      const res = await authFetch(`/api/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'toggle_active' }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to update user'); return; }
       showMsg('success', data.message);
@@ -1155,7 +1155,7 @@ function SecuritySettings() {
     if (!resetPwValue || resetPwValue.length < 8) { showMsg('error', 'Password must be at least 8 characters'); return; }
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'reset_password', newPassword: resetPwValue }) });
+      const res = await authFetch(`/api/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'reset_password', newPassword: resetPwValue }) });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to reset password'); return; }
       showMsg('success', data.message);
@@ -1166,7 +1166,7 @@ function SecuritySettings() {
   const handleDeleteUser = async (userId: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
+      const res = await authFetch(`/api/admin/users/${userId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to delete user'); return; }
       showMsg('success', data.message);
@@ -1182,8 +1182,8 @@ function SecuritySettings() {
     setLoading(true);
     try {
       const features = newPlanForm.features.split(',').map((f: string) => f.trim()).filter(Boolean);
-      const res = await fetch('/api/subscriptions/plans', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      const res = await authFetch('/api/subscriptions/plans', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newPlanForm.name.toLowerCase().replace(/\s+/g, '-'), displayName: newPlanForm.displayName, price, currency: 'GHS', features, maxBots: parseInt(newPlanForm.maxBots) || 5, maxAccounts: parseInt(newPlanForm.maxAccounts) || 2 }),
       });
       const data = await res.json();
@@ -1215,8 +1215,8 @@ function SecuritySettings() {
     setLoading(true);
     try {
       const features = editPlanForm.features.split(',').map((f: string) => f.trim()).filter(Boolean);
-      const res = await fetch(`/api/subscriptions/plans/${editingPlanId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      const res = await authFetch(`/api/subscriptions/plans/${editingPlanId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ displayName: editPlanForm.displayName, price, currency: 'GHS', features, maxBots: parseInt(editPlanForm.maxBots) || 5, maxAccounts: parseInt(editPlanForm.maxAccounts) || 2 }),
       });
       const data = await res.json();
@@ -1231,7 +1231,7 @@ function SecuritySettings() {
     if (!confirm(`Delete plan "${planName}"? This cannot be undone.`)) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/subscriptions/plans/${planId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const res = await authFetch(`/api/subscriptions/plans/${planId}`, { method: 'DELETE', headers: { } });
       const data = await res.json();
       if (!res.ok) { showMsg('error', data.error || 'Failed to delete plan'); return; }
       showMsg('success', 'Plan deleted!');
@@ -2268,45 +2268,27 @@ export default function TradingDashboard() {
   // Validates JWT token with the server to ensure session is still valid
   useEffect(() => {
     hydrateAlertsFromStorage();
-    // Restore auth state from localStorage, but validate the token with the server
-    (async () => {
-      try {
-        const token = localStorage.getItem('fovi_token');
-        const userStr = localStorage.getItem('fovi_user');
-        if (token && userStr) {
-          // Validate the JWT with the server
-          const res = await fetch('/api/auth/me', {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+    // Restore browser auth through the central boundary, then validate it server-side.
+    // authFetch can rotate the HttpOnly refresh session once if the access token is stale.
+    const restoredAuth = hydrateBrowserAuthFromStorage();
+    if (restoredAuth) {
+      void (async () => {
+        try {
+          const res = await authFetch('/api/auth/me');
           if (res.ok) {
             const data = await res.json();
             if (data.success && data.user) {
-              useTradingStore.getState().setAuth(data.user, token);
-            } else {
-              // Token is invalid or expired — clear it
-              localStorage.removeItem('fovi_token');
-              localStorage.removeItem('fovi_user');
+              const currentToken = useTradingStore.getState().authToken;
+              if (currentToken) {
+                useTradingStore.getState().setAuth(data.user, currentToken);
+              }
             }
-          } else {
-            // Token validation failed — clear it
-            localStorage.removeItem('fovi_token');
-            localStorage.removeItem('fovi_user');
           }
+        } catch {
+          // Keep the hydrated identity during a transient network failure.
         }
-      } catch {
-        // Network error — try restoring from localStorage as fallback
-        try {
-          const token = localStorage.getItem('fovi_token');
-          const userStr = localStorage.getItem('fovi_user');
-          if (token && userStr) {
-            const user = JSON.parse(userStr);
-            if (user?.id && user?.email) {
-              useTradingStore.getState().setAuth(user, token);
-            }
-          }
-        } catch { /* ignore */ }
-      }
-    })();
+      })();
+    }
     // If no accounts loaded yet, seed from localStorage
     // Also always restore the active account ID from localStorage
     const { accounts: currentAccounts, setActiveAccount: doSetActive } = useTradingStore.getState();

@@ -1,9 +1,11 @@
 // ============================================================
 // API Fetch Wrapper
-// Wraps fetch() to:
-// 1. Auto-attach Authorization header from store
+// Central browser access-token boundary:
+// 1. Auto-attach the access token
 // 2. Rotate a server-side refresh session after an authenticated 401
-// 3. Detect x-demo response header and update store
+// 3. Retry the original request once with the rotated access token
+// 4. Hydrate browser auth without exposing storage access to page components
+// 5. Detect x-demo response headers for typed API callers
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
@@ -16,14 +18,44 @@ function getToken(): string | null {
   return localStorage.getItem('fovi_token');
 }
 
-function isAuthEndpoint(url: string): boolean {
-  return url.includes('/api/auth/');
+function isRefreshBoundaryEndpoint(url: string): boolean {
+  return url.includes('/api/auth/refresh') || url.includes('/api/auth/logout');
 }
 
 function clearBrowserAccessState(): void {
-  localStorage.removeItem('fovi_token');
-  localStorage.removeItem('fovi_user');
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('fovi_token');
+    localStorage.removeItem('fovi_user');
+  }
   useTradingStore.setState({ authUser: null, authToken: null, isAuthenticated: false });
+}
+
+/**
+ * Restore the last browser access identity into Zustand without allowing page
+ * components to read access credentials from localStorage directly. The
+ * caller should validate it through authFetch('/api/auth/me'); a 401 can then
+ * rotate the HttpOnly refresh session once before the identity is cleared.
+ */
+export function hydrateBrowserAuthFromStorage(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const token = getToken();
+  const rawUser = localStorage.getItem('fovi_user');
+  if (!token || !rawUser) return false;
+
+  try {
+    const user = JSON.parse(rawUser);
+    if (!user || typeof user.id !== 'string' || typeof user.email !== 'string') {
+      clearBrowserAccessState();
+      return false;
+    }
+
+    useTradingStore.setState({ authUser: user, authToken: token, isAuthenticated: true });
+    return true;
+  } catch {
+    clearBrowserAccessState();
+    return false;
+  }
 }
 
 async function refreshAccessToken(): Promise<string | null> {
@@ -62,45 +94,53 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
+function requestHeaders(options: RequestInit, token: string | null): Headers {
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (!headers.has('Content-Type') && options.method && options.method !== 'GET') {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+}
+
 /**
- * Typed fetch wrapper that auto-injects auth token, performs one refresh
- * rotation after an authenticated 401, and detects demo mode.
+ * Response-preserving authenticated fetch boundary for browser callers that
+ * need status codes or response headers. It performs at most one refresh and
+ * one retry. Refresh/logout are explicitly excluded to prevent recursion.
+ */
+export async function authFetch(
+  url: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const token = getToken();
+  let res = await fetch(url, {
+    ...options,
+    headers: requestHeaders(options, token),
+    credentials: options.credentials || 'same-origin',
+  });
+
+  if (res.status === 401 && token && !isRefreshBoundaryEndpoint(url)) {
+    const nextToken = await refreshAccessToken();
+    if (nextToken) {
+      res = await fetch(url, {
+        ...options,
+        headers: requestHeaders(options, nextToken),
+        credentials: options.credentials || 'same-origin',
+      });
+    }
+  }
+
+  return res;
+}
+
+/**
+ * Typed fetch wrapper built on the same response-preserving auth boundary.
  */
 export async function apiFetch<T = any>(
   url: string,
   options: RequestInit = {},
 ): Promise<{ data: T; demo: boolean }> {
-  const token = getToken();
-  const headers = new Headers(options.headers || {});
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  if (!headers.has('Content-Type') && options.method && options.method !== 'GET') {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  let res = await fetch(url, {
-    ...options,
-    headers,
-    credentials: options.credentials || 'same-origin',
-  });
-
-  if (res.status === 401 && token && !isAuthEndpoint(url)) {
-    const nextToken = await refreshAccessToken();
-    if (nextToken) {
-      const retryHeaders = new Headers(options.headers || {});
-      retryHeaders.set('Authorization', `Bearer ${nextToken}`);
-      if (!retryHeaders.has('Content-Type') && options.method && options.method !== 'GET') {
-        retryHeaders.set('Content-Type', 'application/json');
-      }
-
-      res = await fetch(url, {
-        ...options,
-        headers: retryHeaders,
-        credentials: options.credentials || 'same-origin',
-      });
-    }
-  }
+  const res = await authFetch(url, options);
 
   // Detect x-demo header — two-way: can turn demo ON or OFF
   let isDemo = false;

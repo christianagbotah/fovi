@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useTradingStore } from '@/lib/store/trading-store';
 
 export default function SignInPage() {
+  const setAuth = useTradingStore(state => state.setAuth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -24,6 +26,11 @@ export default function SignInPage() {
   const [twoFactorChallenge, setTwoFactorChallenge] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [twoFactorLoading, setTwoFactorLoading] = useState(false);
+
+  function completeSignIn(user: { id: string; email: string; name: string | null; role?: string }, token: string) {
+    setAuth(user, token);
+    window.location.href = '/';
+  }
 
   function validateForm(): boolean {
     const errors: { email?: string; password?: string } = {};
@@ -61,11 +68,11 @@ export default function SignInPage() {
         return;
       }
 
-      if (data.token) {
-        localStorage.setItem('fovi_token', data.token);
-        localStorage.setItem('fovi_user', JSON.stringify(data.user));
+      if (data.token && data.user) {
+        completeSignIn(data.user, data.token);
+        return;
       }
-      window.location.href = '/';
+      setError('Sign in response did not include a valid session.');
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -95,11 +102,11 @@ export default function SignInPage() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Invalid code'); return; }
 
-      if (data.token) {
-        localStorage.setItem('fovi_token', data.token);
-        localStorage.setItem('fovi_user', JSON.stringify(data.user));
+      if (data.token && data.user) {
+        completeSignIn(data.user, data.token);
+        return;
       }
-      window.location.href = '/';
+      setError('Two-factor verification did not include a valid session.');
     } catch {
       setError('Network error.');
     } finally {
