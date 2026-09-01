@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { verifyPassword, generateAccessToken, generateTwoFactorChallenge } from '@/lib/auth';
 import {
@@ -7,6 +7,7 @@ import {
   revokeAuthSessionFamily,
   setRefreshCookie,
 } from '@/lib/auth-sessions';
+import { authJson } from '@/lib/auth-response';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
   try {
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many sign-in attempts. Please try again later.' },
         {
           status: 429,
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = signinSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
@@ -58,7 +59,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (!user || !user.passwordHash) {
-        return NextResponse.json(
+        return authJson(
           { error: 'Invalid email or password' },
           { status: 401 }
         );
@@ -66,14 +67,14 @@ export async function POST(request: NextRequest) {
 
       const valid = verifyPassword(password, user.passwordHash);
       if (!valid) {
-        return NextResponse.json(
+        return authJson(
           { error: 'Invalid email or password' },
           { status: 401 }
         );
       }
 
       if (!user.isActive) {
-        return NextResponse.json(
+        return authJson(
           { error: 'Account is deactivated' },
           { status: 403 }
         );
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
 
       if (user.settings?.twoFactorEnabled) {
         const twoFactorChallenge = await generateTwoFactorChallenge(user.id, user.email);
-        return NextResponse.json({
+        return authJson({
           success: true,
           requiresTwoFactor: true,
           twoFactorChallenge,
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
       try {
         session = await createAuthSession(user.id, rememberMe);
       } catch {
-        return NextResponse.json(
+        return authJson(
           { error: 'Authentication session service unavailable.' },
           { status: 503 }
         );
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
       const isAdmin = process.env.ADMIN_EMAIL && emailLower === process.env.ADMIN_EMAIL.toLowerCase();
       const token = await generateAccessToken(user.id, user.email, user.name || undefined, isAdmin ? 'admin' : undefined);
 
-      const response = NextResponse.json({
+      const response = authJson({
         success: true,
         user: {
           id: user.id,
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
     const allowDemoAuth = process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_AUTH === 'true';
     if (allowDemoAuth && emailLower === 'demo@fovi.ai' && password === 'password123') {
       const token = await generateAccessToken('demo-user', 'demo@fovi.ai', 'Demo User');
-      return NextResponse.json({
+      return authJson({
         success: true,
         user: {
           id: 'demo-user',
@@ -141,12 +142,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return NextResponse.json(
+    return authJson(
       { error: 'Authentication service unavailable.' },
       { status: 503 }
     );
   } catch {
-    return NextResponse.json(
+    return authJson(
       { error: 'An unexpected error occurred' },
       { status: 500 }
     );
