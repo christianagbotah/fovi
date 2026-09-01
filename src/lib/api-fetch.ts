@@ -2,19 +2,59 @@
 // API Fetch Wrapper
 // Wraps fetch() to:
 // 1. Auto-attach Authorization header from store
-// 2. Detect x-demo response header and update store
+// 2. Rotate a server-side refresh session after an authenticated 401
+// 3. Detect x-demo response header and update store
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
 
-// Token is read from localStorage directly (works outside React)
+// Access token is still read from localStorage for compatibility with the
+// current browser auth boundary. Refresh secrets remain HttpOnly cookies and
+// are never exposed to JavaScript.
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('fovi_token');
 }
 
+function isAuthEndpoint(url: string): boolean {
+  return url.includes('/api/auth/');
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const response = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('fovi_token');
+        localStorage.removeItem('fovi_user');
+      }
+      return null;
+    }
+
+    const data = await response.json();
+    if (!data || typeof data.token !== 'string' || data.token.length === 0) {
+      return null;
+    }
+
+    localStorage.setItem('fovi_token', data.token);
+    if (data.user) {
+      localStorage.setItem('fovi_user', JSON.stringify(data.user));
+    }
+    return data.token;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Typed fetch wrapper that auto-injects auth token and detects demo mode.
+ * Typed fetch wrapper that auto-injects auth token, performs one refresh
+ * rotation after an authenticated 401, and detects demo mode.
  */
 export async function apiFetch<T = any>(
   url: string,
@@ -29,7 +69,28 @@ export async function apiFetch<T = any>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(url, { ...options, headers });
+  let res = await fetch(url, {
+    ...options,
+    headers,
+    credentials: options.credentials || 'same-origin',
+  });
+
+  if (res.status === 401 && token && !isAuthEndpoint(url)) {
+    const nextToken = await refreshAccessToken();
+    if (nextToken) {
+      const retryHeaders = new Headers(options.headers || {});
+      retryHeaders.set('Authorization', `Bearer ${nextToken}`);
+      if (!retryHeaders.has('Content-Type') && options.method && options.method !== 'GET') {
+        retryHeaders.set('Content-Type', 'application/json');
+      }
+
+      res = await fetch(url, {
+        ...options,
+        headers: retryHeaders,
+        credentials: options.credentials || 'same-origin',
+      });
+    }
+  }
 
   // Detect x-demo header — two-way: can turn demo ON or OFF
   let isDemo = false;
