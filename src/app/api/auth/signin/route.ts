@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
-import { verifyPassword, generateAccessToken } from '@/lib/auth';
+import { verifyPassword, generateAccessToken, generateTwoFactorChallenge } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -13,7 +13,6 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'signin
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return NextResponse.json(
@@ -25,7 +24,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Zod validation
     const body = await request.json();
     const parsed = signinSchema.safeParse(body);
     if (!parsed.success) {
@@ -74,11 +72,12 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Check if 2FA is enabled — if so, require a second step
       if (user.settings?.twoFactorEnabled) {
+        const twoFactorChallenge = await generateTwoFactorChallenge(user.id, user.email);
         return NextResponse.json({
           success: true,
           requiresTwoFactor: true,
+          twoFactorChallenge,
           user: {
             id: user.id,
             email: user.email,
@@ -101,8 +100,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Demo mode - accept demo@fovi.ai / password123
-    if (emailLower === 'demo@fovi.ai' && password === 'password123') {
+    // Local/demo authentication is opt-in and MUST never become a production
+    // fallback when the database is missing or unavailable.
+    const allowDemoAuth = process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_AUTH === 'true';
+    if (allowDemoAuth && emailLower === 'demo@fovi.ai' && password === 'password123') {
       const token = await generateAccessToken('demo-user', 'demo@fovi.ai', 'Demo User');
       return NextResponse.json({
         success: true,
@@ -116,8 +117,8 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { error: 'Invalid email or password' },
-      { status: 401 }
+      { error: 'Authentication service unavailable.' },
+      { status: 503 }
     );
   } catch {
     return NextResponse.json(
