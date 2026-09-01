@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { revokeOutstandingTwoFactorChallenges } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -49,9 +50,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid code.' }, { status: 401 });
     }
 
-    await safeDbQuery(() =>
-      db!.userSettings.update({ where: { userId }, data: { twoFactorEnabled: false, twoFactorSecret: null } })
+    const disabled = await safeDbQuery(() =>
+      db!.$transaction(async (tx) => {
+        await revokeOutstandingTwoFactorChallenges(tx, userId);
+        return tx.userSettings.update({
+          where: { userId },
+          data: { twoFactorEnabled: false, twoFactorSecret: null },
+        });
+      })
     );
+    if (!disabled) return NextResponse.json({ error: 'Failed to disable 2FA.' }, { status: 500 });
+
     return NextResponse.json({ success: true, message: '2FA disabled.' });
   } catch {
     return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
