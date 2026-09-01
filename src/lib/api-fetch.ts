@@ -4,12 +4,15 @@
 // 1. Keep the short-lived access token in memory only
 // 2. Auto-attach the in-memory access token
 // 3. Rotate a server-side refresh session after an authenticated 401
-// 4. Retry the original request once with the rotated access token
-// 5. Bootstrap browser auth from the HttpOnly refresh session after reload
-// 6. Detect x-demo response headers for typed API callers
+// 4. Serialize refresh rotation so concurrent 401s cannot reuse a token
+// 5. Retry the original request once with the rotated access token
+// 6. Bootstrap browser auth from the HttpOnly refresh session after reload
+// 7. Detect x-demo response headers for typed API callers
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
+
+let refreshInFlight: Promise<string | null> | null = null;
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -31,9 +34,7 @@ function clearBrowserAccessState(): void {
   useTradingStore.setState({ authUser: null, authToken: null, isAuthenticated: false });
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  if (typeof window === 'undefined') return null;
-
+async function performRefreshAccessToken(): Promise<string | null> {
   try {
     const response = await fetch('/api/auth/refresh', {
       method: 'POST',
@@ -69,6 +70,19 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
+async function refreshAccessToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  if (refreshInFlight) return refreshInFlight;
+
+  const pending = performRefreshAccessToken();
+  refreshInFlight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight === pending) refreshInFlight = null;
+  }
+}
+
 /**
  * Bootstrap browser authentication after a page reload. No access credential
  * is restored from Web Storage; instead, the HttpOnly refresh session rotates
@@ -93,8 +107,9 @@ function requestHeaders(options: RequestInit, token: string | null): Headers {
 
 /**
  * Response-preserving authenticated fetch boundary for browser callers that
- * need status codes or response headers. It performs at most one refresh and
- * one retry. Refresh/logout are explicitly excluded to prevent recursion.
+ * need status codes or response headers. It performs at most one shared
+ * refresh rotation and one retry. Refresh/logout are explicitly excluded to
+ * prevent recursion.
  */
 export async function authFetch(
   url: string,
