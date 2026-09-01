@@ -104,7 +104,7 @@ describe('Phase 3G/3I browser access-token boundary', () => {
     const page = readFileSync(PAGE, 'utf8');
     const apiFetch = readFileSync(API_FETCH, 'utf8');
 
-    expect(page).toContain("import { bootstrapBrowserAuth } from '@/lib/api-fetch';");
+    expect(page).toContain("import { authFetch, bootstrapBrowserAuth } from '@/lib/api-fetch';");
     expect(page).toContain('void bootstrapBrowserAuth();');
     expect(page).not.toContain('hydrateBrowserAuthFromStorage');
     expect(apiFetch).toContain("fetch('/api/auth/refresh'");
