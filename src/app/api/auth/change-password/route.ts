@@ -3,6 +3,7 @@ import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
+import { revokeOutstandingTwoFactorChallenges } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -80,6 +81,7 @@ export async function POST(request: NextRequest) {
           data: { passwordHash: newHash },
         });
         await revokeAllAuthSessionsForUser(tx, user.id, 'PASSWORD_CHANGED');
+        await revokeOutstandingTwoFactorChallenges(tx, user.id);
         return true;
       })
     );
