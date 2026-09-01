@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
+import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 
 // ============================================================
 // Zod schemas
@@ -28,11 +29,10 @@ export async function PATCH(
   try {
     const { id } = await params;
 
-    if (!isDbAvailable() || !db || !hasModel('user')) {
+    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
       return NextResponse.json({ error: 'Database is not available.' }, { status: 500 });
     }
 
-    // Check user exists
     const user = await safeDbQuery(() =>
       db!.user.findUnique({ where: { id } })
     );
@@ -42,12 +42,18 @@ export async function PATCH(
 
     const body = await request.json();
 
-    // Try toggle_active
     const toggleParsed = toggleActiveSchema.safeParse(body);
     if (toggleParsed.success) {
-      const updated = await db.user.update({
-        where: { id },
-        data: { isActive: !(user.isActive ?? true) },
+      const nextActive = !(user.isActive ?? true);
+      const updated = await db.$transaction(async (tx) => {
+        const result = await tx.user.update({
+          where: { id },
+          data: { isActive: nextActive },
+        });
+        if (!nextActive) {
+          await revokeAllAuthSessionsForUser(tx, id, 'ACCOUNT_INACTIVE');
+        }
+        return result;
       });
       return NextResponse.json({
         success: true,
@@ -56,17 +62,19 @@ export async function PATCH(
       });
     }
 
-    // Try reset_password
     const resetParsed = resetPasswordSchema.safeParse(body);
     if (resetParsed.success) {
       const passwordHash = hashPassword(resetParsed.data.newPassword);
-      await db.user.update({
-        where: { id },
-        data: { passwordHash },
+      await db.$transaction(async (tx) => {
+        await tx.user.update({
+          where: { id },
+          data: { passwordHash },
+        });
+        await revokeAllAuthSessionsForUser(tx, id, 'ADMIN_PASSWORD_RESET');
       });
       return NextResponse.json({
         success: true,
-        message: 'Password reset successfully.',
+        message: 'Password reset successfully. Existing sessions were revoked.',
       });
     }
 
@@ -88,11 +96,10 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    if (!isDbAvailable() || !db || !hasModel('user')) {
+    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
       return NextResponse.json({ error: 'Database is not available.' }, { status: 500 });
     }
 
-    // Check user exists
     const user = await safeDbQuery(() =>
       db!.user.findUnique({ where: { id } })
     );
@@ -100,7 +107,6 @@ export async function DELETE(
       return NextResponse.json({ error: 'User not found.' }, { status: 404 });
     }
 
-    // Parse optional body for hardDelete flag
     let hardDelete = false;
     try {
       const body = await request.json();
@@ -113,15 +119,20 @@ export async function DELETE(
     }
 
     if (hardDelete) {
+      // AuthSession has an onDelete:Cascade relation to User, so deleting the
+      // user removes all remaining session rows in the same database mutation.
       await db.user.delete({ where: { id } });
       return NextResponse.json({ success: true, message: 'User permanently deleted.' });
-    } else {
-      await db.user.update({
+    }
+
+    await db.$transaction(async (tx) => {
+      await tx.user.update({
         where: { id },
         data: { isActive: false },
       });
-      return NextResponse.json({ success: true, message: 'User deactivated (soft delete).' });
-    }
+      await revokeAllAuthSessionsForUser(tx, id, 'ACCOUNT_INACTIVE');
+    });
+    return NextResponse.json({ success: true, message: 'User deactivated (soft delete).' });
   } catch (err) {
     console.error('[Admin] Failed to delete user:', err);
     return NextResponse.json({ error: 'Failed to delete user.' }, { status: 500 });

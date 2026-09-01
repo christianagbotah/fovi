@@ -7,7 +7,8 @@
 // 4. Serialize refresh rotation so concurrent 401s cannot reuse a token
 // 5. Retry the original request once with the rotated access token
 // 6. Bootstrap browser auth from the HttpOnly refresh session after reload
-// 7. Detect x-demo response headers for typed API callers
+// 7. Clear memory immediately after server-side credential invalidation
+// 8. Detect x-demo response headers for typed API callers
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
@@ -131,6 +132,10 @@ export async function authFetch(
         credentials: options.credentials || 'same-origin',
       });
     }
+  }
+
+  if (res.headers.get('x-auth-session-invalidated') === 'true') {
+    clearBrowserAccessState();
   }
 
   return res;
