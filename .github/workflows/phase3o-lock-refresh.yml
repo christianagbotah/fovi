@@ -1,0 +1,36 @@
+name: Phase 3O dependency lock refresh
+
+on:
+  push:
+    branches:
+      - phase-3o-2fa-revocation-sidebar-scroll
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.4
+
+      - name: Refresh frozen dependency graph
+        run: bun install
+
+      - name: Commit patched lock and remove one-shot workflow
+        run: |
+          rm .github/workflows/phase3o-lock-refresh.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json bun.lock .github/workflows/phase3o-lock-refresh.yml
+          git diff --cached --check
+          git commit -m "chore(security): refresh patched dependency lock"
+          git push origin HEAD:phase-3o-2fa-revocation-sidebar-scroll
