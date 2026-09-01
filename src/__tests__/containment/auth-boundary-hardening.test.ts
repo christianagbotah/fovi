@@ -47,7 +47,7 @@ describe('Phase 3E authentication boundary hardening', () => {
   it('carries the password-bound challenge through the browser 2FA step', () => {
     expect(signinPage).toContain("const [twoFactorChallenge, setTwoFactorChallenge] = useState('')");
     expect(signinPage).toContain('setTwoFactorChallenge(data.twoFactorChallenge)');
-    expect(signinPage).toContain('JSON.stringify({ challenge: twoFactorChallenge, code: twoFactorCode })');
+    expect(signinPage).toContain('JSON.stringify({ challenge: twoFactorChallenge, code: twoFactorCode, rememberMe })');
     expect(signinPage).not.toContain('JSON.stringify({ email: twoFactorUser?.email, code: twoFactorCode })');
   });
 
