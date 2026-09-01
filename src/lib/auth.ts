@@ -52,6 +52,7 @@ if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
 const KEY_LENGTH = 64;
 const ITERATIONS = 100000;
 const DIGEST = 'sha512';
+export const ACCESS_TOKEN_TTL = '15m';
 
 // Encode the secret as Uint8Array for jose
 function getSecretKey(): Uint8Array {
@@ -122,12 +123,11 @@ export interface TwoFactorChallengePayload {
 export type JwtPayload = AccessTokenPayload | TwoFactorChallengePayload;
 
 /**
- * Create a JWT access token with 24h expiry.
+ * Create a short-lived JWT access token.
  *
- * Phase 3F keeps this lifetime unchanged while the new refresh-session path
- * is introduced so existing direct API callers are not broken mid-hardening.
- * A later browser-auth migration can shorten this once every caller uses the
- * refresh-aware API boundary.
+ * Phase 3H shortens the bearer-token exposure window now that browser callers
+ * are enforced through the refresh-aware boundary. Long-lived continuity is
+ * provided by the revocable HttpOnly refresh session, not by the access JWT.
  */
 export async function generateAccessToken(
   userId: string,
@@ -146,7 +146,7 @@ export async function generateAccessToken(
   return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('24h')
+    .setExpirationTime(ACCESS_TOKEN_TTL)
     .sign(getSecretKey());
 }
 
