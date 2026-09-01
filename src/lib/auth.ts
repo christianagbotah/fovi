@@ -5,7 +5,7 @@
 // Test mode (NODE_ENV=test) still works with explicit env vars.
 // ============================================================
 
-import { createHash, randomBytes, pbkdf2Sync } from 'crypto';
+import { createHash, randomBytes, pbkdf2Sync, timingSafeEqual } from 'crypto';
 import { SignJWT, jwtVerify } from 'jose';
 import { NextRequest } from 'next/server';
 
@@ -71,8 +71,18 @@ export function hashPassword(password: string): string {
 export function verifyPassword(password: string, storedHash: string): boolean {
   const [salt, hash] = storedHash.split(':');
   if (!salt || !hash) return false;
-  const computedHash = pbkdf2Sync(password, salt + _pepper, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
-  return hash === computedHash;
+
+  const computedHash = pbkdf2Sync(password, salt + _pepper, ITERATIONS, KEY_LENGTH, DIGEST);
+
+  let stored: Buffer;
+  try {
+    stored = Buffer.from(hash, 'hex');
+  } catch {
+    return false;
+  }
+
+  if (stored.length !== computedHash.length) return false;
+  return timingSafeEqual(stored, computedHash);
 }
 
 // ============================================================
@@ -110,7 +120,15 @@ export interface RefreshTokenPayload {
   exp?: number;
 }
 
-export type JwtPayload = AccessTokenPayload | RefreshTokenPayload;
+export interface TwoFactorChallengePayload {
+  sub: string;
+  email: string;
+  type: 'two_factor';
+  iat?: number;
+  exp?: number;
+}
+
+export type JwtPayload = AccessTokenPayload | RefreshTokenPayload | TwoFactorChallengePayload;
 
 /**
  * Create a JWT access token with 24h expiry.
@@ -133,6 +151,25 @@ export async function generateAccessToken(
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
+    .sign(getSecretKey());
+}
+
+/**
+ * Create a short-lived challenge after password verification. The public
+ * 2FA completion endpoint must require this token so a TOTP cannot act as
+ * an alternative single-factor login credential.
+ */
+export async function generateTwoFactorChallenge(userId: string, email: string): Promise<string> {
+  const payload: Omit<TwoFactorChallengePayload, 'iat' | 'exp'> = {
+    sub: userId,
+    email,
+    type: 'two_factor',
+  };
+
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('5m')
     .sign(getSecretKey());
 }
 
