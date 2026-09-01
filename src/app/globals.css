@@ -122,6 +122,31 @@
   }
 }
 
+/* Dashboard viewport + independent desktop scroll regions. */
+.h-screen.overflow-hidden.flex.flex-col.bg-background {
+  height: 100dvh;
+}
+
+@media (min-width: 1024px) {
+  aside.hidden.lg\:flex.flex-col.w-56 {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  aside.hidden.lg\:flex.flex-col.w-56 > nav {
+    overflow: visible;
+  }
+
+  main.flex-1.overflow-y-auto.min-h-0 {
+    height: 100%;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+}
+
 /* Safe area for mobile bottom bar */
 .safe-area-pb {
   padding-bottom: env(safe-area-inset-bottom, 0px);
