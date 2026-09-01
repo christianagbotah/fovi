@@ -45,7 +45,7 @@ export default function SignInPage() {
       const res = await fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, rememberMe }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Sign in failed'); return; }
@@ -90,7 +90,7 @@ export default function SignInPage() {
       const res = await fetch('/api/auth/two-factor/authenticate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ challenge: twoFactorChallenge, code: twoFactorCode }),
+        body: JSON.stringify({ challenge: twoFactorChallenge, code: twoFactorCode, rememberMe }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Invalid code'); return; }
