@@ -122,6 +122,40 @@
   }
 }
 
+/* Use the dynamic viewport where supported so the application shell tracks
+   the actual visible browser height on mobile and desktop. */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh;
+  }
+}
+
+/* Desktop application shell: sidebar navigation and main content own separate
+   vertical scroll containers. The outer shell stays locked to the viewport,
+   so scrolling either pane never moves the other one. */
+@media (min-width: 64rem) {
+  aside[class*="w-56"][class*="border-r"] {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior-y: contain;
+  }
+
+  aside[class*="w-56"][class*="border-r"] > nav {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+
+  main[class*="flex-1"][class*="overflow-y-auto"] {
+    height: 100%;
+    min-height: 0;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+}
+
 /* Safe area for mobile bottom bar */
 .safe-area-pb {
   padding-bottom: env(safe-area-inset-bottom, 0px);
