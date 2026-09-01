@@ -21,6 +21,7 @@ export default function SignInPage() {
   // 2FA state
   const [twoFactorPending, setTwoFactorPending] = useState(false);
   const [twoFactorUser, setTwoFactorUser] = useState<{ id: string; email: string; name: string | null } | null>(null);
+  const [twoFactorChallenge, setTwoFactorChallenge] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [twoFactorLoading, setTwoFactorLoading] = useState(false);
 
@@ -50,8 +51,13 @@ export default function SignInPage() {
       if (!res.ok) { setError(data.error || 'Sign in failed'); return; }
 
       if (data.requiresTwoFactor) {
+        if (!data.twoFactorChallenge) {
+          setError('Two-factor authentication challenge was not issued. Please sign in again.');
+          return;
+        }
         setTwoFactorPending(true);
         setTwoFactorUser(data.user);
+        setTwoFactorChallenge(data.twoFactorChallenge);
         return;
       }
 
@@ -74,13 +80,17 @@ export default function SignInPage() {
       setError('Enter the 6-digit code from your authenticator app');
       return;
     }
+    if (!twoFactorChallenge) {
+      setError('Your sign-in challenge is missing. Please sign in again.');
+      return;
+    }
 
     setTwoFactorLoading(true);
     try {
       const res = await fetch('/api/auth/two-factor/authenticate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: twoFactorUser?.email, code: twoFactorCode }),
+        body: JSON.stringify({ challenge: twoFactorChallenge, code: twoFactorCode }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Invalid code'); return; }
@@ -135,7 +145,7 @@ export default function SignInPage() {
               <Button type="submit" className="w-full" disabled={twoFactorLoading || twoFactorCode.length !== 6}>
                 {twoFactorLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Verifying...</> : 'Verify & Sign In'}
               </Button>
-              <Button type="button" variant="ghost" className="w-full text-muted-foreground" onClick={() => { setTwoFactorPending(false); setTwoFactorUser(null); setTwoFactorCode(''); }}>
+              <Button type="button" variant="ghost" className="w-full text-muted-foreground" onClick={() => { setTwoFactorPending(false); setTwoFactorUser(null); setTwoFactorChallenge(''); setTwoFactorCode(''); }}>
                 Back to sign in
               </Button>
             </form>
