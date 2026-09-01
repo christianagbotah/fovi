@@ -23,7 +23,7 @@ jobs:
         with:
           bun-version: 1.3.4
 
-      - name: Pin patched Browserslist and refresh its dependency closure
+      - name: Normalize dependency boundary and preserve patched closure
         shell: bash
         run: |
           set -euo pipefail
@@ -31,22 +31,32 @@ jobs:
           const fs = require('node:fs');
           const path = 'package.json';
           const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          for (const name of [
+            'baseline-browser-mapping',
+            'browserslist',
+            'caniuse-lite',
+            'electron-to-chromium',
+            'node-releases',
+            'update-browserslist-db',
+          ]) {
+            delete pkg.dependencies?.[name];
+          }
           pkg.overrides = pkg.overrides || {};
           pkg.overrides.browserslist = '4.28.8';
           fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
           NODE
-          bun update browserslist caniuse-lite electron-to-chromium node-releases update-browserslist-db baseline-browser-mapping
+          bun install
 
-      - name: Commit refreshed dependency boundary when changed
+      - name: Commit normalized dependency boundary when changed
         shell: bash
         run: |
           set -euo pipefail
           if git diff --quiet -- package.json bun.lock; then
-            echo 'Dependency boundary already current.'
+            echo 'Dependency boundary already normalized.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add package.json bun.lock
-          git commit -m 'chore(deps): refresh browserslist dependency closure'
+          git commit -m 'chore(deps): normalize browserslist security override'
           git push origin HEAD:phase-3o-two-factor-revocation-layout
