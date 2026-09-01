@@ -4,7 +4,8 @@
 // 1. Auto-attach the access token
 // 2. Rotate a server-side refresh session after an authenticated 401
 // 3. Retry the original request once with the rotated access token
-// 4. Detect x-demo response headers for typed API callers
+// 4. Hydrate browser auth without exposing storage access to page components
+// 5. Detect x-demo response headers for typed API callers
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
@@ -22,9 +23,39 @@ function isRefreshBoundaryEndpoint(url: string): boolean {
 }
 
 function clearBrowserAccessState(): void {
-  localStorage.removeItem('fovi_token');
-  localStorage.removeItem('fovi_user');
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('fovi_token');
+    localStorage.removeItem('fovi_user');
+  }
   useTradingStore.setState({ authUser: null, authToken: null, isAuthenticated: false });
+}
+
+/**
+ * Restore the last browser access identity into Zustand without allowing page
+ * components to read access credentials from localStorage directly. The
+ * caller should validate it through authFetch('/api/auth/me'); a 401 can then
+ * rotate the HttpOnly refresh session once before the identity is cleared.
+ */
+export function hydrateBrowserAuthFromStorage(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const token = getToken();
+  const rawUser = localStorage.getItem('fovi_user');
+  if (!token || !rawUser) return false;
+
+  try {
+    const user = JSON.parse(rawUser);
+    if (!user || typeof user.id !== 'string' || typeof user.email !== 'string') {
+      clearBrowserAccessState();
+      return false;
+    }
+
+    useTradingStore.setState({ authUser: user, authToken: token, isAuthenticated: true });
+    return true;
+  } catch {
+    clearBrowserAccessState();
+    return false;
+  }
 }
 
 async function refreshAccessToken(): Promise<string | null> {
