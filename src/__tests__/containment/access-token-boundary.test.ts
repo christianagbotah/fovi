@@ -5,6 +5,7 @@ import { relative, resolve } from 'node:path';
 const ROOT = resolve(__dirname, '../../..');
 const SRC = resolve(ROOT, 'src');
 const PAGE = resolve(ROOT, 'src/app/page.tsx');
+const SIGNIN = resolve(ROOT, 'src/app/auth/signin/page.tsx');
 const API_FETCH = resolve(ROOT, 'src/lib/api-fetch.ts');
 const TRADING_STORE = resolve(ROOT, 'src/lib/store/trading-store.ts');
 
@@ -77,7 +78,7 @@ function persistentAccessTokenViolations(): string[] {
     const repoPath = relative(ROOT, path).replaceAll('\\', '/');
     if (repoPath.startsWith('src/__tests__/')) continue;
     const content = readFileSync(path, 'utf8');
-    if (/localStorage\.(?:getItem|setItem)\(\s*['"]fovi_token['"]/.test(content)) {
+    if (/(?:localStorage|sessionStorage)\.(?:getItem|setItem)\(\s*['"]fovi_token['"]/.test(content)) {
       violations.push(repoPath);
     }
   }
@@ -89,15 +90,15 @@ describe('Phase 3G/3I browser access-token boundary', () => {
     expect(browserAccessTokenViolations()).toEqual([]);
   });
 
-  it('never persists or restores an access JWT from localStorage', () => {
+  it('never persists or restores an access JWT from browser storage', () => {
     expect(persistentAccessTokenViolations()).toEqual([]);
 
     const apiFetch = readFileSync(API_FETCH, 'utf8');
     const store = readFileSync(TRADING_STORE, 'utf8');
     expect(apiFetch).toContain('return useTradingStore.getState().authToken;');
-    expect(apiFetch).not.toMatch(/localStorage\.getItem\(\s*['"]fovi_token['"]/);
-    expect(store).not.toMatch(/localStorage\.setItem\(\s*['"]fovi_token['"]/);
-    expect(store).not.toMatch(/localStorage\.setItem\(\s*['"]fovi_user['"]/);
+    expect(apiFetch).not.toMatch(/(?:localStorage|sessionStorage)\.getItem\(\s*['"]fovi_token['"]/);
+    expect(store).not.toMatch(/(?:localStorage|sessionStorage)\.setItem\(\s*['"]fovi_token['"]/);
+    expect(store).not.toMatch(/(?:localStorage|sessionStorage)\.setItem\(\s*['"]fovi_user['"]/);
   });
 
   it('bootstraps dashboard authentication from the HttpOnly refresh session', () => {
@@ -110,6 +111,13 @@ describe('Phase 3G/3I browser access-token boundary', () => {
     expect(apiFetch).toContain("fetch('/api/auth/refresh'");
     expect(apiFetch).toContain('export async function bootstrapBrowserAuth()');
     expect(apiFetch).toContain('purgeLegacyPersistedAuth();');
+  });
+
+  it('preserves the memory-only access token across sign-in navigation', () => {
+    const signin = readFileSync(SIGNIN, 'utf8');
+    expect(signin).toContain("import { useRouter } from 'next/navigation';");
+    expect(signin).toContain("router.replace('/');");
+    expect(signin).not.toContain("window.location.href = '/';");
   });
 
   it('allows a 401 without an in-memory token to recover through refresh once', () => {
