@@ -100,7 +100,7 @@ export async function recordSigninFailure(identifier: string): Promise<SigninAbu
 
       const windowExpired = !windowStartedAt || now.getTime() - windowStartedAt.getTime() >= FAILURE_WINDOW_MS;
       const failedAttempts = windowExpired ? 1 : (state?.failedAttempts ?? 0) + 1;
-      const nextWindowStartedAt = windowExpired ? now : windowStartedAt;
+      const nextWindowStartedAt = windowExpired ? now : (windowStartedAt ?? now);
       const lockedUntil = failedAttempts >= MAX_FAILURES
         ? new Date(now.getTime() + COOLDOWN_MS)
         : null;
