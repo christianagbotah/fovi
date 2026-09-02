@@ -5,9 +5,10 @@ import { rateLimit } from '@/lib/rate-limit';
 import { verifySmsOtp } from '@/lib/sms-otp';
 
 const verifySchema = z.object({
-  code: z.string().length(6),
-  phoneNumber: z.string().min(1),
-  purpose: z.string().optional().default('login'),
+  code: z.string().regex(/^\d{6}$/),
+  phoneNumber: z.string().regex(/^\+\d{10,15}$/),
+  purpose: z.string().min(1).max(64).optional().default('login'),
+  userId: z.string().min(1).optional(),
 });
 
 // 10 requests per minute per IP
@@ -15,7 +16,6 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 10, keyPrefix: 'sms-o
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return NextResponse.json(
@@ -27,7 +27,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse and validate body
     const body = await request.json();
     const parsed = verifySchema.safeParse(body);
     if (!parsed.success) {
@@ -37,10 +36,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { code, purpose } = parsed.data;
-
-    // Auth required — need to identify the user
-    // For signup, allow a userId in the body
+    const { code, phoneNumber, purpose } = parsed.data;
     let userId: string | null = null;
 
     if (purpose !== 'signup') {
@@ -62,7 +58,7 @@ export async function POST(request: NextRequest) {
 
       userId = payload.sub;
     } else {
-      userId = body.userId || null;
+      userId = parsed.data.userId || null;
     }
 
     if (!userId) {
@@ -72,7 +68,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await verifySmsOtp(userId, code, purpose);
+    const result = await verifySmsOtp(userId, phoneNumber, code, purpose);
 
     if (!result.success) {
       return NextResponse.json(
