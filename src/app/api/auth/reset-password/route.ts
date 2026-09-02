@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, hashToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
-import { rateLimit } from '@/lib/rate-limit';
+import { rateLimit, rateLimitByKey } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
 const resetPasswordSchema = z.object({
@@ -12,17 +13,18 @@ const resetPasswordSchema = z.object({
   newPassword: z.string().min(8),
 });
 
-const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'reset-pw' });
+const ipLimiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'reset-pw' });
+const tokenLimiter = rateLimitByKey({ windowMs: 15 * 60_000, maxRequests: 5, keyPrefix: 'reset-pw' });
 
 export async function POST(request: NextRequest) {
   try {
-    const rateResult = limiter(request);
-    if (!rateResult.allowed) {
-      return NextResponse.json(
+    const ipResult = ipLimiter(request);
+    if (!ipResult.allowed) {
+      return authJson(
         { error: 'Too many password reset attempts. Please try again later.' },
         {
           status: 429,
-          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+          headers: { 'Retry-After': String(Math.ceil(ipResult.retryAfterMs / 1000)) },
         }
       );
     }
@@ -30,24 +32,34 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = resetPasswordSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
     const { token, newPassword } = parsed.data;
+    const hashedToken = hashToken(token);
+
+    const tokenResult = tokenLimiter(hashedToken);
+    if (!tokenResult.allowed) {
+      return authJson(
+        { error: 'Too many password reset attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(tokenResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Password reset is not available in demo mode. This feature requires a database connection.' },
         { status: 503 }
       );
     }
 
-    const hashedToken = hashToken(token);
     const now = new Date();
-
     const user = await safeDbQuery(() =>
       db!.user.findFirst({
         where: {
@@ -58,7 +70,7 @@ export async function POST(request: NextRequest) {
     );
 
     if (!user) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Invalid or expired reset token' },
         { status: 400 }
       );
@@ -83,13 +95,13 @@ export async function POST(request: NextRequest) {
     );
 
     if (!reset) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Failed to update password. Please try again.' },
         { status: 500 }
       );
     }
 
-    const response = NextResponse.json({
+    const response = authJson({
       success: true,
       message: 'Password has been reset successfully. Please sign in again.',
       reauthenticate: true,
@@ -97,9 +109,6 @@ export async function POST(request: NextRequest) {
     clearRefreshCookie(response);
     return response;
   } catch {
-    return NextResponse.json(
-      { error: 'An unexpected error occurred' },
-      { status: 500 }
-    );
+    return authJson({ error: 'An unexpected error occurred' }, { status: 500 });
   }
 }
