@@ -5,6 +5,10 @@ interface RateLimitEntry {
   resetAt: number;
 }
 
+type RateLimitResult =
+  | { allowed: true; remaining: number; resetAt: number }
+  | { allowed: false; retryAfterMs: number };
+
 const store = new Map<string, RateLimitEntry>();
 
 // Auto-cleanup expired entries every 5 minutes
@@ -33,6 +37,38 @@ function getClientIp(request: NextRequest): string {
   return 'unknown';
 }
 
+function consumeRateLimit(
+  key: string,
+  windowMs: number,
+  maxRequests: number,
+): RateLimitResult {
+  ensureCleanup();
+
+  const now = Date.now();
+  const entry = store.get(key);
+
+  if (!entry || entry.resetAt <= now) {
+    const resetAt = now + windowMs;
+    store.set(key, { count: 1, resetAt });
+    return { allowed: true, remaining: maxRequests - 1, resetAt };
+  }
+
+  entry.count += 1;
+
+  if (entry.count > maxRequests) {
+    return {
+      allowed: false,
+      retryAfterMs: entry.resetAt - now,
+    };
+  }
+
+  return {
+    allowed: true,
+    remaining: maxRequests - entry.count,
+    resetAt: entry.resetAt,
+  };
+}
+
 export function rateLimit(options: {
   windowMs: number;
   maxRequests: number;
@@ -40,38 +76,26 @@ export function rateLimit(options: {
 }) {
   const { windowMs, maxRequests, keyPrefix } = options;
 
-  return function check(
-    request: NextRequest
-  ):
-    | { allowed: true; remaining: number; resetAt: number }
-    | { allowed: false; retryAfterMs: number } {
-    ensureCleanup();
-
+  return function check(request: NextRequest): RateLimitResult {
     const ip = getClientIp(request);
-    const key = `${keyPrefix}:${ip}`;
-    const now = Date.now();
+    return consumeRateLimit(`${keyPrefix}:ip:${ip}`, windowMs, maxRequests);
+  };
+}
 
-    const entry = store.get(key);
+/**
+ * Secondary limiter for authenticated identities or normalized recovery targets.
+ * Use this in addition to the request/IP limiter so one account or destination
+ * cannot bypass throttling simply by changing source IPs.
+ */
+export function rateLimitByKey(options: {
+  windowMs: number;
+  maxRequests: number;
+  keyPrefix: string;
+}) {
+  const { windowMs, maxRequests, keyPrefix } = options;
 
-    if (!entry || entry.resetAt <= now) {
-      const resetAt = now + windowMs;
-      store.set(key, { count: 1, resetAt });
-      return { allowed: true, remaining: maxRequests - 1, resetAt };
-    }
-
-    entry.count += 1;
-
-    if (entry.count > maxRequests) {
-      return {
-        allowed: false,
-        retryAfterMs: entry.resetAt - now,
-      };
-    }
-
-    return {
-      allowed: true,
-      remaining: maxRequests - entry.count,
-      resetAt: entry.resetAt,
-    };
+  return function check(identity: string): RateLimitResult {
+    const normalized = identity.trim().toLowerCase();
+    return consumeRateLimit(`${keyPrefix}:identity:${normalized}`, windowMs, maxRequests);
   };
 }
