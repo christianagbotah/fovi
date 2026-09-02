@@ -9,6 +9,12 @@ import {
 } from '@/lib/auth-sessions';
 import { authJson } from '@/lib/auth-response';
 import { issueTwoFactorChallenge } from '@/lib/two-factor-challenges';
+import {
+  clearSigninFailures,
+  getSigninAbuseStatus,
+  recordSigninFailure,
+  type SigninAbuseStatus,
+} from '@/lib/auth-abuse';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -19,6 +25,17 @@ const signinSchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'signin' });
+
+function abuseBlockedResponse(status: SigninAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    { error: status.available ? 'Too many sign-in attempts. Please try again later.' : 'Authentication service unavailable.' },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +63,11 @@ export async function POST(request: NextRequest) {
     const emailLower = email.toLowerCase().trim();
 
     if (isDbAvailable() && db && hasModel('user')) {
+      const abuseStatus = await getSigninAbuseStatus(emailLower);
+      if (!abuseStatus.available || abuseStatus.locked) {
+        return abuseBlockedResponse(abuseStatus);
+      }
+
       const user = await safeDbQuery(() =>
         db!.user.findUnique({
           where: { email: emailLower },
@@ -60,6 +82,8 @@ export async function POST(request: NextRequest) {
       );
 
       if (!user || !user.passwordHash) {
+        const failed = await recordSigninFailure(emailLower);
+        if (!failed.available || failed.locked) return abuseBlockedResponse(failed);
         return authJson(
           { error: 'Invalid email or password' },
           { status: 401 }
@@ -68,6 +92,8 @@ export async function POST(request: NextRequest) {
 
       const valid = verifyPassword(password, user.passwordHash);
       if (!valid) {
+        const failed = await recordSigninFailure(emailLower);
+        if (!failed.available || failed.locked) return abuseBlockedResponse(failed);
         return authJson(
           { error: 'Invalid email or password' },
           { status: 401 }
@@ -78,6 +104,13 @@ export async function POST(request: NextRequest) {
         return authJson(
           { error: 'Account is deactivated' },
           { status: 403 }
+        );
+      }
+
+      if (!(await clearSigninFailures(emailLower))) {
+        return authJson(
+          { error: 'Authentication service unavailable.' },
+          { status: 503 }
         );
       }
 
