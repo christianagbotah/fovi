@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { generateResetToken, hashToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -13,10 +14,9 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 3, keyPrefix: 'forgot
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many password reset attempts. Please try again later.' },
         {
           status: 429,
@@ -25,11 +25,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Zod validation
     const body = await request.json();
     const parsed = forgotPasswordSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest) {
       if (user) {
         const resetToken = generateResetToken();
         const hashedToken = hashToken(resetToken);
-        const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+        const expiry = new Date(Date.now() + 60 * 60 * 1000);
 
         await safeDbQuery(() =>
           db!.user.update({
@@ -58,7 +57,6 @@ export async function POST(request: NextRequest) {
           })
         );
 
-        // Send password reset email (no-op if SMTP not configured)
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3002';
         const resetLink = `${baseUrl}/auth/reset-password?token=${resetToken}`;
 
@@ -78,14 +76,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Always return success to avoid email enumeration attacks
-    return NextResponse.json({
+    return authJson({
       success: true,
       message: 'If an account with this email exists, a reset link has been sent.',
     });
   } catch {
-    // Even on error, return success to prevent enumeration
-    return NextResponse.json({
+    return authJson({
       success: true,
       message: 'If an account with this email exists, a reset link has been sent.',
     });
