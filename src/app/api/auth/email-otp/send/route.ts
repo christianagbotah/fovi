@@ -6,7 +6,8 @@ import { generateEmailOtp } from '@/lib/sms-otp';
 
 const sendSchema = z.object({
   email: z.email(),
-  purpose: z.string().optional().default('login'),
+  purpose: z.string().min(1).max(64).optional().default('login'),
+  userId: z.string().min(1).optional(),
 });
 
 // 1 request per 60 seconds per IP
@@ -14,7 +15,6 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 1, keyPrefix: 'email-
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return NextResponse.json(
@@ -26,7 +26,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse and validate body
     const body = await request.json();
     const parsed = sendSchema.safeParse(body);
     if (!parsed.success) {
@@ -37,10 +36,10 @@ export async function POST(request: NextRequest) {
     }
 
     const { email, purpose } = parsed.data;
+    let userId: string | undefined;
 
-    // Auth is required unless purpose is 'signup'
-    let userId: string | undefined = undefined;
-
+    // Authenticated OTPs must be bound to the access-token subject. Signup is
+    // the only anonymous flow and may optionally bind to an already-created id.
     if (purpose !== 'signup') {
       const token = extractBearerToken(request);
       if (!token) {
@@ -60,11 +59,9 @@ export async function POST(request: NextRequest) {
 
       userId = payload.sub;
     } else {
-      // For signup, a userId may be passed in the body
-      userId = body.userId || undefined;
+      userId = parsed.data.userId;
     }
 
-    // Generate and send the OTP
     const result = await generateEmailOtp(email, userId, purpose);
 
     if (!result.success) {
