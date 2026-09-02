@@ -23,33 +23,43 @@ jobs:
           bun-version: '1.3.4'
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: auth-surface-finalization
+      - name: Group A-C
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/auth-surface-finalization.test.ts
-      - name: one-time-bound-otp
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[a-c][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group D-F
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/one-time-bound-otp.test.ts
-      - name: auth-boundary-hardening
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[d-f][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group G-I
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/auth-boundary-hardening.test.ts
-      - name: two-factor-challenge-supersession
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[g-i][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group J-L
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/two-factor-challenge-supersession.test.ts
-      - name: auth-before-fallback
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[j-l][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group M-O
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/auth-before-fallback.test.ts
-      - name: auth-response-cache
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[m-o][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group P-R
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/auth-response-cache.test.ts
-      - name: proxy-auth
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[p-r][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group S-U excluding supply-chain
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/proxy-auth.test.ts
-      - name: no-demo-identity
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[s-u][^/]*\.test\.ts$' | grep -v '/supply-chain-security.test.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
+      - name: Group V-Z
         continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/no-demo-identity.test.ts
-      - name: credential-session-revocation
-        continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/credential-session-revocation.test.ts
-      - name: auth-session-retention
-        continue-on-error: true
-        run: bunx vitest run src/__tests__/containment/auth-session-retention.test.ts
+        run: |
+          files=$(find src/__tests__/containment -maxdepth 1 -type f -name '*.test.ts' | sort | grep -Ei '/[v-z][^/]*\.test\.ts$' || true)
+          [ -z "$files" ] || bunx vitest run $files
