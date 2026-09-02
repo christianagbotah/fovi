@@ -1,4 +1,5 @@
 import { createHmac, randomInt } from 'crypto';
+import type { Prisma } from '@prisma/client';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { sendSms } from '@/lib/hubtel';
 import { sendEmail, isEmailConfigured } from '@/lib/email';
@@ -34,7 +35,7 @@ function hashOtpCode(code: string): string {
 }
 
 async function acquireOtpIssueLock(
-  tx: Parameters<Parameters<NonNullable<typeof db>['$transaction']>[0]>[0],
+  tx: Prisma.TransactionClient,
   lockKey: string,
 ): Promise<void> {
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
