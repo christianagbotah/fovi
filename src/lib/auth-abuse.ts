@@ -2,6 +2,7 @@ import { createHmac } from 'crypto';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 
 const SIGNIN_ABUSE_PREFIX = 'auth-abuse:signin:';
+const TWO_FACTOR_ABUSE_PREFIX = 'auth-abuse:two-factor:';
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const COOLDOWN_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
@@ -13,23 +14,25 @@ type StoredSigninAbuseState = {
   lockedUntil: string | null;
 };
 
-export type SigninAbuseStatus =
+export type AuthAbuseStatus =
   | { available: true; locked: false }
   | { available: true; locked: true; retryAfterMs: number }
   | { available: false; locked: true; retryAfterMs: number };
 
+export type SigninAbuseStatus = AuthAbuseStatus;
+
 function getPepper(): string {
   const pepper = process.env.AUTH_PEPPER;
   if (!pepper || pepper.length < 16) {
-    throw new Error('AUTH_PEPPER is required for sign-in abuse controls.');
+    throw new Error('AUTH_PEPPER is required for authentication abuse controls.');
   }
   return pepper;
 }
 
-function abuseKey(identifier: string): string {
+function abuseKey(prefix: string, identifier: string): string {
   const normalized = identifier.toLowerCase().trim();
   const digest = createHmac('sha256', getPepper()).update(normalized).digest('hex');
-  return `${SIGNIN_ABUSE_PREFIX}${digest}`;
+  return `${prefix}${digest}`;
 }
 
 function parseState(config: string): StoredSigninAbuseState | null {
@@ -48,17 +51,17 @@ function parseState(config: string): StoredSigninAbuseState | null {
   }
 }
 
-function unavailableStatus(): SigninAbuseStatus {
+function unavailableStatus(): AuthAbuseStatus {
   return { available: false, locked: true, retryAfterMs: 60_000 };
 }
 
-export async function getSigninAbuseStatus(identifier: string): Promise<SigninAbuseStatus> {
+async function getAbuseStatus(prefix: string, identifier: string): Promise<AuthAbuseStatus> {
   if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
     return unavailableStatus();
   }
 
   try {
-    const row = await db.systemConfig.findUnique({ where: { key: abuseKey(identifier) } });
+    const row = await db.systemConfig.findUnique({ where: { key: abuseKey(prefix, identifier) } });
     if (!row) return { available: true, locked: false };
 
     const state = parseState(row.config);
@@ -73,12 +76,12 @@ export async function getSigninAbuseStatus(identifier: string): Promise<SigninAb
   }
 }
 
-export async function recordSigninFailure(identifier: string): Promise<SigninAbuseStatus> {
+async function recordAbuseFailure(prefix: string, identifier: string): Promise<AuthAbuseStatus> {
   if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
     return unavailableStatus();
   }
 
-  const key = abuseKey(identifier);
+  const key = abuseKey(prefix, identifier);
 
   try {
     const status = await db.$transaction(async (tx) => {
@@ -130,7 +133,7 @@ export async function recordSigninFailure(identifier: string): Promise<SigninAbu
 
     void db.systemConfig.deleteMany({
       where: {
-        key: { startsWith: SIGNIN_ABUSE_PREFIX },
+        key: { startsWith: prefix },
         updatedAt: { lt: new Date(Date.now() - RETENTION_MS) },
       },
     }).catch(() => undefined);
@@ -141,13 +144,37 @@ export async function recordSigninFailure(identifier: string): Promise<SigninAbu
   }
 }
 
-export async function clearSigninFailures(identifier: string): Promise<boolean> {
+async function clearAbuseFailures(prefix: string, identifier: string): Promise<boolean> {
   if (!isDbAvailable() || !db || !hasModel('systemConfig')) return false;
 
   try {
-    await db.systemConfig.deleteMany({ where: { key: abuseKey(identifier) } });
+    await db.systemConfig.deleteMany({ where: { key: abuseKey(prefix, identifier) } });
     return true;
   } catch {
     return false;
   }
+}
+
+export function getSigninAbuseStatus(identifier: string): Promise<AuthAbuseStatus> {
+  return getAbuseStatus(SIGNIN_ABUSE_PREFIX, identifier);
+}
+
+export function recordSigninFailure(identifier: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(SIGNIN_ABUSE_PREFIX, identifier);
+}
+
+export function clearSigninFailures(identifier: string): Promise<boolean> {
+  return clearAbuseFailures(SIGNIN_ABUSE_PREFIX, identifier);
+}
+
+export function getTwoFactorAbuseStatus(userId: string): Promise<AuthAbuseStatus> {
+  return getAbuseStatus(TWO_FACTOR_ABUSE_PREFIX, userId);
+}
+
+export function recordTwoFactorFailure(userId: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(TWO_FACTOR_ABUSE_PREFIX, userId);
+}
+
+export function clearTwoFactorFailures(userId: string): Promise<boolean> {
+  return clearAbuseFailures(TWO_FACTOR_ABUSE_PREFIX, userId);
 }
