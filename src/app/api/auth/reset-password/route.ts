@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, hashToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
   try {
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many password reset attempts. Please try again later.' },
         {
           status: 429,
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = resetPasswordSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
@@ -39,57 +40,62 @@ export async function POST(request: NextRequest) {
     const { token, newPassword } = parsed.data;
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
-      return NextResponse.json(
-        { error: 'Password reset is not available in demo mode. This feature requires a database connection.' },
+      return authJson(
+        { error: 'Password reset is not available. This feature requires the authentication database.' },
         { status: 503 }
       );
     }
 
     const hashedToken = hashToken(token);
-    const now = new Date();
+    const newHash = hashPassword(newPassword);
 
-    const user = await safeDbQuery(() =>
-      db!.user.findFirst({
-        where: {
-          resetToken: hashedToken,
-          resetTokenExpiry: { gt: now },
-        },
+    const resetUserId = await safeDbQuery(() =>
+      db!.$transaction(async (tx) => {
+        const candidates = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id"
+          FROM "User"
+          WHERE "resetToken" = ${hashedToken}
+            AND "resetTokenExpiry" > CURRENT_TIMESTAMP
+          FOR UPDATE
+        `;
+
+        if (candidates.length !== 1) return null;
+        const userId = candidates[0].id;
+
+        const consumed = await tx.$executeRaw`
+          UPDATE "User"
+          SET "passwordHash" = ${newHash},
+              "resetToken" = NULL,
+              "resetTokenExpiry" = NULL,
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = ${userId}
+            AND "resetToken" = ${hashedToken}
+            AND "resetTokenExpiry" > CURRENT_TIMESTAMP
+        `;
+
+        if (consumed !== 1) return null;
+
+        await revokeAllAuthSessionsForUser(tx, userId, 'PASSWORD_RESET');
+        await revokeTwoFactorChallengesForUser(tx, userId);
+        return userId;
       })
     );
 
-    if (!user) {
-      return NextResponse.json(
+    if (resetUserId === undefined) {
+      return authJson(
+        { error: 'Password reset service unavailable. Please try again.' },
+        { status: 503 }
+      );
+    }
+
+    if (resetUserId === null) {
+      return authJson(
         { error: 'Invalid or expired reset token' },
         { status: 400 }
       );
     }
 
-    const newHash = hashPassword(newPassword);
-
-    const reset = await safeDbQuery(() =>
-      db!.$transaction(async (tx) => {
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            passwordHash: newHash,
-            resetToken: null,
-            resetTokenExpiry: null,
-          },
-        });
-        await revokeAllAuthSessionsForUser(tx, user.id, 'PASSWORD_RESET');
-        await revokeTwoFactorChallengesForUser(tx, user.id);
-        return true;
-      })
-    );
-
-    if (!reset) {
-      return NextResponse.json(
-        { error: 'Failed to update password. Please try again.' },
-        { status: 500 }
-      );
-    }
-
-    const response = NextResponse.json({
+    const response = authJson({
       success: true,
       message: 'Password has been reset successfully. Please sign in again.',
       reauthenticate: true,
@@ -97,7 +103,7 @@ export async function POST(request: NextRequest) {
     clearRefreshCookie(response);
     return response;
   } catch {
-    return NextResponse.json(
+    return authJson(
       { error: 'An unexpected error occurred' },
       { status: 500 }
     );
