@@ -30,12 +30,21 @@ describe('Phase 3O two-factor challenge supersession and shell scrolling', () =>
   });
 
   it('revokes pending challenges when the password security state changes', () => {
-    for (const path of [CHANGE_PASSWORD, RESET_PASSWORD]) {
-      const source = readFileSync(path, 'utf8');
+    const change = readFileSync(CHANGE_PASSWORD, 'utf8');
+    const reset = readFileSync(RESET_PASSWORD, 'utf8');
+
+    for (const source of [change, reset]) {
       expect(source).toContain("import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';");
       expect(source).toContain('db!.$transaction(async (tx) => {');
-      expect(source).toContain('await revokeTwoFactorChallengesForUser(tx, user.id);');
     }
+
+    expect(change).toContain('await revokeTwoFactorChallengesForUser(tx, user.id);');
+    expect(reset).toContain('await revokeTwoFactorChallengesForUser(tx, userId);');
+
+    const resetClaim = reset.indexOf('UPDATE "User"');
+    const resetRevoke = reset.indexOf('await revokeTwoFactorChallengesForUser(tx, userId);');
+    expect(resetClaim).toBeGreaterThanOrEqual(0);
+    expect(resetRevoke).toBeGreaterThan(resetClaim);
   });
 
   it('revokes pending challenges on every TOTP configuration transition', () => {
