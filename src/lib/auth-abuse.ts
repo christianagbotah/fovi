@@ -3,6 +3,7 @@ import { db, hasModel, isDbAvailable } from '@/lib/db';
 
 const SIGNIN_ABUSE_PREFIX = 'auth-abuse:signin:';
 const TWO_FACTOR_ABUSE_PREFIX = 'auth-abuse:two-factor:';
+const PASSWORD_RECOVERY_ABUSE_PREFIX = 'auth-abuse:password-recovery:';
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const COOLDOWN_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
@@ -177,4 +178,12 @@ export function recordTwoFactorFailure(userId: string): Promise<AuthAbuseStatus>
 
 export function clearTwoFactorFailures(userId: string): Promise<boolean> {
   return clearAbuseFailures(TWO_FACTOR_ABUSE_PREFIX, userId);
+}
+
+export function getPasswordRecoveryAbuseStatus(email: string): Promise<AuthAbuseStatus> {
+  return getAbuseStatus(PASSWORD_RECOVERY_ABUSE_PREFIX, email);
+}
+
+export function recordPasswordRecoveryRequest(email: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(PASSWORD_RECOVERY_ABUSE_PREFIX, email);
 }
