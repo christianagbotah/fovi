@@ -47,11 +47,18 @@ describe('Phase 3K credential-change session invalidation', () => {
 
   it('completes reset-token password changes and session revocation in one transaction', () => {
     expect(resetPassword).toContain('db!.$transaction(async (tx) =>');
-    expect(resetPassword).toContain("revokeAllAuthSessionsForUser(tx, user.id, 'PASSWORD_RESET')");
-    expect(resetPassword).toContain('resetToken: null');
-    expect(resetPassword).toContain('resetTokenExpiry: null');
+    expect(resetPassword).toContain('UPDATE "User"');
+    expect(resetPassword).toContain('"resetToken" = NULL');
+    expect(resetPassword).toContain('"resetTokenExpiry" = NULL');
+    expect(resetPassword).toContain('RETURNING "id"');
+    expect(resetPassword).toContain("revokeAllAuthSessionsForUser(tx, userId, 'PASSWORD_RESET')");
     expect(resetPassword).toContain('clearRefreshCookie(response)');
     expect(resetPassword).toContain("hasModel('authSession')");
+
+    const claimIndex = resetPassword.indexOf('UPDATE "User"');
+    const revokeIndex = resetPassword.indexOf("revokeAllAuthSessionsForUser(tx, userId, 'PASSWORD_RESET')");
+    expect(claimIndex).toBeGreaterThanOrEqual(0);
+    expect(revokeIndex).toBeGreaterThan(claimIndex);
   });
 
   it('revokes sessions for admin password reset and every deactivation path', () => {
