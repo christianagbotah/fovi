@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
-import { rateLimit } from '@/lib/rate-limit';
+import { rateLimit, rateLimitByKey } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
 const changePasswordSchema = z.object({
@@ -12,17 +13,18 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(8),
 });
 
-const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'change-pw' });
+const ipLimiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'change-pw' });
+const identityLimiter = rateLimitByKey({ windowMs: 15 * 60_000, maxRequests: 5, keyPrefix: 'change-pw' });
 
 export async function POST(request: NextRequest) {
   try {
-    const rateResult = limiter(request);
-    if (!rateResult.allowed) {
-      return NextResponse.json(
+    const ipResult = ipLimiter(request);
+    if (!ipResult.allowed) {
+      return authJson(
         { error: 'Too many password change attempts. Please try again later.' },
         {
           status: 429,
-          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+          headers: { 'Retry-After': String(Math.ceil(ipResult.retryAfterMs / 1000)) },
         }
       );
     }
@@ -30,24 +32,34 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = changePasswordSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
+    // src/proxy.ts strips caller-supplied identity headers, verifies the access
+    // JWT, then injects X-User-Id for this protected route.
     const userId = request.headers.get('X-User-Id');
     if (!userId) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
+      return authJson({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const identityResult = identityLimiter(userId);
+    if (!identityResult.allowed) {
+      return authJson(
+        { error: 'Too many password change attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(identityResult.retryAfterMs / 1000)) },
+        }
       );
     }
 
     const { currentPassword, newPassword } = parsed.data;
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Password change is not available in demo mode. This feature requires a database connection.' },
         { status: 503 }
       );
@@ -58,18 +70,12 @@ export async function POST(request: NextRequest) {
     );
 
     if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+      return authJson({ error: 'User not found' }, { status: 404 });
     }
 
     const currentPasswordValid = verifyPassword(currentPassword, user.passwordHash);
     if (!currentPasswordValid) {
-      return NextResponse.json(
-        { error: 'Current password is incorrect' },
-        { status: 401 }
-      );
+      return authJson({ error: 'Current password is incorrect' }, { status: 401 });
     }
 
     const newHash = hashPassword(newPassword);
@@ -87,13 +93,13 @@ export async function POST(request: NextRequest) {
     );
 
     if (!changed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Failed to update password. Please try again.' },
         { status: 500 }
       );
     }
 
-    const response = NextResponse.json(
+    const response = authJson(
       {
         success: true,
         message: 'Password has been changed successfully. Please sign in again.',
@@ -104,9 +110,6 @@ export async function POST(request: NextRequest) {
     clearRefreshCookie(response);
     return response;
   } catch {
-    return NextResponse.json(
-      { error: 'An unexpected error occurred' },
-      { status: 500 }
-    );
+    return authJson({ error: 'An unexpected error occurred' }, { status: 500 });
   }
 }
