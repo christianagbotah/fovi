@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { sendSms } from '@/lib/hubtel';
 import { sendEmail, isEmailConfigured } from '@/lib/email';
+import type { OtpPurpose } from '@/lib/otp-policy';
 
 // ============================================================
 // OTP generation helpers
@@ -10,6 +11,7 @@ import { sendEmail, isEmailConfigured } from '@/lib/email';
 
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_MINUTES = 10;
+const OTP_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Generate a random numeric OTP of OTP_LENGTH digits.
@@ -41,6 +43,40 @@ async function acquireOtpIssueLock(
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 }
 
+async function cleanupSmsOtpRecords(): Promise<void> {
+  if (!db || !hasModel('smsOtp')) return;
+  const cutoff = new Date(Date.now() - OTP_RETENTION_MS);
+  try {
+    await db.smsOtp.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: cutoff } },
+          { verified: true, createdAt: { lt: cutoff } },
+        ],
+      },
+    });
+  } catch {
+    // Retention cleanup must never turn a valid OTP operation into a failure.
+  }
+}
+
+async function cleanupEmailOtpRecords(): Promise<void> {
+  if (!db || !hasModel('emailOtp')) return;
+  const cutoff = new Date(Date.now() - OTP_RETENTION_MS);
+  try {
+    await db.emailOtp.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: cutoff } },
+          { verified: true, createdAt: { lt: cutoff } },
+        ],
+      },
+    });
+  } catch {
+    // Retention cleanup must never turn a valid OTP operation into a failure.
+  }
+}
+
 // ============================================================
 // SMS OTP
 // ============================================================
@@ -52,7 +88,7 @@ async function acquireOtpIssueLock(
 export async function generateSmsOtp(
   userId: string,
   phoneNumber: string,
-  purpose: string = 'login'
+  purpose: OtpPurpose = 'login'
 ): Promise<{ success: boolean; error?: string }> {
   if (!isDbAvailable() || !db || !hasModel('smsOtp')) {
     return { success: false, error: 'Database is not available' };
@@ -91,6 +127,7 @@ export async function generateSmsOtp(
     return { success: false, error: 'Failed to persist OTP' };
   }
 
+  await cleanupSmsOtpRecords();
   return { success: true };
 }
 
@@ -103,7 +140,7 @@ export async function verifySmsOtp(
   userId: string,
   phoneNumber: string,
   code: string,
-  purpose: string = 'login'
+  purpose: OtpPurpose = 'login'
 ): Promise<{ success: boolean; verified: boolean }> {
   if (!isDbAvailable() || !db || !hasModel('smsOtp')) {
     return { success: false, verified: false };
@@ -138,6 +175,7 @@ export async function verifySmsOtp(
         )
     `;
 
+    if (consumed > 0) await cleanupSmsOtpRecords();
     return { success: true, verified: consumed > 0 };
   } catch {
     return { success: false, verified: false };
@@ -155,7 +193,7 @@ export async function verifySmsOtp(
 export async function generateEmailOtp(
   email: string,
   userId?: string,
-  purpose: string = 'login'
+  purpose: OtpPurpose = 'login'
 ): Promise<{ success: boolean; error?: string }> {
   if (!isDbAvailable() || !db || !hasModel('emailOtp')) {
     return { success: false, error: 'Database is not available' };
@@ -203,6 +241,7 @@ export async function generateEmailOtp(
     return { success: false, error: 'Failed to persist OTP' };
   }
 
+  await cleanupEmailOtpRecords();
   return { success: true };
 }
 
@@ -214,7 +253,7 @@ export async function generateEmailOtp(
 export async function verifyEmailOtp(
   email: string,
   code: string,
-  purpose: string = 'login',
+  purpose: OtpPurpose = 'login',
   userId?: string | null,
 ): Promise<{ success: boolean; verified: boolean }> {
   if (!isDbAvailable() || !db || !hasModel('emailOtp')) {
@@ -278,6 +317,7 @@ export async function verifyEmailOtp(
             )
         `;
 
+    if (consumed > 0) await cleanupEmailOtpRecords();
     return { success: true, verified: consumed > 0 };
   } catch {
     return { success: false, verified: false };
