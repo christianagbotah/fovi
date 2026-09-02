@@ -2,6 +2,10 @@ import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { generateResetToken, hashToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
+import {
+  getPasswordRecoveryAbuseStatus,
+  recordPasswordRecoveryRequest,
+} from '@/lib/auth-abuse';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -12,17 +16,28 @@ const forgotPasswordSchema = z.object({
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 3, keyPrefix: 'forgot-pw' });
 
+function genericRecoveryResponse() {
+  return authJson({
+    success: true,
+    message: 'If an account with this email exists, a reset link has been sent.',
+  });
+}
+
+function recoveryRateLimited(retryAfterMs: number) {
+  return authJson(
+    { error: 'Too many password reset attempts. Please try again later.' },
+    {
+      status: 429,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    }
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return authJson(
-        { error: 'Too many password reset attempts. Please try again later.' },
-        {
-          status: 429,
-          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
-        }
-      );
+      return recoveryRateLimited(rateResult.retryAfterMs);
     }
 
     const body = await request.json();
@@ -36,6 +51,26 @@ export async function POST(request: NextRequest) {
 
     const { email } = parsed.data;
     const emailLower = email.toLowerCase().trim();
+
+    // Apply the persistent identifier boundary before account lookup so both
+    // existing and unknown emails accumulate abuse state identically.
+    const existingAbuse = await getPasswordRecoveryAbuseStatus(emailLower);
+    if (!existingAbuse.available) {
+      // Fail closed against recovery-email flooding without revealing whether
+      // the submitted email belongs to an account.
+      return genericRecoveryResponse();
+    }
+    if (existingAbuse.locked) {
+      return recoveryRateLimited(existingAbuse.retryAfterMs);
+    }
+
+    const recordedAbuse = await recordPasswordRecoveryRequest(emailLower);
+    if (!recordedAbuse.available) {
+      return genericRecoveryResponse();
+    }
+    if (recordedAbuse.locked) {
+      return recoveryRateLimited(recordedAbuse.retryAfterMs);
+    }
 
     if (isDbAvailable() && db && hasModel('user')) {
       const user = await safeDbQuery(() =>
@@ -76,14 +111,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return authJson({
-      success: true,
-      message: 'If an account with this email exists, a reset link has been sent.',
-    });
+    return genericRecoveryResponse();
   } catch {
-    return authJson({
-      success: true,
-      message: 'If an account with this email exists, a reset link has been sent.',
-    });
+    return genericRecoveryResponse();
   }
 }
