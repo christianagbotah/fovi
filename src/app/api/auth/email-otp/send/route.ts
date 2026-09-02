@@ -1,27 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
-import { rateLimit } from '@/lib/rate-limit';
+import { authJson } from '@/lib/auth-response';
+import { otpPurposeSchema } from '@/lib/otp-policy';
+import { rateLimit, rateLimitByKey } from '@/lib/rate-limit';
 import { generateEmailOtp } from '@/lib/sms-otp';
 
 const sendSchema = z.object({
   email: z.email(),
-  purpose: z.string().min(1).max(64).optional().default('login'),
+  purpose: otpPurposeSchema,
   userId: z.string().min(1).optional(),
 });
 
-// 1 request per 60 seconds per IP
-const limiter = rateLimit({ windowMs: 60_000, maxRequests: 1, keyPrefix: 'email-otp-send' });
+const ipLimiter = rateLimit({ windowMs: 60_000, maxRequests: 1, keyPrefix: 'email-otp-send' });
+const identityLimiter = rateLimitByKey({ windowMs: 60_000, maxRequests: 1, keyPrefix: 'email-otp-send' });
 
 export async function POST(request: NextRequest) {
   try {
-    const rateResult = limiter(request);
-    if (!rateResult.allowed) {
-      return NextResponse.json(
+    const ipResult = ipLimiter(request);
+    if (!ipResult.allowed) {
+      return authJson(
         { error: 'Please wait before requesting another OTP.' },
         {
           status: 429,
-          headers: { 'Retry-After': String(Math.ceil(rateResult.retryAfterMs / 1000)) },
+          headers: { 'Retry-After': String(Math.ceil(ipResult.retryAfterMs / 1000)) },
         }
       );
     }
@@ -29,32 +31,25 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = sendSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
     const { email, purpose } = parsed.data;
+    const normalizedEmail = email.toLowerCase().trim();
     let userId: string | undefined;
 
-    // Authenticated OTPs must be bound to the access-token subject. Signup is
-    // the only anonymous flow and may optionally bind to an already-created id.
     if (purpose !== 'signup') {
       const token = extractBearerToken(request);
       if (!token) {
-        return NextResponse.json(
-          { error: 'Authentication required.' },
-          { status: 401 }
-        );
+        return authJson({ error: 'Authentication required.' }, { status: 401 });
       }
 
       const payload = await verifyToken(token);
       if (!payload || payload.type !== 'access') {
-        return NextResponse.json(
-          { error: 'Invalid or expired token.' },
-          { status: 401 }
-        );
+        return authJson({ error: 'Invalid or expired token.' }, { status: 401 });
       }
 
       userId = payload.sub;
@@ -62,24 +57,29 @@ export async function POST(request: NextRequest) {
       userId = parsed.data.userId;
     }
 
-    const result = await generateEmailOtp(email, userId, purpose);
+    const identityResult = identityLimiter(`${userId || normalizedEmail}:${purpose}:${normalizedEmail}`);
+    if (!identityResult.allowed) {
+      return authJson(
+        { error: 'Please wait before requesting another OTP.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(identityResult.retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    const result = await generateEmailOtp(normalizedEmail, userId, purpose);
 
     if (!result.success) {
       console.error('[Email OTP Send] Failed:', result.error);
-      return NextResponse.json(
+      return authJson(
         { error: 'Failed to send OTP. Please try again later.' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'OTP sent',
-    });
+    return authJson({ success: true, message: 'OTP sent' });
   } catch {
-    return NextResponse.json(
-      { error: 'An unexpected error occurred' },
-      { status: 500 }
-    );
+    return authJson({ error: 'An unexpected error occurred' }, { status: 500 });
   }
 }
