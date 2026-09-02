@@ -95,9 +95,9 @@ export async function generateSmsOtp(
 }
 
 /**
- * Atomically verify and consume only the newest active SMS OTP bound to the
- * authenticated user, submitted phone number, and purpose. Exactly one
- * concurrent request can transition the record to verified=true.
+ * Atomically verify the newest active SMS OTP for user+purpose, require that
+ * newest record to match the submitted phone and code, then retire every active
+ * record for that user+purpose. FOR UPDATE serializes concurrent consumers.
  */
 export async function verifySmsOtp(
   userId: string,
@@ -113,25 +113,32 @@ export async function verifySmsOtp(
 
   try {
     const consumed = await db.$executeRaw`
-      UPDATE "SmsOtp"
-      SET "verified" = TRUE
-      WHERE "id" = (
-        SELECT "id"
+      WITH candidate AS (
+        SELECT "id", "code", "phoneNumber"
         FROM "SmsOtp"
         WHERE "userId" = ${userId}
-          AND "phoneNumber" = ${phoneNumber}
           AND "purpose" = ${purpose}
           AND "verified" = FALSE
           AND "expiresAt" > CURRENT_TIMESTAMP
         ORDER BY "createdAt" DESC
         LIMIT 1
+        FOR UPDATE
       )
+      UPDATE "SmsOtp"
+      SET "verified" = TRUE
+      WHERE "userId" = ${userId}
+        AND "purpose" = ${purpose}
         AND "verified" = FALSE
         AND "expiresAt" > CURRENT_TIMESTAMP
-        AND "code" = ${hashedInput}
+        AND EXISTS (
+          SELECT 1
+          FROM candidate
+          WHERE candidate."phoneNumber" = ${phoneNumber}
+            AND candidate."code" = ${hashedInput}
+        )
     `;
 
-    return { success: true, verified: consumed === 1 };
+    return { success: true, verified: consumed > 0 };
   } catch {
     return { success: false, verified: false };
   }
@@ -200,9 +207,9 @@ export async function generateEmailOtp(
 }
 
 /**
- * Atomically verify and consume the newest Email OTP. Authenticated flows are
- * bound to user+email+purpose; anonymous signup flows are bound to the explicit
- * signup userId when supplied, otherwise to an anonymous email+purpose record.
+ * Atomically verify and consume the newest Email OTP. Authenticated flows first
+ * choose the newest user+purpose row and require its email+code to match before
+ * retiring all active user+purpose rows. Anonymous signup remains email-bound.
  */
 export async function verifyEmailOtp(
   email: string,
@@ -220,28 +227,33 @@ export async function verifyEmailOtp(
   try {
     const consumed = userId
       ? await db.$executeRaw`
-          UPDATE "EmailOtp"
-          SET "verified" = TRUE
-          WHERE "id" = (
-            SELECT "id"
+          WITH candidate AS (
+            SELECT "id", "code", "email"
             FROM "EmailOtp"
             WHERE "userId" = ${userId}
-              AND "email" = ${normalizedEmail}
               AND "purpose" = ${purpose}
               AND "verified" = FALSE
               AND "expiresAt" > CURRENT_TIMESTAMP
             ORDER BY "createdAt" DESC
             LIMIT 1
+            FOR UPDATE
           )
-            AND "verified" = FALSE
-            AND "expiresAt" > CURRENT_TIMESTAMP
-            AND "code" = ${hashedInput}
-        `
-      : await db.$executeRaw`
           UPDATE "EmailOtp"
           SET "verified" = TRUE
-          WHERE "id" = (
-            SELECT "id"
+          WHERE "userId" = ${userId}
+            AND "purpose" = ${purpose}
+            AND "verified" = FALSE
+            AND "expiresAt" > CURRENT_TIMESTAMP
+            AND EXISTS (
+              SELECT 1
+              FROM candidate
+              WHERE candidate."email" = ${normalizedEmail}
+                AND candidate."code" = ${hashedInput}
+            )
+        `
+      : await db.$executeRaw`
+          WITH candidate AS (
+            SELECT "id", "code"
             FROM "EmailOtp"
             WHERE "userId" IS NULL
               AND "email" = ${normalizedEmail}
@@ -250,13 +262,23 @@ export async function verifyEmailOtp(
               AND "expiresAt" > CURRENT_TIMESTAMP
             ORDER BY "createdAt" DESC
             LIMIT 1
+            FOR UPDATE
           )
+          UPDATE "EmailOtp"
+          SET "verified" = TRUE
+          WHERE "userId" IS NULL
+            AND "email" = ${normalizedEmail}
+            AND "purpose" = ${purpose}
             AND "verified" = FALSE
             AND "expiresAt" > CURRENT_TIMESTAMP
-            AND "code" = ${hashedInput}
+            AND EXISTS (
+              SELECT 1
+              FROM candidate
+              WHERE candidate."code" = ${hashedInput}
+            )
         `;
 
-    return { success: true, verified: consumed === 1 };
+    return { success: true, verified: consumed > 0 };
   } catch {
     return { success: false, verified: false };
   }
