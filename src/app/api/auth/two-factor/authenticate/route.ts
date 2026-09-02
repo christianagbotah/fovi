@@ -8,6 +8,12 @@ import {
   setRefreshCookie,
 } from '@/lib/auth-sessions';
 import { authJson } from '@/lib/auth-response';
+import {
+  clearTwoFactorFailures,
+  getTwoFactorAbuseStatus,
+  recordTwoFactorFailure,
+  type AuthAbuseStatus,
+} from '@/lib/auth-abuse';
 import { consumeTwoFactorChallenge } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -19,6 +25,17 @@ const twoFactorAuthSchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 10, keyPrefix: '2fa-auth' });
+
+function twoFactorAbuseBlockedResponse(status: AuthAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    { error: status.available ? 'Too many 2FA attempts. Please try again later.' : 'Authentication service unavailable.' },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,8 +87,15 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Account deactivated' }, { status: 403 });
     }
 
+    const abuseStatus = await getTwoFactorAbuseStatus(user.id);
+    if (!abuseStatus.available || abuseStatus.locked) {
+      return twoFactorAbuseBlockedResponse(abuseStatus);
+    }
+
     const otplib = await import('otplib');
     if (!otplib.verify({ token: code, secret: user.settings.twoFactorSecret })) {
+      const failed = await recordTwoFactorFailure(user.id);
+      if (!failed.available || failed.locked) return twoFactorAbuseBlockedResponse(failed);
       return authJson({ error: 'Invalid code.' }, { status: 401 });
     }
 
@@ -81,6 +105,10 @@ export async function POST(request: NextRequest) {
     const consumed = await consumeTwoFactorChallenge(challengePayload.jti, user.id);
     if (!consumed) {
       return authJson({ error: 'Two-factor challenge was already used or expired.' }, { status: 401 });
+    }
+
+    if (!(await clearTwoFactorFailures(user.id))) {
+      return authJson({ error: 'Authentication service unavailable. Please sign in again.' }, { status: 503 });
     }
 
     const existingRefreshToken = readRefreshCookie(request);
