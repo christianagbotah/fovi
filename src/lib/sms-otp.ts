@@ -1,5 +1,5 @@
-import { createHash, randomInt } from 'crypto';
-import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { createHmac, randomInt } from 'crypto';
+import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { sendSms } from '@/lib/hubtel';
 import { sendEmail, isEmailConfigured } from '@/lib/email';
 
@@ -22,10 +22,22 @@ function generateCode(): string {
 }
 
 /**
- * Hash an OTP code for secure storage.
+ * Hash a low-entropy OTP with the application pepper so a database-only leak
+ * cannot be brute-forced by comparing all one million possible 6-digit codes.
  */
 function hashOtpCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
+  const pepper = process.env.AUTH_PEPPER;
+  if (!pepper || pepper.length < 16) {
+    throw new Error('AUTH_PEPPER is required for OTP hashing.');
+  }
+  return createHmac('sha256', pepper).update(code).digest('hex');
+}
+
+async function acquireOtpIssueLock(
+  tx: Parameters<Parameters<NonNullable<typeof db>['$transaction']>[0]>[0],
+  lockKey: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 }
 
 // ============================================================
@@ -33,8 +45,8 @@ function hashOtpCode(code: string): string {
 // ============================================================
 
 /**
- * Generate an SMS OTP, store it hashed, and send via Hubtel SMS.
- * Returns { success, error? }.
+ * Generate an SMS OTP, deliver it, then persist exactly one active OTP for the
+ * user+purpose. A new successful issuance supersedes every older active code.
  */
 export async function generateSmsOtp(
   userId: string,
@@ -49,32 +61,46 @@ export async function generateSmsOtp(
   const hashedCode = hashOtpCode(code);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
-  // Store the hashed OTP in the database
-  await db.smsOtp.create({
-    data: {
-      userId,
-      phoneNumber,
-      code: hashedCode,
-      purpose,
-      expiresAt,
-    },
-  });
+  // Do not create a usable database record when delivery itself failed.
+  const delivery = await sendOtpViaSms(phoneNumber, code);
+  if (!delivery.success) {
+    return { success: false, error: delivery.error };
+  }
 
-  // Send the plain-text OTP via SMS
-  const result = await sendOtpViaSms(phoneNumber, code);
-  if (!result.success) {
-    return { success: false, error: result.error };
+  try {
+    await db.$transaction(async (tx) => {
+      await acquireOtpIssueLock(tx, `sms-otp:${userId}:${purpose}`);
+
+      await tx.smsOtp.updateMany({
+        where: { userId, purpose, verified: false },
+        data: { verified: true },
+      });
+
+      await tx.smsOtp.create({
+        data: {
+          userId,
+          phoneNumber,
+          code: hashedCode,
+          purpose,
+          expiresAt,
+        },
+      });
+    });
+  } catch {
+    return { success: false, error: 'Failed to persist OTP' };
   }
 
   return { success: true };
 }
 
 /**
- * Verify an SMS OTP code.
- * Returns { success, verified }.
+ * Atomically verify and consume only the newest active SMS OTP bound to the
+ * authenticated user, submitted phone number, and purpose. Exactly one
+ * concurrent request can transition the record to verified=true.
  */
 export async function verifySmsOtp(
   userId: string,
+  phoneNumber: string,
   code: string,
   purpose: string = 'login'
 ): Promise<{ success: boolean; verified: boolean }> {
@@ -83,38 +109,31 @@ export async function verifySmsOtp(
   }
 
   const hashedInput = hashOtpCode(code);
-  const now = new Date();
 
-  // Find the latest unexpired, unverified OTP for this user+purpose
-  const otp = await safeDbQuery(() =>
-    db!.smsOtp.findFirst({
-      where: {
-        userId,
-        purpose,
-        verified: false,
-        expiresAt: { gt: now },
-      },
-      orderBy: { createdAt: 'desc' },
-    })
-  );
+  try {
+    const consumed = await db.$executeRaw`
+      UPDATE "SmsOtp"
+      SET "verified" = TRUE
+      WHERE "id" = (
+        SELECT "id"
+        FROM "SmsOtp"
+        WHERE "userId" = ${userId}
+          AND "phoneNumber" = ${phoneNumber}
+          AND "purpose" = ${purpose}
+          AND "verified" = FALSE
+          AND "expiresAt" > CURRENT_TIMESTAMP
+        ORDER BY "createdAt" DESC
+        LIMIT 1
+      )
+        AND "verified" = FALSE
+        AND "expiresAt" > CURRENT_TIMESTAMP
+        AND "code" = ${hashedInput}
+    `;
 
-  if (!otp) {
-    return { success: true, verified: false };
+    return { success: true, verified: consumed === 1 };
+  } catch {
+    return { success: false, verified: false };
   }
-
-  if (otp.code !== hashedInput) {
-    return { success: true, verified: false };
-  }
-
-  // Mark as verified
-  await safeDbQuery(() =>
-    db!.smsOtp.update({
-      where: { id: otp!.id },
-      data: { verified: true },
-    })
-  );
-
-  return { success: true, verified: true };
 }
 
 // ============================================================
@@ -122,8 +141,8 @@ export async function verifySmsOtp(
 // ============================================================
 
 /**
- * Generate an Email OTP, store it hashed, and send via email.
- * Returns { success, error? }.
+ * Generate an Email OTP, deliver it, then persist one active code. Authenticated
+ * flows are superseded by user+purpose; anonymous signup flows by email+purpose.
  */
 export async function generateEmailOtp(
   email: string,
@@ -134,77 +153,112 @@ export async function generateEmailOtp(
     return { success: false, error: 'Database is not available' };
   }
 
+  const normalizedEmail = email.toLowerCase().trim();
   const code = generateCode();
   const hashedCode = hashOtpCode(code);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
-  // Store the hashed OTP in the database
-  await db.emailOtp.create({
-    data: {
-      userId: userId || null,
-      email: email.toLowerCase().trim(),
-      code: hashedCode,
-      purpose,
-      expiresAt,
-    },
-  });
+  // Do not leave an active OTP behind when delivery failed.
+  const delivery = await sendOtpViaEmail(normalizedEmail, code);
+  if (!delivery.success) {
+    return { success: false, error: delivery.error };
+  }
 
-  // Send the plain-text OTP via email
-  const result = await sendOtpViaEmail(email, code);
-  if (!result.success) {
-    return { success: false, error: result.error };
+  try {
+    await db.$transaction(async (tx) => {
+      const identityKey = userId ? `user:${userId}` : `email:${normalizedEmail}`;
+      await acquireOtpIssueLock(tx, `email-otp:${identityKey}:${purpose}`);
+
+      if (userId) {
+        await tx.emailOtp.updateMany({
+          where: { userId, purpose, verified: false },
+          data: { verified: true },
+        });
+      } else {
+        await tx.emailOtp.updateMany({
+          where: { userId: null, email: normalizedEmail, purpose, verified: false },
+          data: { verified: true },
+        });
+      }
+
+      await tx.emailOtp.create({
+        data: {
+          userId: userId || null,
+          email: normalizedEmail,
+          code: hashedCode,
+          purpose,
+          expiresAt,
+        },
+      });
+    });
+  } catch {
+    return { success: false, error: 'Failed to persist OTP' };
   }
 
   return { success: true };
 }
 
 /**
- * Verify an Email OTP code.
- * Returns { success, verified }.
+ * Atomically verify and consume the newest Email OTP. Authenticated flows are
+ * bound to user+email+purpose; anonymous signup flows are bound to the explicit
+ * signup userId when supplied, otherwise to an anonymous email+purpose record.
  */
 export async function verifyEmailOtp(
   email: string,
   code: string,
-  purpose: string = 'login'
+  purpose: string = 'login',
+  userId?: string | null,
 ): Promise<{ success: boolean; verified: boolean }> {
   if (!isDbAvailable() || !db || !hasModel('emailOtp')) {
     return { success: false, verified: false };
   }
 
   const hashedInput = hashOtpCode(code);
-  const now = new Date();
   const normalizedEmail = email.toLowerCase().trim();
 
-  // Find the latest unexpired, unverified OTP for this email+purpose
-  const otp = await safeDbQuery(() =>
-    db!.emailOtp.findFirst({
-      where: {
-        email: normalizedEmail,
-        purpose,
-        verified: false,
-        expiresAt: { gt: now },
-      },
-      orderBy: { createdAt: 'desc' },
-    })
-  );
+  try {
+    const consumed = userId
+      ? await db.$executeRaw`
+          UPDATE "EmailOtp"
+          SET "verified" = TRUE
+          WHERE "id" = (
+            SELECT "id"
+            FROM "EmailOtp"
+            WHERE "userId" = ${userId}
+              AND "email" = ${normalizedEmail}
+              AND "purpose" = ${purpose}
+              AND "verified" = FALSE
+              AND "expiresAt" > CURRENT_TIMESTAMP
+            ORDER BY "createdAt" DESC
+            LIMIT 1
+          )
+            AND "verified" = FALSE
+            AND "expiresAt" > CURRENT_TIMESTAMP
+            AND "code" = ${hashedInput}
+        `
+      : await db.$executeRaw`
+          UPDATE "EmailOtp"
+          SET "verified" = TRUE
+          WHERE "id" = (
+            SELECT "id"
+            FROM "EmailOtp"
+            WHERE "userId" IS NULL
+              AND "email" = ${normalizedEmail}
+              AND "purpose" = ${purpose}
+              AND "verified" = FALSE
+              AND "expiresAt" > CURRENT_TIMESTAMP
+            ORDER BY "createdAt" DESC
+            LIMIT 1
+          )
+            AND "verified" = FALSE
+            AND "expiresAt" > CURRENT_TIMESTAMP
+            AND "code" = ${hashedInput}
+        `;
 
-  if (!otp) {
-    return { success: true, verified: false };
+    return { success: true, verified: consumed === 1 };
+  } catch {
+    return { success: false, verified: false };
   }
-
-  if (otp.code !== hashedInput) {
-    return { success: true, verified: false };
-  }
-
-  // Mark as verified
-  await safeDbQuery(() =>
-    db!.emailOtp.update({
-      where: { id: otp!.id },
-      data: { verified: true },
-    })
-  );
-
-  return { success: true, verified: true };
 }
 
 // ============================================================
@@ -255,7 +309,7 @@ export async function sendOtpViaEmail(
 
   const result = await sendEmail({
     to: email,
-    subject: `Fovi AI Verification Code: ${code}`,
+    subject: 'Fovi AI Verification Code',
     html,
     text: `Your Fovi AI verification code is: ${code}. This code expires in ${OTP_EXPIRY_MINUTES} minutes. Do not share this code with anyone.`,
   });
