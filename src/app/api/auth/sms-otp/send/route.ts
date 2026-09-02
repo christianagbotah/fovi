@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
-import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { rateLimit } from '@/lib/rate-limit';
 import { generateSmsOtp } from '@/lib/sms-otp';
 
 const sendSchema = z.object({
-  phoneNumber: z.string().min(1),
-  purpose: z.string().optional().default('login'),
+  phoneNumber: z.string().regex(/^\+\d{10,15}$/),
+  purpose: z.string().min(1).max(64).optional().default('login'),
+  userId: z.string().min(1).optional(),
 });
 
 // 1 request per 60 seconds per IP
@@ -15,7 +15,6 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 1, keyPrefix: 'sms-ot
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return NextResponse.json(
@@ -27,7 +26,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse and validate body
     const body = await request.json();
     const parsed = sendSchema.safeParse(body);
     if (!parsed.success) {
@@ -38,17 +36,6 @@ export async function POST(request: NextRequest) {
     }
 
     const { phoneNumber, purpose } = parsed.data;
-
-    // Validate phone format: must start with + and be 10-15 digits after the +
-    const phoneRegex = /^\+\d{10,15}$/;
-    if (!phoneRegex.test(phoneNumber)) {
-      return NextResponse.json(
-        { error: 'Invalid phone number format. Must start with + followed by 10-15 digits.' },
-        { status: 400 }
-      );
-    }
-
-    // Auth is required unless purpose is 'signup'
     let userId: string | null = null;
 
     if (purpose !== 'signup') {
@@ -70,9 +57,7 @@ export async function POST(request: NextRequest) {
 
       userId = payload.sub;
     } else {
-      // For signup, we need a userId — use a temporary one from body or generate
-      // The caller should provide a userId for signup OTPs
-      userId = body.userId || null;
+      userId = parsed.data.userId || null;
     }
 
     if (!userId) {
@@ -82,11 +67,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate and send the OTP
     const result = await generateSmsOtp(userId, phoneNumber, purpose);
 
     if (!result.success) {
-      // Log the error internally but return a generic message to avoid leaking info
       console.error('[SMS OTP Send] Failed:', result.error);
       return NextResponse.json(
         { error: 'Failed to send OTP. Please try again later.' },
