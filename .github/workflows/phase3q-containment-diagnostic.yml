@@ -1,0 +1,37 @@
+name: Phase 3Q Containment Diagnostic
+
+on:
+  push:
+    branches:
+      - phase-3q-auth-surface-finalization
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run containment and report exact failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          bunx vitest run src/__tests__/containment --reporter=verbose > /tmp/containment.log 2>&1
+          status=$?
+          {
+            echo '### Phase 3Q containment diagnostic'
+            echo '```text'
+            tail -n 180 /tmp/containment.log
+            echo '```'
+          } > /tmp/comment.md
+          gh pr comment 33 --body-file /tmp/comment.md
+          exit "$status"
