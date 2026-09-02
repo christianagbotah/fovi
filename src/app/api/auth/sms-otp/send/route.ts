@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
 import { otpPurposeSchema } from '@/lib/otp-purpose';
+import { cleanupOtpRetention } from '@/lib/otp-retention';
 import { rateLimit } from '@/lib/rate-limit';
 import { generateSmsOtp } from '@/lib/sms-otp';
 
@@ -53,6 +54,7 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Failed to send OTP. Please try again later.' }, { status: 500 });
     }
 
+    await cleanupOtpRetention();
     return authJson({ success: true, message: 'OTP sent' });
   } catch {
     return authJson({ error: 'An unexpected error occurred' }, { status: 500 });
