@@ -1,21 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 
 export async function GET(request: NextRequest) {
   try {
-    const bearerToken = extractBearerToken(request);
-    const token = bearerToken || request.nextUrl.searchParams.get('token') || '';
+    const token = extractBearerToken(request);
 
     if (!token) {
-      return NextResponse.json({ error: 'No token provided' }, { status: 401 });
+      return authJson({ error: 'No token provided' }, { status: 401 });
     }
 
     const payload = await verifyToken(token);
     if (!payload || payload.type !== 'access') {
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
+      return authJson({ error: 'Invalid or expired token' }, { status: 401 });
     }
 
-    return NextResponse.json({
+    return authJson({
       success: true,
       user: {
         id: payload.sub,
@@ -26,6 +26,6 @@ export async function GET(request: NextRequest) {
       expiresAt: payload.exp,
     });
   } catch {
-    return NextResponse.json({ error: 'Token validation failed' }, { status: 401 });
+    return authJson({ error: 'Token validation failed' }, { status: 401 });
   }
 }
