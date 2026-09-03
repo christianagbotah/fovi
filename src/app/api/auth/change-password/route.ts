@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
-import { hashPassword, verifyPassword } from '@/lib/auth';
+import { extractBearerToken, hashPassword, verifyPassword, verifyToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
   try {
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many password change attempts. Please try again later.' },
         {
           status: 429,
@@ -30,25 +31,28 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = changePasswordSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
-    const userId = request.headers.get('X-User-Id');
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
+    const bearerToken = extractBearerToken(request);
+    if (!bearerToken) {
+      return authJson({ error: 'Authentication required' }, { status: 401 });
     }
+
+    const accessPayload = await verifyToken(bearerToken);
+    if (!accessPayload || accessPayload.type !== 'access') {
+      return authJson({ error: 'Invalid or expired token' }, { status: 401 });
+    }
+    const userId = accessPayload.sub;
 
     const { currentPassword, newPassword } = parsed.data;
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
-      return NextResponse.json(
-        { error: 'Password change is not available in demo mode. This feature requires a database connection.' },
+      return authJson(
+        { error: 'Password change is temporarily unavailable.' },
         { status: 503 }
       );
     }
@@ -58,15 +62,12 @@ export async function POST(request: NextRequest) {
     );
 
     if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+      return authJson({ error: 'Authentication required' }, { status: 401 });
     }
 
     const currentPasswordValid = verifyPassword(currentPassword, user.passwordHash);
     if (!currentPasswordValid) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Current password is incorrect' },
         { status: 401 }
       );
@@ -87,13 +88,13 @@ export async function POST(request: NextRequest) {
     );
 
     if (!changed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Failed to update password. Please try again.' },
         { status: 500 }
       );
     }
 
-    const response = NextResponse.json(
+    const response = authJson(
       {
         success: true,
         message: 'Password has been changed successfully. Please sign in again.',
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
     clearRefreshCookie(response);
     return response;
   } catch {
-    return NextResponse.json(
+    return authJson(
       { error: 'An unexpected error occurred' },
       { status: 500 }
     );
