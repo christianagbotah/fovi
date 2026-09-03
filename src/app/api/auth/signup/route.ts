@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { randomBytes } from 'crypto';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { hashPassword, hashToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -16,10 +17,9 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 3, keyPrefix: 'signup
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many sign-up attempts. Please try again later.' },
         {
           status: 429,
@@ -28,11 +28,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Zod validation
     const body = await request.json();
     const parsed = signupSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
@@ -40,25 +39,21 @@ export async function POST(request: NextRequest) {
 
     const { email, password, name: schemaName } = parsed.data;
     const name = schemaName || body.fullName || '';
-
     const emailLower = email.toLowerCase().trim();
 
     if (isDbAvailable() && db && hasModel('user')) {
-      // Check if user already exists
       const existing = await db.user.findUnique({ where: { email: emailLower } });
       if (existing) {
-        return NextResponse.json(
+        return authJson(
           { error: 'An account with this email already exists' },
           { status: 409 }
         );
       }
 
       const passwordHash = hashPassword(password);
-
-      // Generate email verification token (1 hour expiry)
       const rawVerifyToken = randomBytes(32).toString('hex');
       const hashedVerifyToken = hashToken(rawVerifyToken);
-      const verifyExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      const verifyExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
       const user = await db.user.create({
         data: {
@@ -70,14 +65,12 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // Create default settings
       await db.userSettings.create({
         data: {
           userId: user.id,
         },
       });
 
-      // Auto-create demo trading account (5.5)
       if (hasModel('tradingAccount')) {
         try {
           await db.tradingAccount.create({
@@ -98,7 +91,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Send verification email (fire-and-forget)
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '';
       sendEmail({
         to: emailLower,
@@ -114,7 +106,7 @@ export async function POST(request: NextRequest) {
         text: `Welcome to Fovi! Please verify your email: ${appUrl}/verify-email?token=${rawVerifyToken}`,
       }).catch(() => {});
 
-      return NextResponse.json({
+      return authJson({
         success: true,
         user: {
           id: user.id,
@@ -125,13 +117,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // When database or required models are unavailable, return truthful 503
-    return NextResponse.json(
+    return authJson(
       { error: 'User registration is temporarily unavailable.', code: 'SERVICE_UNAVAILABLE', remediationPhase: 'containment' },
       { status: 503 },
     );
   } catch {
-    return NextResponse.json(
+    return authJson(
       { error: 'An unexpected error occurred' },
       { status: 500 }
     );
