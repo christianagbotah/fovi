@@ -1,6 +1,12 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
+import {
+  clearSmsOtpVerificationFailures,
+  getSmsOtpVerificationAbuseStatus,
+  recordSmsOtpVerificationFailure,
+  type AuthAbuseStatus,
+} from '@/lib/auth-abuse';
 import { authJson } from '@/lib/auth-response';
 import { otpPurposeSchema } from '@/lib/otp-purpose';
 import { rateLimit } from '@/lib/rate-limit';
@@ -14,6 +20,17 @@ const verifySchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 10, keyPrefix: 'sms-otp-verify' });
+
+function otpVerificationAbuseBlockedResponse(status: AuthAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    { error: status.available ? 'Too many verification attempts. Please try again later.' : 'OTP verification service unavailable.' },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,10 +62,22 @@ export async function POST(request: NextRequest) {
 
     if (!userId) return authJson({ error: 'User identifier is required.' }, { status: 400 });
 
+    const abuseIdentifier = `${purpose}:${phoneNumber}`;
+    const abuseStatus = await getSmsOtpVerificationAbuseStatus(abuseIdentifier);
+    if (!abuseStatus.available || abuseStatus.locked) {
+      return otpVerificationAbuseBlockedResponse(abuseStatus);
+    }
+
     const result = await verifySmsOtp(userId, phoneNumber, code, purpose);
     if (!result.success) return authJson({ error: 'Verification failed. Please try again.' }, { status: 500 });
     if (!result.verified) {
+      const failed = await recordSmsOtpVerificationFailure(abuseIdentifier);
+      if (!failed.available || failed.locked) return otpVerificationAbuseBlockedResponse(failed);
       return authJson({ success: true, verified: false, error: 'Invalid or expired OTP code.' }, { status: 400 });
+    }
+
+    if (!(await clearSmsOtpVerificationFailures(abuseIdentifier))) {
+      return authJson({ error: 'OTP verification service unavailable.' }, { status: 503 });
     }
 
     return authJson({ success: true, verified: true });
