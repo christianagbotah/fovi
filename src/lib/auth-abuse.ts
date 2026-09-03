@@ -6,6 +6,8 @@ const TWO_FACTOR_ABUSE_PREFIX = 'auth-abuse:two-factor:';
 const PASSWORD_RECOVERY_ABUSE_PREFIX = 'auth-abuse:password-recovery:';
 const SMS_OTP_ISSUANCE_ABUSE_PREFIX = 'auth-abuse:sms-otp-issuance:';
 const EMAIL_OTP_ISSUANCE_ABUSE_PREFIX = 'auth-abuse:email-otp-issuance:';
+const SMS_OTP_VERIFICATION_ABUSE_PREFIX = 'auth-abuse:sms-otp-verification:';
+const EMAIL_OTP_VERIFICATION_ABUSE_PREFIX = 'auth-abuse:email-otp-verification:';
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const COOLDOWN_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
@@ -196,4 +198,28 @@ export function recordSmsOtpIssuanceRequest(identifier: string): Promise<AuthAbu
 
 export function recordEmailOtpIssuanceRequest(identifier: string): Promise<AuthAbuseStatus> {
   return recordAbuseFailure(EMAIL_OTP_ISSUANCE_ABUSE_PREFIX, identifier);
+}
+
+export function getSmsOtpVerificationAbuseStatus(identifier: string): Promise<AuthAbuseStatus> {
+  return getAbuseStatus(SMS_OTP_VERIFICATION_ABUSE_PREFIX, identifier);
+}
+
+export function recordSmsOtpVerificationFailure(identifier: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(SMS_OTP_VERIFICATION_ABUSE_PREFIX, identifier);
+}
+
+export function clearSmsOtpVerificationFailures(identifier: string): Promise<boolean> {
+  return clearAbuseFailures(SMS_OTP_VERIFICATION_ABUSE_PREFIX, identifier);
+}
+
+export function getEmailOtpVerificationAbuseStatus(identifier: string): Promise<AuthAbuseStatus> {
+  return getAbuseStatus(EMAIL_OTP_VERIFICATION_ABUSE_PREFIX, identifier);
+}
+
+export function recordEmailOtpVerificationFailure(identifier: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(EMAIL_OTP_VERIFICATION_ABUSE_PREFIX, identifier);
+}
+
+export function clearEmailOtpVerificationFailures(identifier: string): Promise<boolean> {
+  return clearAbuseFailures(EMAIL_OTP_VERIFICATION_ABUSE_PREFIX, identifier);
 }

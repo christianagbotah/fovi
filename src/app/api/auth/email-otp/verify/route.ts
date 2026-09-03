@@ -1,6 +1,12 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
+import {
+  clearEmailOtpVerificationFailures,
+  getEmailOtpVerificationAbuseStatus,
+  recordEmailOtpVerificationFailure,
+  type AuthAbuseStatus,
+} from '@/lib/auth-abuse';
 import { authJson } from '@/lib/auth-response';
 import { otpPurposeSchema } from '@/lib/otp-purpose';
 import { rateLimit } from '@/lib/rate-limit';
@@ -14,6 +20,17 @@ const verifySchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 10, keyPrefix: 'email-otp-verify' });
+
+function otpVerificationAbuseBlockedResponse(status: AuthAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    { error: status.available ? 'Too many verification attempts. Please try again later.' : 'OTP verification service unavailable.' },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,10 +60,22 @@ export async function POST(request: NextRequest) {
       userId = parsed.data.userId || null;
     }
 
+    const abuseIdentifier = `${purpose}:${email}`;
+    const abuseStatus = await getEmailOtpVerificationAbuseStatus(abuseIdentifier);
+    if (!abuseStatus.available || abuseStatus.locked) {
+      return otpVerificationAbuseBlockedResponse(abuseStatus);
+    }
+
     const result = await verifyEmailOtp(email, code, purpose, userId);
     if (!result.success) return authJson({ error: 'Verification failed. Please try again.' }, { status: 500 });
     if (!result.verified) {
+      const failed = await recordEmailOtpVerificationFailure(abuseIdentifier);
+      if (!failed.available || failed.locked) return otpVerificationAbuseBlockedResponse(failed);
       return authJson({ success: true, verified: false, error: 'Invalid or expired OTP code.' }, { status: 400 });
+    }
+
+    if (!(await clearEmailOtpVerificationFailures(abuseIdentifier))) {
+      return authJson({ error: 'OTP verification service unavailable.' }, { status: 503 });
     }
 
     return authJson({ success: true, verified: true });
