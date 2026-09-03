@@ -4,6 +4,8 @@ import { db, hasModel, isDbAvailable } from '@/lib/db';
 const SIGNIN_ABUSE_PREFIX = 'auth-abuse:signin:';
 const TWO_FACTOR_ABUSE_PREFIX = 'auth-abuse:two-factor:';
 const PASSWORD_RECOVERY_ABUSE_PREFIX = 'auth-abuse:password-recovery:';
+const SMS_OTP_ISSUANCE_ABUSE_PREFIX = 'auth-abuse:sms-otp-issuance:';
+const EMAIL_OTP_ISSUANCE_ABUSE_PREFIX = 'auth-abuse:email-otp-issuance:';
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const COOLDOWN_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
@@ -186,4 +188,12 @@ export function getPasswordRecoveryAbuseStatus(email: string): Promise<AuthAbuse
 
 export function recordPasswordRecoveryRequest(email: string): Promise<AuthAbuseStatus> {
   return recordAbuseFailure(PASSWORD_RECOVERY_ABUSE_PREFIX, email);
+}
+
+export function recordSmsOtpIssuanceRequest(identifier: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(SMS_OTP_ISSUANCE_ABUSE_PREFIX, identifier);
+}
+
+export function recordEmailOtpIssuanceRequest(identifier: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(EMAIL_OTP_ISSUANCE_ABUSE_PREFIX, identifier);
 }
