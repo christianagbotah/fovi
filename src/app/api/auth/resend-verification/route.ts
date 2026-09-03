@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { randomBytes } from 'crypto';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { hashToken } from '@/lib/auth';
+import { recordEmailVerificationIssuanceRequest } from '@/lib/auth-abuse';
+import { authJson } from '@/lib/auth-response';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -11,12 +13,13 @@ const resendSchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 3, keyPrefix: 'resend-verify' });
+const GENERIC_MESSAGE = 'If the email exists, a verification link has been sent.';
 
 export async function POST(request: NextRequest) {
   try {
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many requests. Please try again later.' },
         {
           status: 429,
@@ -26,34 +29,41 @@ export async function POST(request: NextRequest) {
     }
 
     if (!isDbAvailable() || !db || !hasModel('user')) {
-      return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
+      return authJson({ error: 'Verification service unavailable' }, { status: 503 });
     }
 
     const body = await request.json();
     const parsed = resendSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return authJson(
         { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
 
     const email = parsed.data.email.toLowerCase().trim();
+    const issuance = await recordEmailVerificationIssuanceRequest(email);
+    if (!issuance.available) {
+      return authJson({ error: 'Verification service unavailable' }, { status: 503 });
+    }
+    if (issuance.locked) {
+      return authJson(
+        { error: 'Too many verification requests. Please try again later.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.max(1, Math.ceil(issuance.retryAfterMs / 1000))) },
+        },
+      );
+    }
 
     const user = await db.user.findUnique({ where: { email } });
-    if (!user) {
-      // Don't reveal whether the email exists
-      return NextResponse.json({ success: true, message: 'If the email exists, a verification link has been sent.' });
+    if (!user || user.emailVerified) {
+      return authJson({ success: true, message: GENERIC_MESSAGE });
     }
 
-    if (user.emailVerified) {
-      return NextResponse.json({ success: true, message: 'Email is already verified.' });
-    }
-
-    // Generate new verification token
     const rawVerifyToken = randomBytes(32).toString('hex');
     const hashedVerifyToken = hashToken(rawVerifyToken);
-    const verifyExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    const verifyExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
     await db.user.update({
       where: { id: user.id },
@@ -63,7 +73,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Send verification email (fire-and-forget)
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '';
     sendEmail({
       to: email,
@@ -78,9 +87,9 @@ export async function POST(request: NextRequest) {
       text: `Verify your email: ${appUrl}/verify-email?token=${rawVerifyToken}`,
     }).catch(() => {});
 
-    return NextResponse.json({ success: true, message: 'If the email exists, a verification link has been sent.' });
+    return authJson({ success: true, message: GENERIC_MESSAGE });
   } catch {
-    return NextResponse.json(
+    return authJson(
       { error: 'An unexpected error occurred' },
       { status: 500 }
     );
