@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
+import { recordSmsOtpIssuanceRequest } from '@/lib/auth-abuse';
 import { otpPurposeSchema } from '@/lib/otp-purpose';
 import { cleanupOtpRetention } from '@/lib/otp-retention';
 import { rateLimit } from '@/lib/rate-limit';
@@ -47,6 +48,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (!userId) return authJson({ error: 'User identifier is required.' }, { status: 400 });
+
+    const issuance = await recordSmsOtpIssuanceRequest(`${purpose}:${phoneNumber}`);
+    if (!issuance.available) {
+      return authJson({ error: 'OTP service temporarily unavailable.' }, { status: 503 });
+    }
+    if (issuance.locked) {
+      return authJson({ error: 'Too many OTP requests. Please try again later.' }, {
+        status: 429,
+        headers: { 'Retry-After': String(Math.ceil(issuance.retryAfterMs / 1000)) },
+      });
+    }
 
     const result = await generateSmsOtp(userId, phoneNumber, purpose);
     if (!result.success) {
