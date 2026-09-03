@@ -67,7 +67,8 @@ describe('Phase 3P one-time bound SMS and email OTPs', () => {
     const service = readFileSync(OTP_SERVICE, 'utf8');
 
     expect(send).toContain('userId = payload.sub;');
-    expect(send).toContain('const result = await generateEmailOtp(email, userId, purpose);');
+    expect(send).toContain('const normalizedEmail = email.toLowerCase().trim();');
+    expect(send).toContain('const result = await generateEmailOtp(normalizedEmail, userId, purpose);');
     expect(verify).toContain("code: z.string().regex(/^\\d{6}$/)");
     expect(verify).toContain('userId = payload.sub;');
     expect(verify).toContain('const result = await verifyEmailOtp(email, code, purpose, userId);');
