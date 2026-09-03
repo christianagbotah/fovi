@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod/v4';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
+import { recordEmailOtpIssuanceRequest } from '@/lib/auth-abuse';
 import { otpPurposeSchema } from '@/lib/otp-purpose';
 import { cleanupOtpRetention } from '@/lib/otp-retention';
 import { rateLimit } from '@/lib/rate-limit';
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return authJson({ error: parsed.error.issues[0].message }, { status: 400 });
 
     const { email, purpose } = parsed.data;
+    const normalizedEmail = email.toLowerCase().trim();
     let userId: string | undefined;
 
     if (purpose !== 'signup') {
@@ -43,7 +45,18 @@ export async function POST(request: NextRequest) {
       userId = parsed.data.userId;
     }
 
-    const result = await generateEmailOtp(email, userId, purpose);
+    const issuance = await recordEmailOtpIssuanceRequest(`${purpose}:${normalizedEmail}`);
+    if (!issuance.available) {
+      return authJson({ error: 'OTP service temporarily unavailable.' }, { status: 503 });
+    }
+    if (issuance.locked) {
+      return authJson({ error: 'Too many OTP requests. Please try again later.' }, {
+        status: 429,
+        headers: { 'Retry-After': String(Math.ceil(issuance.retryAfterMs / 1000)) },
+      });
+    }
+
+    const result = await generateEmailOtp(normalizedEmail, userId, purpose);
     if (!result.success) {
       console.error('[Email OTP Send] Failed:', result.error);
       return authJson({ error: 'Failed to send OTP. Please try again later.' }, { status: 500 });
