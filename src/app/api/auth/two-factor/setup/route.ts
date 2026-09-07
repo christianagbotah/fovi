@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { extractBearerToken, verifyToken } from '@/lib/auth';
+import { authJson } from '@/lib/auth-response';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 
@@ -7,10 +9,9 @@ const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: '2fa-se
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit check
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
-      return NextResponse.json(
+      return authJson(
         { error: 'Too many 2FA setup attempts. Please try again later.' },
         {
           status: 429,
@@ -19,32 +20,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use userId from middleware (set from verified JWT)
-    const userId = request.headers.get('X-User-Id');
-    if (!userId) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    const bearerToken = extractBearerToken(request);
+    if (!bearerToken) {
+      return authJson({ error: 'Authentication required' }, { status: 401 });
     }
 
-    // Check if this is a status check (no actual setup)
+    const accessPayload = await verifyToken(bearerToken);
+    if (!accessPayload || accessPayload.type !== 'access') {
+      return authJson({ error: 'Invalid or expired token' }, { status: 401 });
+    }
+    const userId = accessPayload.sub;
+
     const body = await request.json().catch(() => ({}));
     if (body._check) {
       if (!isDbAvailable() || !db || !hasModel('userSettings')) {
-        return NextResponse.json({ twoFactorEnabled: false });
+        return authJson({ twoFactorEnabled: false });
       }
       const settings = await safeDbQuery(() =>
-        db!.userSettings.findUnique({ where: { userId }, select: { twoFactorEnabled: true, twoFactorMethod: true, phoneNumber: true } })
+        db!.userSettings.findUnique({
+          where: { userId },
+          select: { twoFactorEnabled: true, twoFactorMethod: true, phoneNumber: true },
+        })
       );
-      return NextResponse.json({ twoFactorEnabled: settings?.twoFactorEnabled ?? false, method: settings?.twoFactorMethod, phone: settings?.phoneNumber });
+      return authJson({
+        twoFactorEnabled: settings?.twoFactorEnabled ?? false,
+        method: settings?.twoFactorMethod,
+        phone: settings?.phoneNumber,
+      });
     }
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('userSettings')) {
-      return NextResponse.json({ error: '2FA requires a database connection.' }, { status: 503 });
+      return authJson({ error: '2FA requires a database connection.' }, { status: 503 });
     }
 
     const user = await safeDbQuery(() =>
       db!.user.findUnique({ where: { id: userId }, select: { id: true, email: true } })
     );
-    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (!user) return authJson({ error: 'User not found' }, { status: 404 });
 
     const otplib = await import('otplib');
     const QRCode = await import('qrcode');
@@ -63,10 +75,15 @@ export async function POST(request: NextRequest) {
         return true;
       })
     );
-    if (!updated) return NextResponse.json({ error: 'Failed to save 2FA secret.' }, { status: 500 });
+    if (!updated) return authJson({ error: 'Failed to save 2FA secret.' }, { status: 500 });
 
-    return NextResponse.json({ success: true, secret, otpauth_url: otpauthUrl, qr_code_base64: qrCodeBase64 });
+    return authJson({
+      success: true,
+      secret,
+      otpauth_url: otpauthUrl,
+      qr_code_base64: qrCodeBase64,
+    });
   } catch {
-    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
+    return authJson({ error: 'An unexpected error occurred' }, { status: 500 });
   }
 }
