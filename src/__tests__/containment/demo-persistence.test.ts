@@ -15,6 +15,7 @@ const {
   mockTradingAccountCreate,
   mockUserUpsert,
   mockTradingAccountUpsert,
+  mockDbTransaction,
   mockHasModel,
   mockIsDbAvailable,
 } = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const {
   mockTradingAccountCreate: vi.fn(),
   mockUserUpsert: vi.fn(),
   mockTradingAccountUpsert: vi.fn(),
+  mockDbTransaction: vi.fn(),
   mockHasModel: vi.fn((model: string) => {
     const models = ['user', 'userSettings', 'tradingAccount'];
     return models.includes(model);
@@ -48,6 +50,7 @@ vi.mock('@/lib/db', async (importOriginal) => {
         create: mockTradingAccountCreate,
         upsert: mockTradingAccountUpsert,
       },
+      $transaction: mockDbTransaction,
     },
     hasModel: mockHasModel,
     isDbAvailable: mockIsDbAvailable,
@@ -123,6 +126,12 @@ describe('Signup route — demo account created with isDemo:true', () => {
     mockUserCreate.mockResolvedValue({ id: 'user-new-1', email: 'test@example.com', name: 'Test' });
     mockUserSettingsCreate.mockResolvedValue({});
     mockTradingAccountCreate.mockResolvedValue({ id: 'acc-new-1', isDemo: true });
+    mockDbTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+      callback({
+        user: { create: mockUserCreate },
+        userSettings: { create: mockUserSettingsCreate },
+      })
+    );
   });
 
   it('signup creates trading account with isDemo:true in data', async () => {
@@ -134,6 +143,10 @@ describe('Signup route — demo account created with isDemo:true', () => {
 
     const res = await signupPost(req);
     expect(res.status).toBe(200);
+
+    expect(mockDbTransaction).toHaveBeenCalledTimes(1);
+    expect(mockUserCreate).toHaveBeenCalledTimes(1);
+    expect(mockUserSettingsCreate).toHaveBeenCalledTimes(1);
 
     // Verify the tradingAccount.create call includes isDemo:true
     expect(mockTradingAccountCreate).toHaveBeenCalledTimes(1);
