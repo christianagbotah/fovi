@@ -10,6 +10,7 @@ import { z } from 'zod/v4';
 const signupSchema = z.object({
   email: z.email(),
   name: z.string().min(1).optional(),
+  fullName: z.string().min(1).optional(),
   password: z.string().min(8),
 });
 
@@ -28,8 +29,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const parsed = signupSchema.safeParse(body);
+    const parsed = signupSchema.safeParse(await request.json());
     if (!parsed.success) {
       return authJson(
         { error: parsed.error.issues[0].message },
@@ -37,11 +37,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, password, name: schemaName } = parsed.data;
-    const name = schemaName || body.fullName || '';
+    const { email, password, name: schemaName, fullName } = parsed.data;
+    const name = schemaName || fullName || '';
     const emailLower = email.toLowerCase().trim();
 
-    if (isDbAvailable() && db && hasModel('user')) {
+    if (isDbAvailable() && db && hasModel('user') && hasModel('userSettings')) {
       const existing = await db.user.findUnique({ where: { email: emailLower } });
       if (existing) {
         return authJson(
@@ -55,20 +55,24 @@ export async function POST(request: NextRequest) {
       const hashedVerifyToken = hashToken(rawVerifyToken);
       const verifyExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
-      const user = await db.user.create({
-        data: {
-          email: emailLower,
-          name: name.trim(),
-          passwordHash,
-          emailVerifyToken: hashedVerifyToken,
-          emailVerifyExpiry: verifyExpiry,
-        },
-      });
+      const user = await db.$transaction(async (tx) => {
+        const createdUser = await tx.user.create({
+          data: {
+            email: emailLower,
+            name: name.trim(),
+            passwordHash,
+            emailVerifyToken: hashedVerifyToken,
+            emailVerifyExpiry: verifyExpiry,
+          },
+        });
 
-      await db.userSettings.create({
-        data: {
-          userId: user.id,
-        },
+        await tx.userSettings.create({
+          data: {
+            userId: createdUser.id,
+          },
+        });
+
+        return createdUser;
       });
 
       if (hasModel('tradingAccount')) {
