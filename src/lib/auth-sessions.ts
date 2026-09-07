@@ -61,7 +61,11 @@ async function maybeCleanupExpiredAuthSessions(): Promise<void> {
   }
 }
 
-export async function createAuthSession(userId: string, rememberMe: boolean): Promise<IssuedAuthSession> {
+export async function replaceAuthSession(
+  userId: string,
+  rememberMe: boolean,
+  refreshTokenToReplace: string | null,
+): Promise<IssuedAuthSession> {
   if (!authSessionModelAvailable() || !db) {
     throw new Error('AUTH_SESSION_STORE_UNAVAILABLE');
   }
@@ -70,18 +74,40 @@ export async function createAuthSession(userId: string, rememberMe: boolean): Pr
 
   const refreshToken = generateRefreshSecret();
   const expiresAt = new Date(Date.now() + sessionTtlMs(rememberMe));
+  const replacedTokenHash = refreshTokenToReplace ? hashRefreshToken(refreshTokenToReplace) : null;
+  const now = new Date();
 
-  await db.authSession.create({
-    data: {
-      userId,
-      familyId: randomUUID(),
-      tokenHash: hashRefreshToken(refreshToken),
-      rememberMe,
-      expiresAt,
-    },
+  await db.$transaction(async (tx) => {
+    if (replacedTokenHash) {
+      const existingSession = await tx.authSession.findUnique({
+        where: { tokenHash: replacedTokenHash },
+        select: { familyId: true },
+      });
+
+      if (existingSession) {
+        await tx.authSession.updateMany({
+          where: { familyId: existingSession.familyId, revokedAt: null },
+          data: { revokedAt: now, revokeReason: 'REAUTHENTICATED' },
+        });
+      }
+    }
+
+    await tx.authSession.create({
+      data: {
+        userId,
+        familyId: randomUUID(),
+        tokenHash: hashRefreshToken(refreshToken),
+        rememberMe,
+        expiresAt,
+      },
+    });
   });
 
   return { refreshToken, expiresAt, rememberMe };
+}
+
+export async function createAuthSession(userId: string, rememberMe: boolean): Promise<IssuedAuthSession> {
+  return replaceAuthSession(userId, rememberMe, null);
 }
 
 export async function rotateAuthSession(refreshToken: string): Promise<RotatedAuthSession> {
