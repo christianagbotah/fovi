@@ -54,13 +54,33 @@ export async function POST(request: NextRequest) {
 
     const enabled = await safeDbQuery(() =>
       db!.$transaction(async (tx) => {
-        await tx.userSettings.update({ where: { userId }, data: { twoFactorEnabled: true } });
+        const claimed = await tx.userSettings.updateMany({
+          where: {
+            userId,
+            twoFactorEnabled: false,
+            twoFactorSecret: settings.twoFactorSecret,
+          },
+          data: { twoFactorEnabled: true },
+        });
+
+        if (claimed.count !== 1) {
+          return false;
+        }
+
         await revokeTwoFactorChallengesForUser(tx, userId);
         return true;
       })
     );
-    if (!enabled) {
+
+    if (enabled === undefined) {
       return authJson({ error: 'Failed to enable 2FA.' }, { status: 500 });
+    }
+
+    if (!enabled) {
+      return authJson(
+        { error: '2FA settings changed during verification. Restart setup and try again.' },
+        { status: 409 }
+      );
     }
 
     return authJson({ success: true, message: '2FA enabled.' });

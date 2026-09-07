@@ -47,14 +47,30 @@ describe('Phase 3O two-factor challenge supersession and shell scrolling', () =>
     expect(resetRevoke).toBeGreaterThan(resetClaim);
   });
 
-  it('revokes pending challenges on every TOTP configuration transition', () => {
+  it('revokes pending challenges only after successful TOTP configuration transitions', () => {
     const setup = readFileSync(TWO_FACTOR_SETUP, 'utf8');
     const verify = readFileSync(TWO_FACTOR_VERIFY, 'utf8');
     const disable = readFileSync(TWO_FACTOR_DISABLE, 'utf8');
 
-    expect(setup).toContain('update: { twoFactorSecret: secret, twoFactorEnabled: false }');
-    expect(setup).toContain('await revokeTwoFactorChallengesForUser(tx, user.id);');
-    expect(verify).toContain('await revokeTwoFactorChallengesForUser(tx, userId);');
+    const setupClaim = setup.indexOf('const claimed = await tx.userSettings.updateMany({');
+    const setupDisabledPredicate = setup.indexOf('twoFactorEnabled: false,', setupClaim);
+    const setupSecretPredicate = setup.indexOf('twoFactorSecret: existingSettings.twoFactorSecret,', setupClaim);
+    const setupWrite = setup.indexOf('data: { twoFactorSecret: secret },', setupClaim);
+    const setupRevoke = setup.indexOf('await revokeTwoFactorChallengesForUser(tx, user.id);', setupWrite);
+
+    expect(setupClaim).toBeGreaterThan(-1);
+    expect(setupDisabledPredicate).toBeGreaterThan(setupClaim);
+    expect(setupSecretPredicate).toBeGreaterThan(setupDisabledPredicate);
+    expect(setupWrite).toBeGreaterThan(setupSecretPredicate);
+    expect(setupRevoke).toBeGreaterThan(setupWrite);
+
+    const verifyClaim = verify.indexOf('const claimed = await tx.userSettings.updateMany({');
+    const verifyEnable = verify.indexOf('data: { twoFactorEnabled: true },', verifyClaim);
+    const verifyRevoke = verify.indexOf('await revokeTwoFactorChallengesForUser(tx, userId);', verifyEnable);
+    expect(verifyClaim).toBeGreaterThan(-1);
+    expect(verifyEnable).toBeGreaterThan(verifyClaim);
+    expect(verifyRevoke).toBeGreaterThan(verifyEnable);
+
     expect(disable).toContain('await revokeTwoFactorChallengesForUser(tx, userId);');
   });
 

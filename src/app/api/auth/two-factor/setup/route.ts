@@ -64,18 +64,58 @@ export async function POST(request: NextRequest) {
     const otpauthUrl = `otpauth://totp/Fovi:${user.email}?secret=${secret}&issuer=Fovi+AI`;
     const qrCodeBase64 = await QRCode.toDataURL(otpauthUrl);
 
-    const updated = await safeDbQuery(() =>
+    const setupResult = await safeDbQuery(() =>
       db!.$transaction(async (tx) => {
-        await tx.userSettings.upsert({
+        const existingSettings = await tx.userSettings.findUnique({
           where: { userId: user.id },
-          create: { userId: user.id, twoFactorSecret: secret, twoFactorEnabled: false },
-          update: { twoFactorSecret: secret, twoFactorEnabled: false },
+          select: { twoFactorEnabled: true, twoFactorSecret: true },
         });
+
+        if (existingSettings?.twoFactorEnabled) {
+          return 'already_enabled' as const;
+        }
+
+        if (existingSettings) {
+          const claimed = await tx.userSettings.updateMany({
+            where: {
+              userId: user.id,
+              twoFactorEnabled: false,
+              twoFactorSecret: existingSettings.twoFactorSecret,
+            },
+            data: { twoFactorSecret: secret },
+          });
+
+          if (claimed.count !== 1) {
+            return 'conflict' as const;
+          }
+        } else {
+          await tx.userSettings.create({
+            data: { userId: user.id, twoFactorSecret: secret, twoFactorEnabled: false },
+          });
+        }
+
         await revokeTwoFactorChallengesForUser(tx, user.id);
-        return true;
+        return 'updated' as const;
       })
     );
-    if (!updated) return authJson({ error: 'Failed to save 2FA secret.' }, { status: 500 });
+
+    if (setupResult === 'already_enabled') {
+      return authJson(
+        { error: '2FA is already enabled. Disable it with a valid code before starting a new setup.' },
+        { status: 409 }
+      );
+    }
+
+    if (setupResult === 'conflict') {
+      return authJson(
+        { error: '2FA settings changed during setup. Refresh your security settings and try again.' },
+        { status: 409 }
+      );
+    }
+
+    if (setupResult !== 'updated') {
+      return authJson({ error: 'Failed to save 2FA secret.' }, { status: 500 });
+    }
 
     return authJson({
       success: true,
