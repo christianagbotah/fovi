@@ -77,7 +77,7 @@ describe('Phase 3N one-time two-factor challenges', () => {
     expect(route).toContain('Two-factor challenge was already used or expired.');
 
     const consumeIndex = route.indexOf('const consumed = await consumeTwoFactorChallenge');
-    const sessionIndex = route.indexOf('session = await createAuthSession');
+    const sessionIndex = route.indexOf('session = await replaceAuthSession');
     expect(consumeIndex).toBeGreaterThan(-1);
     expect(sessionIndex).toBeGreaterThan(consumeIndex);
   });
