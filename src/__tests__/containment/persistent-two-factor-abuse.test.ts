@@ -44,7 +44,7 @@ describe('Phase 3S persistent two-factor abuse controls', () => {
 
     const consumeIndex = source.indexOf('await consumeTwoFactorChallenge(challengePayload.jti, user.id)');
     const clearIndex = source.indexOf('await clearTwoFactorFailures(user.id)');
-    const sessionIndex = source.indexOf('session = await createAuthSession(user.id, rememberMe);');
+    const sessionIndex = source.indexOf('session = await replaceAuthSession(user.id, rememberMe, existingRefreshToken);');
 
     expect(consumeIndex).toBeGreaterThan(-1);
     expect(clearIndex).toBeGreaterThan(consumeIndex);

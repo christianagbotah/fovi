@@ -2,9 +2,8 @@ import { NextRequest } from 'next/server';
 import { db, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { generateAccessToken, verifyToken } from '@/lib/auth';
 import {
-  createAuthSession,
   readRefreshCookie,
-  revokeAuthSessionFamily,
+  replaceAuthSession,
   setRefreshCookie,
 } from '@/lib/auth-sessions';
 import { authJson } from '@/lib/auth-response';
@@ -112,13 +111,10 @@ export async function POST(request: NextRequest) {
     }
 
     const existingRefreshToken = readRefreshCookie(request);
-    if (existingRefreshToken) {
-      await revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED');
-    }
 
     let session;
     try {
-      session = await createAuthSession(user.id, rememberMe);
+      session = await replaceAuthSession(user.id, rememberMe, existingRefreshToken);
     } catch {
       return authJson({ error: 'Authentication session service unavailable. Please sign in again.' }, { status: 503 });
     }

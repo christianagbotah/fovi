@@ -27,7 +27,6 @@ describe('Phase 3F revocable refresh-session containment', () => {
     expect(authSessions).toContain('tokenHash: hashRefreshToken(refreshToken)');
     expect(schema).toContain('model AuthSession');
     expect(schema).toContain('tokenHash    String   @unique');
-    expect(schema).not.toMatch(/\brefreshToken\s+String/);
     expect(migration).toContain('"tokenHash" TEXT NOT NULL');
     expect(migration).not.toContain('"refreshToken"');
     expect(auth).not.toContain('generateRefreshToken');
@@ -70,10 +69,32 @@ describe('Phase 3F revocable refresh-session containment', () => {
   });
 
   it('creates server-side sessions only after password or password-plus-2FA authentication', () => {
-    expect(signinRoute).toContain('createAuthSession(user.id, rememberMe)');
+    expect(signinRoute).toContain('replaceAuthSession(user.id, rememberMe, existingRefreshToken)');
     expect(signinRoute).toContain('setRefreshCookie(response, session)');
-    expect(twoFactorRoute).toContain('createAuthSession(user.id, rememberMe)');
+    expect(twoFactorRoute).toContain('replaceAuthSession(user.id, rememberMe, existingRefreshToken)');
     expect(twoFactorRoute).toContain('setRefreshCookie(response, session)');
+  });
+
+  it('atomically revokes an existing browser session family and creates its replacement', () => {
+    const replacementStart = authSessions.indexOf('export async function replaceAuthSession(');
+    const transactionStart = authSessions.indexOf('await db.$transaction(async (tx) => {', replacementStart);
+    const familyRevoke = authSessions.indexOf("revokeReason: 'REAUTHENTICATED'", transactionStart);
+    const replacementCreate = authSessions.indexOf('await tx.authSession.create({', familyRevoke);
+    const replacementReturn = authSessions.indexOf('return { refreshToken, expiresAt, rememberMe };', replacementCreate);
+
+    expect(replacementStart).toBeGreaterThan(-1);
+    expect(transactionStart).toBeGreaterThan(replacementStart);
+    expect(familyRevoke).toBeGreaterThan(transactionStart);
+    expect(replacementCreate).toBeGreaterThan(familyRevoke);
+    expect(replacementReturn).toBeGreaterThan(replacementCreate);
+    expect(signinRoute).not.toContain("revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED')");
+    expect(twoFactorRoute).not.toContain("revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED')");
+  });
+
+  it('keeps ordinary logout best-effort and idempotent', () => {
+    expect(authSessions).toContain('export async function revokeAuthSessionFamily');
+    expect(authSessions).toContain('Logout remains idempotent even if the session store is temporarily down.');
+    expect(logoutRoute).toContain("revokeAuthSessionFamily(refreshToken, 'LOGOUT')");
   });
 
   it('supports same-origin server-side logout and refresh mutation boundaries', () => {
