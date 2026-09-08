@@ -80,13 +80,14 @@ describe('Phase 3F revocable refresh-session containment', () => {
     const transactionStart = authSessions.indexOf('await db.$transaction(async (tx) => {', replacementStart);
     const familyRevoke = authSessions.indexOf("revokeReason: 'REAUTHENTICATED'", transactionStart);
     const replacementCreate = authSessions.indexOf('await tx.authSession.create({', familyRevoke);
-    const replacementReturn = authSessions.indexOf('return { refreshToken, expiresAt, rememberMe };', replacementCreate);
+    const replacementReturn = authSessions.indexOf('return { refreshToken, familyId, expiresAt, rememberMe };', replacementCreate);
 
     expect(replacementStart).toBeGreaterThan(-1);
     expect(transactionStart).toBeGreaterThan(replacementStart);
     expect(familyRevoke).toBeGreaterThan(transactionStart);
     expect(replacementCreate).toBeGreaterThan(familyRevoke);
     expect(replacementReturn).toBeGreaterThan(replacementCreate);
+    expect(authSessions).toContain('const familyId = randomUUID();');
     expect(signinRoute).not.toContain("revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED')");
     expect(twoFactorRoute).not.toContain("revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED')");
   });
