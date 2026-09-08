@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
     const otplib = await import('otplib');
     const QRCode = await import('qrcode');
     const secret = otplib.generateSecret();
-    const storedSecret = await sealTwoFactorSecret(secret);
+    const storedSecret = await sealTwoFactorSecret(secret, user.id);
     if (!storedSecret) {
       return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
     }
