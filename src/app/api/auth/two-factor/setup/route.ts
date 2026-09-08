@@ -1,9 +1,14 @@
 import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
-import { extractBearerToken, verifyToken } from '@/lib/auth';
+import { extractBearerToken, verifyPassword, verifyToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
+import { z } from 'zod/v4';
+
+const setupSchema = z.object({
+  currentPassword: z.string().min(1),
+});
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: '2fa-setup' });
 
@@ -49,14 +54,30 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const parsed = setupSchema.safeParse(body);
+    if (!parsed.success) {
+      return authJson(
+        { error: 'Current password is required.' },
+        { status: 400 }
+      );
+    }
+    const { currentPassword } = parsed.data;
+
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('userSettings')) {
       return authJson({ error: '2FA requires a database connection.' }, { status: 503 });
     }
 
     const user = await safeDbQuery(() =>
-      db!.user.findUnique({ where: { id: userId }, select: { id: true, email: true } })
+      db!.user.findUnique({
+        where: { id: userId },
+        select: { id: true, email: true, passwordHash: true },
+      })
     );
     if (!user) return authJson({ error: 'User not found' }, { status: 404 });
+
+    if (!user.passwordHash || !verifyPassword(currentPassword, user.passwordHash)) {
+      return authJson({ error: 'Current password is incorrect.' }, { status: 401 });
+    }
 
     const otplib = await import('otplib');
     const QRCode = await import('qrcode');
