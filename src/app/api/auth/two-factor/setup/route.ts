@@ -9,6 +9,7 @@ import {
   type AuthAbuseStatus,
 } from '@/lib/auth-abuse';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
+import { sealTwoFactorSecret } from '@/lib/two-factor-secret';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -112,6 +113,11 @@ export async function POST(request: NextRequest) {
     const otplib = await import('otplib');
     const QRCode = await import('qrcode');
     const secret = otplib.generateSecret();
+    const storedSecret = await sealTwoFactorSecret(secret);
+    if (!storedSecret) {
+      return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
+    }
+
     const otpauthUrl = `otpauth://totp/Fovi:${user.email}?secret=${secret}&issuer=Fovi+AI`;
     const qrCodeBase64 = await QRCode.toDataURL(otpauthUrl);
 
@@ -133,7 +139,7 @@ export async function POST(request: NextRequest) {
               twoFactorEnabled: false,
               twoFactorSecret: existingSettings.twoFactorSecret,
             },
-            data: { twoFactorSecret: secret },
+            data: { twoFactorSecret: storedSecret },
           });
 
           if (claimed.count !== 1) {
@@ -141,7 +147,7 @@ export async function POST(request: NextRequest) {
           }
         } else {
           await tx.userSettings.create({
-            data: { userId: user.id, twoFactorSecret: secret, twoFactorEnabled: false },
+            data: { userId: user.id, twoFactorSecret: storedSecret, twoFactorEnabled: false },
           });
         }
 
