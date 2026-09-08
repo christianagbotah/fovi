@@ -28,7 +28,13 @@ export async function POST(request: NextRequest) {
 
   const refreshToken = readRefreshCookie(request);
   if (refreshToken) {
-    await revokeAuthSessionFamily(refreshToken, 'LOGOUT');
+    const revocation = await revokeAuthSessionFamily(refreshToken, 'LOGOUT');
+    if (revocation === 'unavailable') {
+      return authJson(
+        { error: 'Unable to confirm server-side logout. Please try again.' },
+        { status: 503 },
+      );
+    }
   }
 
   const response = authJson({ success: true });

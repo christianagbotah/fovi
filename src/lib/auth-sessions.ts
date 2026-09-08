@@ -45,6 +45,8 @@ export type RotatedAuthSession =
   | { status: 'inactive' }
   | { status: 'unavailable' };
 
+export type AuthSessionRevocationResult = 'revoked' | 'not_found' | 'unavailable';
+
 function authSessionModelAvailable(): boolean {
   return isDbAvailable() && !!db && hasModel('authSession');
 }
@@ -205,27 +207,31 @@ export async function rotateAuthSession(refreshToken: string): Promise<RotatedAu
   }
 }
 
-export async function revokeAuthSessionFamily(refreshToken: string, reason = 'LOGOUT'): Promise<void> {
-  if (!authSessionModelAvailable() || !db) return;
+export async function revokeAuthSessionFamily(
+  refreshToken: string,
+  reason = 'LOGOUT',
+): Promise<AuthSessionRevocationResult> {
+  if (!authSessionModelAvailable() || !db) return 'unavailable';
 
   const tokenHash = hashRefreshToken(refreshToken);
   const now = new Date();
 
   try {
-    await db.$transaction(async (tx) => {
+    return await db.$transaction(async (tx) => {
       const session = await tx.authSession.findUnique({
         where: { tokenHash },
         select: { familyId: true },
       });
-      if (!session) return;
+      if (!session) return 'not_found' as const;
 
       await tx.authSession.updateMany({
         where: { familyId: session.familyId, revokedAt: null },
         data: { revokedAt: now, revokeReason: reason },
       });
+      return 'revoked' as const;
     });
   } catch {
-    // Logout remains idempotent even if the session store is temporarily down.
+    return 'unavailable';
   }
 }
 

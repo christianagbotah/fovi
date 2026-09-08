@@ -92,10 +92,22 @@ describe('Phase 3F revocable refresh-session containment', () => {
     expect(twoFactorRoute).not.toContain("revokeAuthSessionFamily(existingRefreshToken, 'REAUTHENTICATED')");
   });
 
-  it('keeps ordinary logout best-effort and idempotent', () => {
-    expect(authSessions).toContain('export async function revokeAuthSessionFamily');
-    expect(authSessions).toContain('Logout remains idempotent even if the session store is temporarily down.');
-    expect(logoutRoute).toContain("revokeAuthSessionFamily(refreshToken, 'LOGOUT')");
+  it('fails closed when logout family revocation cannot be confirmed', () => {
+    expect(authSessions).toContain("export type AuthSessionRevocationResult = 'revoked' | 'not_found' | 'unavailable';");
+    expect(authSessions).toContain("if (!authSessionModelAvailable() || !db) return 'unavailable';");
+    expect(authSessions).toContain("if (!session) return 'not_found' as const;");
+    expect(authSessions).toContain("return 'revoked' as const;");
+    expect(authSessions).toContain("return 'unavailable';");
+
+    const revokeCall = logoutRoute.indexOf("const revocation = await revokeAuthSessionFamily(refreshToken, 'LOGOUT');");
+    const unavailableCheck = logoutRoute.indexOf("if (revocation === 'unavailable')", revokeCall);
+    const unavailableResponse = logoutRoute.indexOf("{ status: 503 }", unavailableCheck);
+    const clearCookie = logoutRoute.indexOf('clearRefreshCookie(response);', unavailableResponse);
+
+    expect(revokeCall).toBeGreaterThan(-1);
+    expect(unavailableCheck).toBeGreaterThan(revokeCall);
+    expect(unavailableResponse).toBeGreaterThan(unavailableCheck);
+    expect(clearCookie).toBeGreaterThan(unavailableResponse);
   });
 
   it('supports same-origin server-side logout and refresh mutation boundaries', () => {
@@ -106,7 +118,7 @@ describe('Phase 3F revocable refresh-session containment', () => {
     expect(proxy).toContain("'/api/auth/logout'");
   });
 
-  it('revokes the server refresh family when the browser signs out', () => {
+  it('dispatches server refresh-family revocation before browser auth cleanup', () => {
     const logoutCall = tradingStore.indexOf("fetch('/api/auth/logout'");
     const tokenCleanup = tradingStore.indexOf("localStorage.removeItem('fovi_token')", logoutCall);
 
