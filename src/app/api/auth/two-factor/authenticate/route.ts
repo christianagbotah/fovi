@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Account deactivated' }, { status: 403 });
     }
 
-    const openedSecret = await openTwoFactorSecret(user.settings.twoFactorSecret);
+    const openedSecret = await openTwoFactorSecret(user.settings.twoFactorSecret, user.id);
     if (!openedSecret) {
       return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
     }
@@ -104,8 +104,8 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Invalid code.' }, { status: 401 });
     }
 
-    if (openedSecret.legacyPlaintext) {
-      const upgradedSecret = await sealTwoFactorSecret(openedSecret.secret);
+    if (openedSecret.needsUpgrade) {
+      const upgradedSecret = await sealTwoFactorSecret(openedSecret.secret, user.id);
       if (!upgradedSecret) {
         return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
       }
@@ -129,9 +129,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Consume only after a valid TOTP and any required legacy-secret upgrade so
-    // transient protection failures do not burn the password-verified challenge.
-    // The atomic UPDATE guarantees only one concurrent successful request can
+    // Consume only after a valid TOTP and any required secret rewrap so transient
+    // protection failures do not burn the password-verified challenge. The
+    // atomic UPDATE guarantees only one concurrent successful request can
     // create a session from this challenge.
     const consumed = await consumeTwoFactorChallenge(challengePayload.jti, user.id);
     if (!consumed) {
