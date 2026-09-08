@@ -14,11 +14,18 @@ const DB_PLACEHOLDER_TOKENS = [
   'host', 'database', 'database_name', 'db_name', 'example',
 ];
 
+/**
+ * Check if a value looks like a placeholder that was never replaced.
+ */
 function isPlaceholder(value: string): boolean {
   const lower = value.toLowerCase().trim();
   return PLACEHOLDER_PREFIXES.some(p => lower.startsWith(p));
 }
 
+/**
+ * Critical secrets must not be empty after trimming and must not contain
+ * accidental leading/trailing whitespace that changes their effective value.
+ */
 function hasInvalidSecretWhitespace(value: string): boolean {
   const trimmed = value.trim();
   return trimmed.length === 0 || trimmed !== value;
@@ -32,11 +39,17 @@ function hasInvalidEncryptionKeyByteLength(value: string): boolean {
   return new TextEncoder().encode(value.slice(0, 32)).byteLength !== 32;
 }
 
+/**
+ * Check if a URL contains an example/placeholder hostname.
+ */
 function isExampleHostname(value: string): boolean {
   const lower = value.toLowerCase();
   return EXAMPLE_HOSTNAMES.some(h => lower.includes(h));
 }
 
+/**
+ * Check if a URL is a valid HTTPS URL.
+ */
 function isValidHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -46,6 +59,10 @@ function isValidHttpsUrl(value: string): boolean {
   }
 }
 
+/**
+ * Parse a PostgreSQL URL and check for placeholder components.
+ * Returns null if valid, or an error string if a placeholder is detected.
+ */
 function detectDatabasePlaceholder(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -81,6 +98,10 @@ function detectDatabasePlaceholder(url: string): string | null {
   }
 }
 
+/**
+ * Validate INTERNAL_SERVICE_SECRET strength.
+ * Returns null if valid, or an error string.
+ */
 function validateInternalServiceSecret(value: string): string | null {
   if (!value || value.trim().length === 0) {
     return 'INTERNAL_SERVICE_SECRET is not set. Generate with: openssl rand -hex 32';
@@ -99,6 +120,11 @@ function validateInternalServiceSecret(value: string): string | null {
 
 type NamedSecret = readonly [name: string, value: string | undefined];
 
+/**
+ * Secret material used for different trust boundaries must be independently
+ * generated. Exact reuse increases compromise blast radius across JWT signing,
+ * password hashing, encrypted-at-rest data, and service authentication.
+ */
 function detectCriticalSecretReuse(secrets: readonly NamedSecret[]): string[] {
   const errors: string[] = [];
 
@@ -130,10 +156,15 @@ export interface ValidationResult {
   warnings: string[];
 }
 
+/**
+ * Validate production environment and return results.
+ * Does NOT exit — caller decides what to do with the result.
+ */
 export function validateProductionEnvDry(): ValidationResult {
   const fatals: string[] = [];
   const warnings: string[] = [];
 
+  // --- DATABASE_URL ---
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     fatals.push('DATABASE_URL is not set. Set it to a valid postgresql:// or postgres:// connection string.');
@@ -144,6 +175,7 @@ export function validateProductionEnvDry(): ValidationResult {
     if (dbErr) fatals.push(dbErr);
   }
 
+  // --- JWT_SECRET ---
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) {
     fatals.push('JWT_SECRET is not set. Generate a strong random secret and set it as an environment variable.');
@@ -155,6 +187,7 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('JWT_SECRET appears to contain a placeholder value. Replace it with a cryptographically random secret.');
   }
 
+  // --- AUTH_PEPPER ---
   const authPepper = process.env.AUTH_PEPPER;
   if (!authPepper) {
     fatals.push('AUTH_PEPPER is not set. Generate a strong random pepper and set it as an environment variable.');
@@ -166,6 +199,7 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('AUTH_PEPPER appears to contain a placeholder value. Replace it with a cryptographically random pepper.');
   }
 
+  // --- ENCRYPTION_KEY ---
   const encryptionKey = process.env.ENCRYPTION_KEY;
   if (!encryptionKey) {
     fatals.push('ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.');
@@ -181,10 +215,14 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('ENCRYPTION_KEY appears to contain a placeholder value. Replace it with a cryptographically random key.');
   }
 
+  // --- INTERNAL_SERVICE_SECRET (>= 32 chars, no placeholders) ---
   const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
   const secretErr = validateInternalServiceSecret(internalSecret || '');
-  if (secretErr) fatals.push(secretErr);
+  if (secretErr) {
+    fatals.push(secretErr);
+  }
 
+  // --- Critical-secret domain separation ---
   fatals.push(...detectCriticalSecretReuse([
     ['JWT_SECRET', jwtSecret],
     ['AUTH_PEPPER', authPepper],
@@ -192,6 +230,7 @@ export function validateProductionEnvDry(): ValidationResult {
     ['INTERNAL_SERVICE_SECRET', internalSecret],
   ]));
 
+  // --- APP_URL (REQUIRED, HTTPS, no example domains) ---
   const appUrl = process.env.APP_URL;
   if (!appUrl) {
     fatals.push('APP_URL is not set. Production requires a valid HTTPS base URL for OAuth callbacks, email links, etc.');
@@ -201,6 +240,7 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('APP_URL contains a known example/placeholder domain. Replace it with the real production domain.');
   }
 
+  // --- NEXT_PUBLIC_APP_URL (REQUIRED, HTTPS, no example domains) ---
   const publicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (!publicAppUrl) {
     fatals.push('NEXT_PUBLIC_APP_URL is not set. Production requires a valid HTTPS base URL for client-side links.');
@@ -210,7 +250,9 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('NEXT_PUBLIC_APP_URL contains a known example/placeholder domain. Replace it with the real production domain.');
   }
 
-  // Phase 2D paper execution containment remains fail-closed in production.
+  // --- Phase 2D paper execution containment ---
+  // The open-fill adapter exists for controlled validation, but production must
+  // not activate it until durable close + restart reconciliation is complete.
   if (isTrueLike(process.env.PAPER_AUTOMATED_EXECUTION_ENABLED)) {
     fatals.push(
       'PAPER_AUTOMATED_EXECUTION_ENABLED must remain false in production until durable close/restart reconciliation is approved.',
@@ -220,6 +262,11 @@ export function validateProductionEnvDry(): ValidationResult {
   return { fatals, warnings };
 }
 
+/**
+ * Validate production environment.
+ * HARD-BLOCKS startup if critical secrets are missing, using insecure
+ * defaults, or malformed. Called from instrumentation.ts.
+ */
 export function validateProductionEnv(): void {
   if (process.env.NODE_ENV !== 'production') return;
 
