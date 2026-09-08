@@ -107,6 +107,7 @@ export interface AccessTokenPayload {
   email: string;
   name?: string;
   role?: string;
+  sid?: string;
   type: 'access';
   iat?: number;
   exp?: number;
@@ -126,15 +127,16 @@ export type JwtPayload = AccessTokenPayload | TwoFactorChallengePayload;
 /**
  * Create a short-lived JWT access token.
  *
- * Phase 3H shortens the bearer-token exposure window now that browser callers
- * are enforced through the refresh-aware boundary. Long-lived continuity is
- * provided by the revocable HttpOnly refresh session, not by the access JWT.
+ * Phase 3AJ binds production access JWTs to the server-side refresh-session
+ * family. Revoking that family therefore invalidates already-issued bearer
+ * tokens immediately instead of waiting for the 15-minute JWT expiry.
  */
 export async function generateAccessToken(
   userId: string,
   email: string,
   name?: string,
-  role?: string
+  role?: string,
+  sessionFamilyId?: string,
 ): Promise<string> {
   const payload: Omit<AccessTokenPayload, 'iat' | 'exp'> = {
     sub: userId,
@@ -143,6 +145,7 @@ export async function generateAccessToken(
   };
   if (name) payload.name = name;
   if (role) payload.role = role;
+  if (sessionFamilyId) payload.sid = sessionFamilyId;
 
   return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
@@ -174,13 +177,57 @@ export async function generateTwoFactorChallenge(
     .sign(getSecretKey());
 }
 
+function allowUnboundTestOrDemoAccess(payload: AccessTokenPayload): boolean {
+  if (process.env.NODE_ENV === 'test') return true;
+  return (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.ENABLE_DEMO_AUTH === 'true' &&
+    payload.sub === 'demo-user' &&
+    payload.email === 'demo@fovi.ai'
+  );
+}
+
+async function isAccessSessionActive(payload: AccessTokenPayload): Promise<boolean> {
+  if (!payload.sid) return allowUnboundTestOrDemoAccess(payload);
+
+  try {
+    const { db, hasModel, isDbAvailable } = await import('@/lib/db');
+    if (!isDbAvailable() || !db || !hasModel('authSession')) return false;
+
+    const session = await db.authSession.findFirst({
+      where: {
+        familyId: payload.sid,
+        userId: payload.sub,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        user: { select: { isActive: true } },
+      },
+    });
+
+    return session?.user.isActive === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Verify a JWT and return its payload, or null if invalid/expired.
+ * Verify a JWT and return its payload, or null if invalid/expired. Production
+ * access tokens additionally require a live matching auth-session family.
  */
 export async function verifyToken(token: string): Promise<JwtPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecretKey());
-    return payload as unknown as JwtPayload;
+    const verified = payload as unknown as JwtPayload;
+
+    if (verified.type === 'access') {
+      if (!verified.sub || !verified.email) return null;
+      if (!(await isAccessSessionActive(verified))) return null;
+    }
+
+    return verified;
   } catch {
     return null;
   }

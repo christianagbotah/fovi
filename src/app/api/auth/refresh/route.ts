@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
     rotation.user.email,
     rotation.user.name || undefined,
     isAdmin ? 'admin' : undefined,
+    rotation.familyId,
   );
 
   const response = authJson({

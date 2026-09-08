@@ -26,6 +26,7 @@ function sessionTtlMs(rememberMe: boolean): number {
 
 export type IssuedAuthSession = {
   refreshToken: string;
+  familyId: string;
   expiresAt: Date;
   rememberMe: boolean;
 };
@@ -34,6 +35,7 @@ export type RotatedAuthSession =
   | {
       status: 'ok';
       refreshToken: string;
+      familyId: string;
       expiresAt: Date;
       rememberMe: boolean;
       user: { id: string; email: string; name: string | null; isActive: boolean };
@@ -73,6 +75,7 @@ export async function replaceAuthSession(
   await maybeCleanupExpiredAuthSessions();
 
   const refreshToken = generateRefreshSecret();
+  const familyId = randomUUID();
   const expiresAt = new Date(Date.now() + sessionTtlMs(rememberMe));
   const replacedTokenHash = refreshTokenToReplace ? hashRefreshToken(refreshTokenToReplace) : null;
   const now = new Date();
@@ -95,7 +98,7 @@ export async function replaceAuthSession(
     await tx.authSession.create({
       data: {
         userId,
-        familyId: randomUUID(),
+        familyId,
         tokenHash: hashRefreshToken(refreshToken),
         rememberMe,
         expiresAt,
@@ -103,7 +106,7 @@ export async function replaceAuthSession(
     });
   });
 
-  return { refreshToken, expiresAt, rememberMe };
+  return { refreshToken, familyId, expiresAt, rememberMe };
 }
 
 export async function createAuthSession(userId: string, rememberMe: boolean): Promise<IssuedAuthSession> {
@@ -191,6 +194,7 @@ export async function rotateAuthSession(refreshToken: string): Promise<RotatedAu
       return {
         status: 'ok' as const,
         refreshToken: nextRefreshToken,
+        familyId: session.familyId,
         expiresAt: session.expiresAt,
         rememberMe: session.rememberMe,
         user: session.user,
