@@ -2,6 +2,8 @@
 // encryption.ts — AES-256-GCM encryption for protected secrets
 // Supports both sync (Node 22+) and async WebCrypto APIs.
 // AES-GCM selects the cipher family; the 32-byte key provides AES-256.
+// Optional additional authenticated data (AAD) can bind ciphertext to
+// an application context without storing that context in the ciphertext.
 //
 // FAIL-CLOSED in production:
 //   - ENCRYPTION_KEY must be set, unpadded, and >= 32 characters before crypto use.
@@ -100,17 +102,31 @@ function getKey(): Uint8Array {
   return _cachedKey;
 }
 
+function buildAesGcmParams(iv: Uint8Array, additionalAuthenticatedData?: string) {
+  if (additionalAuthenticatedData === undefined) {
+    return { name: ALGORITHM, iv };
+  }
+
+  return {
+    name: ALGORITHM,
+    iv,
+    additionalData: new TextEncoder().encode(additionalAuthenticatedData),
+  };
+}
+
 /**
  * Encrypt a plaintext string.
  * Returns base64-encoded WebCrypto AES-GCM output prefixed by the 12-byte IV.
- * WebCrypto appends the authentication tag to the ciphertext.
+ * WebCrypto appends the authentication tag to the ciphertext. When AAD is
+ * provided, the same exact context is required for successful decryption.
  */
-export async function encrypt(plaintext: string): Promise<string> {
+export async function encrypt(plaintext: string, additionalAuthenticatedData?: string): Promise<string> {
   if (!plaintext) return '';
   try {
     const key = getKey();
     const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
     const encoded = new TextEncoder().encode(plaintext);
+    const params = buildAesGcmParams(iv, additionalAuthenticatedData);
 
     let encrypted: ArrayBuffer;
     if (USE_SYNC) {
@@ -118,7 +134,7 @@ export async function encrypt(plaintext: string): Promise<string> {
         'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
       );
       encrypted = (crypto.subtle as any).encryptSync(
-        { name: ALGORITHM, iv },
+        params,
         cryptoKey,
         encoded
       );
@@ -127,7 +143,7 @@ export async function encrypt(plaintext: string): Promise<string> {
         'raw', key.buffer as ArrayBuffer, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
       );
       encrypted = await crypto.subtle.encrypt(
-        { name: ALGORITHM, iv },
+        params,
         cryptoKey,
         encoded
       );
@@ -144,15 +160,17 @@ export async function encrypt(plaintext: string): Promise<string> {
 }
 
 /**
- * Decrypt a base64-encoded encrypted string.
+ * Decrypt a base64-encoded encrypted string. If AAD was used during
+ * encryption, callers must provide the exact same authenticated context.
  */
-export async function decrypt(encryptedBase64: string): Promise<string> {
+export async function decrypt(encryptedBase64: string, additionalAuthenticatedData?: string): Promise<string> {
   if (!encryptedBase64) return '';
   try {
     const key = getKey();
     const data = Buffer.from(encryptedBase64, 'base64');
     const iv = data.subarray(0, IV_LENGTH);
     const ciphertext = data.subarray(IV_LENGTH);
+    const params = buildAesGcmParams(iv, additionalAuthenticatedData);
 
     let decrypted: ArrayBuffer;
     if (USE_SYNC) {
@@ -160,7 +178,7 @@ export async function decrypt(encryptedBase64: string): Promise<string> {
         'raw', key, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
       );
       decrypted = (crypto.subtle as any).decryptSync(
-        { name: ALGORITHM, iv },
+        params,
         cryptoKey,
         ciphertext
       );
@@ -169,7 +187,7 @@ export async function decrypt(encryptedBase64: string): Promise<string> {
         'raw', key.buffer as ArrayBuffer, { name: ALGORITHM }, false, ['encrypt', 'decrypt']
       );
       decrypted = await crypto.subtle.decrypt(
-        { name: ALGORITHM, iv },
+        params,
         cryptoKey,
         ciphertext
       );
