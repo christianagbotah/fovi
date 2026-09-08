@@ -11,6 +11,7 @@ import {
   type AuthAbuseStatus,
 } from '@/lib/auth-abuse';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
+import { openTwoFactorSecret, sealTwoFactorSecret } from '@/lib/two-factor-secret';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -67,17 +68,29 @@ export async function POST(request: NextRequest) {
     const settings = await safeDbQuery(() => db!.userSettings.findUnique({ where: { userId } }));
     if (!settings?.twoFactorSecret) return authJson({ error: '2FA not set up.' }, { status: 400 });
 
+    const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);
+    if (!openedSecret) {
+      return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
+    }
+
     const abuseStatus = await getTwoFactorAbuseStatus(userId);
     if (!abuseStatus.available || abuseStatus.locked) {
       return twoFactorAbuseBlockedResponse(abuseStatus);
     }
 
     const otplib = await import('otplib');
-    const isValid = otplib.verify({ token: code, secret: settings.twoFactorSecret });
+    const isValid = otplib.verify({ token: code, secret: openedSecret.secret });
     if (!isValid) {
       const failed = await recordTwoFactorFailure(userId);
       if (!failed.available || failed.locked) return twoFactorAbuseBlockedResponse(failed);
       return authJson({ error: 'Invalid code.' }, { status: 401 });
+    }
+
+    const nextStoredSecret = openedSecret.legacyPlaintext
+      ? await sealTwoFactorSecret(openedSecret.secret)
+      : settings.twoFactorSecret;
+    if (!nextStoredSecret) {
+      return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
     }
 
     const enabled = await safeDbQuery(() =>
@@ -88,7 +101,7 @@ export async function POST(request: NextRequest) {
             twoFactorEnabled: false,
             twoFactorSecret: settings.twoFactorSecret,
           },
-          data: { twoFactorEnabled: true },
+          data: { twoFactorEnabled: true, twoFactorSecret: nextStoredSecret },
         });
 
         if (claimed.count !== 1) {
