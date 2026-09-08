@@ -6,6 +6,7 @@ let promptInFlight: Promise<string | null> | null = null;
 
 function cleanupDialog(dialog: HTMLDialogElement, input: HTMLInputElement): void {
   input.value = '';
+  if (dialog.open) dialog.close();
   dialog.remove();
 }
 
@@ -117,14 +118,10 @@ async function promptForCurrentPassword(): Promise<string | null> {
       resolve(value);
     };
 
-    cancelButton.addEventListener('click', () => {
-      if (dialog.open) dialog.close();
-      settle(null);
-    });
+    cancelButton.addEventListener('click', () => settle(null));
 
     dialog.addEventListener('cancel', (event) => {
       event.preventDefault();
-      if (dialog.open) dialog.close();
       settle(null);
     });
 
@@ -139,7 +136,6 @@ async function promptForCurrentPassword(): Promise<string | null> {
         input.focus();
         return;
       }
-      if (dialog.open) dialog.close();
       settle(password);
     });
 
