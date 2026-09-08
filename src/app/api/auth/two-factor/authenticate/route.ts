@@ -14,6 +14,7 @@ import {
   type AuthAbuseStatus,
 } from '@/lib/auth-abuse';
 import { consumeTwoFactorChallenge } from '@/lib/two-factor-challenges';
+import { openTwoFactorSecret, sealTwoFactorSecret } from '@/lib/two-factor-secret';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -86,21 +87,52 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Account deactivated' }, { status: 403 });
     }
 
+    const openedSecret = await openTwoFactorSecret(user.settings.twoFactorSecret);
+    if (!openedSecret) {
+      return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
+    }
+
     const abuseStatus = await getTwoFactorAbuseStatus(user.id);
     if (!abuseStatus.available || abuseStatus.locked) {
       return twoFactorAbuseBlockedResponse(abuseStatus);
     }
 
     const otplib = await import('otplib');
-    if (!otplib.verify({ token: code, secret: user.settings.twoFactorSecret })) {
+    if (!otplib.verify({ token: code, secret: openedSecret.secret })) {
       const failed = await recordTwoFactorFailure(user.id);
       if (!failed.available || failed.locked) return twoFactorAbuseBlockedResponse(failed);
       return authJson({ error: 'Invalid code.' }, { status: 401 });
     }
 
-    // Consume only after a valid TOTP so ordinary mistakes do not burn the
-    // password-verified challenge. The atomic UPDATE guarantees only one
-    // concurrent successful request can create a session from this challenge.
+    if (openedSecret.legacyPlaintext) {
+      const upgradedSecret = await sealTwoFactorSecret(openedSecret.secret);
+      if (!upgradedSecret) {
+        return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
+      }
+
+      const upgraded = await safeDbQuery(() =>
+        db!.userSettings.updateMany({
+          where: {
+            userId: user.id,
+            twoFactorEnabled: true,
+            twoFactorSecret: user.settings!.twoFactorSecret,
+          },
+          data: { twoFactorSecret: upgradedSecret },
+        })
+      );
+
+      if (upgraded === undefined) {
+        return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
+      }
+      if (upgraded.count !== 1) {
+        return authJson({ error: '2FA settings changed. Please sign in again.' }, { status: 409 });
+      }
+    }
+
+    // Consume only after a valid TOTP and any required legacy-secret upgrade so
+    // transient protection failures do not burn the password-verified challenge.
+    // The atomic UPDATE guarantees only one concurrent successful request can
+    // create a session from this challenge.
     const consumed = await consumeTwoFactorChallenge(challengePayload.jti, user.id);
     if (!consumed) {
       return authJson({ error: 'Two-factor challenge was already used or expired.' }, { status: 401 });
