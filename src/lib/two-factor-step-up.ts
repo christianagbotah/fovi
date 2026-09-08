@@ -164,6 +164,12 @@ export async function prepareTwoFactorStepUp(
   url: string,
   options: RequestInit,
 ): Promise<{ options: RequestInit; cancelled: boolean }> {
+  // authFetch is a browser boundary, but fail gracefully if it is ever reused
+  // during SSR or a non-DOM test. The API itself still enforces the password.
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return { options, cancelled: false };
+  }
+
   if (!isActualTwoFactorSetup(url, options)) {
     return { options, cancelled: false };
   }
