@@ -32,6 +32,14 @@ function hasInvalidSecretWhitespace(value: string): boolean {
 }
 
 /**
+ * Match the effective key bytes used by src/lib/encryption.ts without changing
+ * the established derivation. WebCrypto AES-256 requires exactly 32 bytes.
+ */
+function hasInvalidEncryptionKeyByteLength(value: string): boolean {
+  return new TextEncoder().encode(value.slice(0, 32)).byteLength !== 32;
+}
+
+/**
  * Check if a URL contains an example/placeholder hostname.
  */
 function isExampleHostname(value: string): boolean {
@@ -199,6 +207,10 @@ export function validateProductionEnvDry(): ValidationResult {
     fatals.push('ENCRYPTION_KEY must not be whitespace-only or contain leading/trailing whitespace.');
   } else if (encryptionKey.length < 32) {
     fatals.push(`ENCRYPTION_KEY is too short (${encryptionKey.length} chars). It must be at least 32 characters.`);
+  } else if (hasInvalidEncryptionKeyByteLength(encryptionKey)) {
+    fatals.push(
+      'ENCRYPTION_KEY effective AES-256 key material must encode to exactly 32 bytes. Use ASCII-safe random secret material.',
+    );
   } else if (isPlaceholder(encryptionKey)) {
     fatals.push('ENCRYPTION_KEY appears to contain a placeholder value. Replace it with a cryptographically random key.');
   }
