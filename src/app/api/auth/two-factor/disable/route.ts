@@ -59,17 +59,34 @@ export async function POST(request: NextRequest) {
 
     const disabled = await safeDbQuery(() =>
       db!.$transaction(async (tx) => {
-        await tx.userSettings.update({
-          where: { userId },
+        const claimed = await tx.userSettings.updateMany({
+          where: {
+            userId,
+            twoFactorEnabled: true,
+            twoFactorSecret: settings.twoFactorSecret,
+          },
           data: { twoFactorEnabled: false, twoFactorSecret: null },
         });
+
+        if (claimed.count !== 1) {
+          return false;
+        }
+
         await revokeAllAuthSessionsForUser(tx, userId, 'TWO_FACTOR_DISABLED');
         await revokeTwoFactorChallengesForUser(tx, userId);
         return true;
       })
     );
-    if (!disabled) {
+
+    if (disabled === undefined) {
       return authJson({ error: 'Failed to disable 2FA.' }, { status: 500 });
+    }
+
+    if (!disabled) {
+      return authJson(
+        { error: '2FA settings changed during disable. Refresh your security settings and try again.' },
+        { status: 409 }
+      );
     }
 
     const response = authJson(
