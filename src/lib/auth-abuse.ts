@@ -1,4 +1,5 @@
 import { createHmac } from 'crypto';
+import type { Prisma } from '@prisma/client';
 import { db, hasModel, isDbAvailable } from '@/lib/db';
 
 const SIGNIN_ABUSE_PREFIX = 'auth-abuse:signin:';
@@ -19,6 +20,8 @@ type StoredSigninAbuseState = {
   windowStartedAt: string;
   lockedUntil: string | null;
 };
+
+type AuthAbuseTransactionClient = Pick<Prisma.TransactionClient, 'systemConfig' | '$queryRaw'>;
 
 export type AuthAbuseStatus =
   | { available: true; locked: false }
@@ -161,6 +164,16 @@ async function clearAbuseFailures(prefix: string, identifier: string): Promise<b
   }
 }
 
+async function clearAbuseFailuresInTransaction(
+  client: AuthAbuseTransactionClient,
+  prefix: string,
+  identifier: string,
+): Promise<void> {
+  const key = abuseKey(prefix, identifier);
+  await client.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  await client.systemConfig.deleteMany({ where: { key } });
+}
+
 export function getSigninAbuseStatus(identifier: string): Promise<AuthAbuseStatus> {
   return getAbuseStatus(SIGNIN_ABUSE_PREFIX, identifier);
 }
@@ -183,6 +196,13 @@ export function recordTwoFactorFailure(userId: string): Promise<AuthAbuseStatus>
 
 export function clearTwoFactorFailures(userId: string): Promise<boolean> {
   return clearAbuseFailures(TWO_FACTOR_ABUSE_PREFIX, userId);
+}
+
+export function clearTwoFactorFailuresInTransaction(
+  client: AuthAbuseTransactionClient,
+  userId: string,
+): Promise<void> {
+  return clearAbuseFailuresInTransaction(client, TWO_FACTOR_ABUSE_PREFIX, userId);
 }
 
 export function getPasswordRecoveryAbuseStatus(email: string): Promise<AuthAbuseStatus> {
