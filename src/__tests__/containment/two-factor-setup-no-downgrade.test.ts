@@ -24,7 +24,7 @@ describe('Phase 3AD 2FA setup no-downgrade boundary', () => {
     const updateIndex = source.indexOf('const claimed = await tx.userSettings.updateMany({', transactionIndex);
     const enabledPredicateIndex = source.indexOf('twoFactorEnabled: false,', updateIndex);
     const secretPredicateIndex = source.indexOf('twoFactorSecret: existingSettings.twoFactorSecret,', updateIndex);
-    const secretWriteIndex = source.indexOf('data: { twoFactorSecret: secret },', updateIndex);
+    const secretWriteIndex = source.indexOf('data: { twoFactorSecret: storedSecret },', updateIndex);
     const revokeIndex = source.indexOf('await revokeTwoFactorChallengesForUser(tx, user.id);', updateIndex);
 
     expect(transactionIndex).toBeGreaterThan(-1);
@@ -37,18 +37,20 @@ describe('Phase 3AD 2FA setup no-downgrade boundary', () => {
     expect(source).toContain("return 'conflict' as const;");
   });
 
-  it('enables 2FA only if the secret is unchanged from the one whose TOTP was verified', () => {
+  it('enables 2FA only if the stored ciphertext is unchanged from the secret whose TOTP was verified', () => {
     const source = readFileSync(VERIFY, 'utf8');
 
-    const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: settings.twoFactorSecret })');
+    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);');
+    const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })', openIndex);
     const transactionIndex = source.indexOf('db!.$transaction(async (tx) => {', verifyIndex);
     const updateIndex = source.indexOf('const claimed = await tx.userSettings.updateMany({', transactionIndex);
     const disabledIndex = source.indexOf('twoFactorEnabled: false,', updateIndex);
     const secretIndex = source.indexOf('twoFactorSecret: settings.twoFactorSecret,', updateIndex);
-    const enableIndex = source.indexOf('data: { twoFactorEnabled: true },', updateIndex);
+    const enableIndex = source.indexOf('data: { twoFactorEnabled: true, twoFactorSecret: nextStoredSecret },', updateIndex);
     const revokeIndex = source.indexOf('await revokeTwoFactorChallengesForUser(tx, userId);', updateIndex);
 
-    expect(verifyIndex).toBeGreaterThan(-1);
+    expect(openIndex).toBeGreaterThan(-1);
+    expect(verifyIndex).toBeGreaterThan(openIndex);
     expect(transactionIndex).toBeGreaterThan(verifyIndex);
     expect(updateIndex).toBeGreaterThan(transactionIndex);
     expect(disabledIndex).toBeGreaterThan(updateIndex);
