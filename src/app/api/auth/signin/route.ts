@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { verifyPassword, generateAccessToken } from '@/lib/auth';
 import {
+  isSameOriginMutation,
   readRefreshCookie,
   replaceAuthSession,
   setRefreshCookie,
@@ -38,6 +39,10 @@ function abuseBlockedResponse(status: SigninAbuseStatus) {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!isSameOriginMutation(request)) {
+      return authJson({ error: 'Cross-origin sign-in is not allowed.' }, { status: 403 });
+    }
+
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return authJson(
