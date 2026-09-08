@@ -4,6 +4,12 @@ import { extractBearerToken, hashPassword, verifyPassword, verifyToken } from '@
 import { authJson } from '@/lib/auth-response';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
+import {
+  clearSensitivePasswordFailuresInTransaction,
+  getSensitivePasswordAbuseStatus,
+  recordSensitivePasswordFailure,
+  type AuthAbuseStatus,
+} from '@/lib/auth-abuse';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -14,6 +20,21 @@ const changePasswordSchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: 'change-pw' });
+
+function sensitivePasswordAbuseBlockedResponse(status: AuthAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    {
+      error: status.available
+        ? 'Too many password verification attempts. Please try again later.'
+        : 'Authentication service unavailable.',
+    },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,7 +71,7 @@ export async function POST(request: NextRequest) {
 
     const { currentPassword, newPassword } = parsed.data;
 
-    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
+    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession') || !hasModel('systemConfig')) {
       return authJson(
         { error: 'Password change is temporarily unavailable.' },
         { status: 503 }
@@ -65,8 +86,17 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Authentication required' }, { status: 401 });
     }
 
+    const abuseStatus = await getSensitivePasswordAbuseStatus(userId);
+    if (!abuseStatus.available || abuseStatus.locked) {
+      return sensitivePasswordAbuseBlockedResponse(abuseStatus);
+    }
+
     const currentPasswordValid = verifyPassword(currentPassword, user.passwordHash);
     if (!currentPasswordValid) {
+      const failed = await recordSensitivePasswordFailure(userId);
+      if (!failed.available || failed.locked) {
+        return sensitivePasswordAbuseBlockedResponse(failed);
+      }
       return authJson(
         { error: 'Current password is incorrect' },
         { status: 401 }
@@ -81,6 +111,7 @@ export async function POST(request: NextRequest) {
           where: { id: user.id },
           data: { passwordHash: newHash },
         });
+        await clearSensitivePasswordFailuresInTransaction(tx, user.id);
         await revokeAllAuthSessionsForUser(tx, user.id, 'PASSWORD_CHANGED');
         await revokeTwoFactorChallengesForUser(tx, user.id);
         return true;
