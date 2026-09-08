@@ -2,6 +2,12 @@ import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { extractBearerToken, verifyPassword, verifyToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
+import {
+  clearSensitivePasswordFailuresInTransaction,
+  getSensitivePasswordAbuseStatus,
+  recordSensitivePasswordFailure,
+  type AuthAbuseStatus,
+} from '@/lib/auth-abuse';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -11,6 +17,21 @@ const setupSchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 5, keyPrefix: '2fa-setup' });
+
+function sensitivePasswordAbuseBlockedResponse(status: AuthAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    {
+      error: status.available
+        ? 'Too many password verification attempts. Please try again later.'
+        : 'Authentication service unavailable.',
+    },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,7 +84,7 @@ export async function POST(request: NextRequest) {
     }
     const { currentPassword } = parsed.data;
 
-    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('userSettings')) {
+    if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('userSettings') || !hasModel('systemConfig')) {
       return authJson({ error: '2FA requires a database connection.' }, { status: 503 });
     }
 
@@ -75,7 +96,16 @@ export async function POST(request: NextRequest) {
     );
     if (!user) return authJson({ error: 'User not found' }, { status: 404 });
 
+    const abuseStatus = await getSensitivePasswordAbuseStatus(userId);
+    if (!abuseStatus.available || abuseStatus.locked) {
+      return sensitivePasswordAbuseBlockedResponse(abuseStatus);
+    }
+
     if (!user.passwordHash || !verifyPassword(currentPassword, user.passwordHash)) {
+      const failed = await recordSensitivePasswordFailure(userId);
+      if (!failed.available || failed.locked) {
+        return sensitivePasswordAbuseBlockedResponse(failed);
+      }
       return authJson({ error: 'Current password is incorrect.' }, { status: 401 });
     }
 
@@ -115,6 +145,7 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        await clearSensitivePasswordFailuresInTransaction(tx, user.id);
         await revokeTwoFactorChallengesForUser(tx, user.id);
         return 'updated' as const;
       })
