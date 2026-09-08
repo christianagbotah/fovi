@@ -4,6 +4,7 @@ import { db, hasModel, isDbAvailable } from '@/lib/db';
 
 const SIGNIN_ABUSE_PREFIX = 'auth-abuse:signin:';
 const TWO_FACTOR_ABUSE_PREFIX = 'auth-abuse:two-factor:';
+const SENSITIVE_PASSWORD_ABUSE_PREFIX = 'auth-abuse:sensitive-password:';
 const PASSWORD_RECOVERY_ABUSE_PREFIX = 'auth-abuse:password-recovery:';
 const SMS_OTP_ISSUANCE_ABUSE_PREFIX = 'auth-abuse:sms-otp-issuance:';
 const EMAIL_OTP_ISSUANCE_ABUSE_PREFIX = 'auth-abuse:email-otp-issuance:';
@@ -203,6 +204,21 @@ export function clearTwoFactorFailuresInTransaction(
   userId: string,
 ): Promise<void> {
   return clearAbuseFailuresInTransaction(client, TWO_FACTOR_ABUSE_PREFIX, userId);
+}
+
+export function getSensitivePasswordAbuseStatus(userId: string): Promise<AuthAbuseStatus> {
+  return getAbuseStatus(SENSITIVE_PASSWORD_ABUSE_PREFIX, userId);
+}
+
+export function recordSensitivePasswordFailure(userId: string): Promise<AuthAbuseStatus> {
+  return recordAbuseFailure(SENSITIVE_PASSWORD_ABUSE_PREFIX, userId);
+}
+
+export function clearSensitivePasswordFailuresInTransaction(
+  client: AuthAbuseTransactionClient,
+  userId: string,
+): Promise<void> {
+  return clearAbuseFailuresInTransaction(client, SENSITIVE_PASSWORD_ABUSE_PREFIX, userId);
 }
 
 export function getPasswordRecoveryAbuseStatus(email: string): Promise<AuthAbuseStatus> {
