@@ -69,14 +69,12 @@ function detectDatabasePlaceholder(url: string): string | null {
       }
     }
 
-    // Also reject if any component starts with known placeholder prefixes
     for (const comp of [username, password, hostname, dbName]) {
       if (isPlaceholder(comp)) {
-        return `DATABASE_URL contains a placeholder component. Replace it with real values.`;
+        return 'DATABASE_URL contains a placeholder component. Replace it with real values.';
       }
     }
 
-    // Reject the exact template from .env.example
     if (
       username === 'user' &&
       password === 'password' &&
@@ -110,6 +108,33 @@ function validateInternalServiceSecret(value: string): string | null {
     return 'INTERNAL_SERVICE_SECRET appears to contain a placeholder value. Replace it with a cryptographically random secret.';
   }
   return null;
+}
+
+type NamedSecret = readonly [name: string, value: string | undefined];
+
+/**
+ * Secret material used for different trust boundaries must be independently
+ * generated. Exact reuse increases compromise blast radius across JWT signing,
+ * password hashing, encrypted-at-rest data, and service authentication.
+ */
+function detectCriticalSecretReuse(secrets: readonly NamedSecret[]): string[] {
+  const errors: string[] = [];
+
+  for (let i = 0; i < secrets.length; i++) {
+    const [leftName, leftValue] = secrets[i];
+    if (!leftValue) continue;
+
+    for (let j = i + 1; j < secrets.length; j++) {
+      const [rightName, rightValue] = secrets[j];
+      if (!rightValue || leftValue !== rightValue) continue;
+
+      errors.push(
+        `${leftName} and ${rightName} must be different independently generated secrets. Do not reuse secret material across trust boundaries.`,
+      );
+    }
+  }
+
+  return errors;
 }
 
 function isTrueLike(value: string | undefined): boolean {
@@ -184,6 +209,14 @@ export function validateProductionEnvDry(): ValidationResult {
   if (secretErr) {
     fatals.push(secretErr);
   }
+
+  // --- Critical-secret domain separation ---
+  fatals.push(...detectCriticalSecretReuse([
+    ['JWT_SECRET', jwtSecret],
+    ['AUTH_PEPPER', authPepper],
+    ['ENCRYPTION_KEY', encryptionKey],
+    ['INTERNAL_SERVICE_SECRET', internalSecret],
+  ]));
 
   // --- APP_URL (REQUIRED, HTTPS, no example domains) ---
   const appUrl = process.env.APP_URL;
