@@ -5,6 +5,7 @@
 //
 // FAIL-CLOSED in production:
 //   - ENCRYPTION_KEY must be set, unpadded, and >= 32 characters before crypto use.
+//   - The existing first-32-character key derivation must encode to exactly 32 bytes.
 //   - Production never falls back to a repository-known key.
 //   - Development/test retains a documented fallback for convenience.
 //   - Validation is deferred until encryption/decryption is invoked so
@@ -31,8 +32,8 @@ let _cachedKey: Uint8Array | null = null;
  * Get the encryption key.
  * Production validation happens at the point of crypto use rather than module
  * import so build-time route discovery does not require runtime secrets.
- * A missing/short/whitespace-padded production key still throws and is
- * converted by encrypt/decrypt into a fail-closed empty result for callers.
+ * A missing/short/whitespace-padded/invalid-byte-length production key throws
+ * and is converted by encrypt/decrypt into a fail-closed empty result.
  */
 function getKey(): Uint8Array {
   if (_cachedKey) return _cachedKey;
@@ -55,7 +56,18 @@ function getKey(): Uint8Array {
       );
     }
 
-    _cachedKey = new TextEncoder().encode(encryptionKey.slice(0, 32));
+    // Preserve the pre-existing derivation for ciphertext compatibility, but
+    // validate the actual bytes WebCrypto will receive. JavaScript string
+    // length counts UTF-16 code units, not UTF-8 bytes, so a multibyte value can
+    // look like 32 characters while producing an invalid AES key length.
+    const keyBytes = new TextEncoder().encode(encryptionKey.slice(0, 32));
+    if (keyBytes.byteLength !== 32) {
+      throw new Error(
+        'ENCRYPTION_KEY effective AES-256 key material must encode to exactly 32 bytes. Use ASCII-safe random secret material.',
+      );
+    }
+
+    _cachedKey = keyBytes;
     return _cachedKey;
   }
 
