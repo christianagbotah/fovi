@@ -9,9 +9,11 @@
 // 6. Bootstrap browser auth from the HttpOnly refresh session after reload
 // 7. Clear memory immediately after server-side credential invalidation
 // 8. Detect x-demo response headers for typed API callers
+// 9. Require an ephemeral password step-up before browser 2FA enrollment
 // ============================================================
 
 import { useTradingStore } from './store/trading-store';
+import { prepareTwoFactorStepUp } from './two-factor-step-up';
 
 let refreshInFlight: Promise<string | null> | null = null;
 
@@ -116,20 +118,32 @@ export async function authFetch(
   url: string,
   options: RequestInit = {},
 ): Promise<Response> {
+  const prepared = await prepareTwoFactorStepUp(url, options);
+  if (prepared.cancelled) {
+    return new Response(
+      JSON.stringify({ error: '2FA setup cancelled.' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      },
+    );
+  }
+
+  const requestOptions = prepared.options;
   const token = getToken();
   let res = await fetch(url, {
-    ...options,
-    headers: requestHeaders(options, token),
-    credentials: options.credentials || 'same-origin',
+    ...requestOptions,
+    headers: requestHeaders(requestOptions, token),
+    credentials: requestOptions.credentials || 'same-origin',
   });
 
   if (res.status === 401 && !isRefreshBoundaryEndpoint(url)) {
     const nextToken = await refreshAccessToken();
     if (nextToken) {
       res = await fetch(url, {
-        ...options,
-        headers: requestHeaders(options, nextToken),
-        credentials: options.credentials || 'same-origin',
+        ...requestOptions,
+        headers: requestHeaders(requestOptions, nextToken),
+        credentials: requestOptions.credentials || 'same-origin',
       });
     }
   }
