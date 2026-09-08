@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     const settings = await safeDbQuery(() => db!.userSettings.findUnique({ where: { userId } }));
     if (!settings?.twoFactorSecret) return authJson({ error: '2FA not set up.' }, { status: 400 });
 
-    const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);
+    const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret, userId);
     if (!openedSecret) {
       return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
     }
@@ -86,8 +86,8 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Invalid code.' }, { status: 401 });
     }
 
-    const nextStoredSecret = openedSecret.legacyPlaintext
-      ? await sealTwoFactorSecret(openedSecret.secret)
+    const nextStoredSecret = openedSecret.needsUpgrade
+      ? await sealTwoFactorSecret(openedSecret.secret, userId)
       : settings.twoFactorSecret;
     if (!nextStoredSecret) {
       return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
