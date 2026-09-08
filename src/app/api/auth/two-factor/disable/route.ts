@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       return authJson({ error: '2FA not enabled.' }, { status: 400 });
     }
 
-    const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);
+    const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret, userId);
     if (!openedSecret) {
       return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
     }
