@@ -27,8 +27,13 @@ describe('Phase 3H short-lived access tokens', () => {
     expect(auth.ACCESS_TOKEN_TTL).toBe('15m');
   });
 
-  it('mints access tokens with an exact 15-minute lifetime', async () => {
-    const token = await auth.generateAccessToken('phase3h-user', 'phase3h@example.test', 'Phase 3H');
+  it('mints access tokens with an exact 15-minute lifetime and session binding', async () => {
+    const token = await auth.generateAccessToken(
+      'phase3h-user',
+      'phase3h@example.test',
+      'phase3h-session-family',
+      'Phase 3H',
+    );
     const payload = decodeJwt(token);
 
     expect(payload.iat).toBeTypeOf('number');
@@ -37,5 +42,6 @@ describe('Phase 3H short-lived access tokens', () => {
     const lifetimeSeconds = (payload.exp as number) - (payload.iat as number);
     expect(lifetimeSeconds).toBe(15 * 60);
     expect(payload.type).toBe('access');
+    expect(payload.sid).toBe('phase3h-session-family');
   });
 });
