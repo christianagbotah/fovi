@@ -1,6 +1,7 @@
 // ============================================================
-// encryption.ts — AES-256-GCM encryption for broker API keys
-// Supports both sync (Node 22+) and async (Node 18+) crypto APIs
+// encryption.ts — AES-256-GCM encryption for protected secrets
+// Supports both sync (Node 22+) and async WebCrypto APIs.
+// AES-GCM selects the cipher family; the 32-byte key provides AES-256.
 //
 // FAIL-CLOSED in production:
 //   - ENCRYPTION_KEY must be set and >= 32 characters.
@@ -9,7 +10,7 @@
 //   - Module throws at load time in production if key is invalid.
 // ============================================================
 
-const ALGORITHM = 'aes-256-gcm';
+const ALGORITHM = 'AES-GCM';
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
@@ -80,7 +81,8 @@ function getKey(): Uint8Array {
 
 /**
  * Encrypt a plaintext string.
- * Returns base64-encoded string: base64(iv + authTag + ciphertext)
+ * Returns base64-encoded WebCrypto AES-GCM output prefixed by the 12-byte IV.
+ * WebCrypto appends the authentication tag to the ciphertext.
  */
 export async function encrypt(plaintext: string): Promise<string> {
   if (!plaintext) return '';
