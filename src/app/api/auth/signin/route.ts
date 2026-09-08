@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
-import { verifyPassword, generateAccessToken } from '@/lib/auth';
+import { generateAccessToken, LOCAL_DEMO_SESSION_FAMILY, verifyPassword } from '@/lib/auth';
 import {
   readRefreshCookie,
   replaceAuthSession,
@@ -146,7 +146,13 @@ export async function POST(request: NextRequest) {
       }
 
       const isAdmin = process.env.ADMIN_EMAIL && emailLower === process.env.ADMIN_EMAIL.toLowerCase();
-      const token = await generateAccessToken(user.id, user.email, user.name || undefined, isAdmin ? 'admin' : undefined);
+      const token = await generateAccessToken(
+        user.id,
+        user.email,
+        session.familyId,
+        user.name || undefined,
+        isAdmin ? 'admin' : undefined,
+      );
 
       const response = authJson({
         success: true,
@@ -166,7 +172,12 @@ export async function POST(request: NextRequest) {
     // receive a persistent refresh session.
     const allowDemoAuth = process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_AUTH === 'true';
     if (allowDemoAuth && emailLower === 'demo@fovi.ai' && password === 'password123') {
-      const token = await generateAccessToken('demo-user', 'demo@fovi.ai', 'Demo User');
+      const token = await generateAccessToken(
+        'demo-user',
+        'demo@fovi.ai',
+        LOCAL_DEMO_SESSION_FAMILY,
+        'Demo User',
+      );
       return authJson({
         success: true,
         user: {

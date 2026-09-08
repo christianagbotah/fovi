@@ -46,7 +46,13 @@ describe('auth token operations with test env', () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    process.env = { ...ORIGINAL_ENV, NODE_ENV: 'test', JWT_SECRET: TEST_JWT, AUTH_PEPPER: TEST_PEPPER };
+    process.env = {
+      ...ORIGINAL_ENV,
+      NODE_ENV: 'test',
+      JWT_SECRET: TEST_JWT,
+      AUTH_PEPPER: TEST_PEPPER,
+      ENABLE_DEMO_AUTH: 'true',
+    };
     auth = await import('@/lib/auth');
   });
 
@@ -54,15 +60,21 @@ describe('auth token operations with test env', () => {
     process.env = ORIGINAL_ENV;
   });
 
-  it('can generate and verify access token', async () => {
-    const token = await auth.generateAccessToken('user1', 'test@test.com');
+  it('can generate and verify an explicitly enabled local demo access token', async () => {
+    const token = await auth.generateAccessToken(
+      'demo-user',
+      'demo@fovi.ai',
+      auth.LOCAL_DEMO_SESSION_FAMILY,
+      'Demo User',
+    );
     expect(token).toBeDefined();
     const payload = await auth.verifyToken(token);
     expect(payload).not.toBeNull();
-    expect(payload!.sub).toBe('user1');
+    expect(payload!.sub).toBe('demo-user');
     expect(payload!.type).toBe('access');
     if (payload && payload.type === 'access') {
-      expect(payload.email).toBe('test@test.com');
+      expect(payload.email).toBe('demo@fovi.ai');
+      expect(payload.sid).toBe(auth.LOCAL_DEMO_SESSION_FAMILY);
     }
   });
 
@@ -77,7 +89,7 @@ describe('auth token operations with test env', () => {
 
   it('rejects token signed with wrong secret', async () => {
     const { SignJWT } = await import('jose');
-    const token = await new SignJWT({ sub: 'user1', type: 'access' })
+    const token = await new SignJWT({ sub: 'user1', type: 'access', sid: 'fake-family' })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime('1h')
@@ -87,8 +99,13 @@ describe('auth token operations with test env', () => {
   });
 
   it('environment changes do not leak between tests', async () => {
-    const token = await auth.generateAccessToken('user_test', 'env@test.com');
+    const token = await auth.generateAccessToken(
+      'demo-user',
+      'demo@fovi.ai',
+      auth.LOCAL_DEMO_SESSION_FAMILY,
+      'Demo User',
+    );
     const payload = await auth.verifyToken(token);
-    expect(payload!.sub).toBe('user_test');
+    expect(payload!.sub).toBe('demo-user');
   });
 });

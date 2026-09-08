@@ -120,7 +120,13 @@ export async function POST(request: NextRequest) {
     }
 
     const isAdmin = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL.toLowerCase();
-    const token = await generateAccessToken(user.id, user.email, user.name || undefined, isAdmin ? 'admin' : undefined);
+    const token = await generateAccessToken(
+      user.id,
+      user.email,
+      session.familyId,
+      user.name || undefined,
+      isAdmin ? 'admin' : undefined,
+    );
 
     const response = authJson({
       success: true,

@@ -53,6 +53,7 @@ const KEY_LENGTH = 64;
 const ITERATIONS = 100000;
 const DIGEST = 'sha512';
 export const ACCESS_TOKEN_TTL = '15m';
+export const LOCAL_DEMO_SESSION_FAMILY = 'local-demo-session';
 
 // Encode the secret as Uint8Array for jose
 function getSecretKey(): Uint8Array {
@@ -105,6 +106,7 @@ export function hashToken(token: string): string {
 export interface AccessTokenPayload {
   sub: string;
   email: string;
+  sid: string;
   name?: string;
   role?: string;
   type: 'access';
@@ -124,21 +126,25 @@ export interface TwoFactorChallengePayload {
 export type JwtPayload = AccessTokenPayload | TwoFactorChallengePayload;
 
 /**
- * Create a short-lived JWT access token.
- *
- * Phase 3H shortens the bearer-token exposure window now that browser callers
- * are enforced through the refresh-aware boundary. Long-lived continuity is
- * provided by the revocable HttpOnly refresh session, not by the access JWT.
+ * Create a short-lived JWT access token bound to one server-side session
+ * family. Revoking that family therefore invalidates the access JWT even if
+ * its cryptographic expiration has not yet elapsed.
  */
 export async function generateAccessToken(
   userId: string,
   email: string,
+  sessionFamilyId: string,
   name?: string,
-  role?: string
+  role?: string,
 ): Promise<string> {
+  if (!sessionFamilyId.trim()) {
+    throw new Error('ACCESS_SESSION_FAMILY_REQUIRED');
+  }
+
   const payload: Omit<AccessTokenPayload, 'iat' | 'exp'> = {
     sub: userId,
     email,
+    sid: sessionFamilyId,
     type: 'access',
   };
   if (name) payload.name = name;
@@ -174,13 +180,58 @@ export async function generateTwoFactorChallenge(
     .sign(getSecretKey());
 }
 
+function isExplicitLocalDemoAccess(payload: AccessTokenPayload): boolean {
+  return (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.ENABLE_DEMO_AUTH === 'true' &&
+    payload.sub === 'demo-user' &&
+    payload.email === 'demo@fovi.ai' &&
+    payload.sid === LOCAL_DEMO_SESSION_FAMILY
+  );
+}
+
 /**
  * Verify a JWT and return its payload, or null if invalid/expired.
+ *
+ * Access tokens additionally require a live server-side session family. The
+ * session lookup is dynamically imported so password/reset and 2FA challenge
+ * JWT operations do not acquire a database dependency simply by importing
+ * this cryptographic utility module.
  */
 export async function verifyToken(token: string): Promise<JwtPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecretKey());
-    return payload as unknown as JwtPayload;
+
+    if (payload.type === 'access') {
+      if (
+        typeof payload.sub !== 'string' ||
+        typeof payload.email !== 'string' ||
+        typeof payload.sid !== 'string' ||
+        payload.sid.length === 0
+      ) {
+        return null;
+      }
+
+      const accessPayload = payload as unknown as AccessTokenPayload;
+      if (isExplicitLocalDemoAccess(accessPayload)) return accessPayload;
+
+      const { isAccessSessionFamilyActive } = await import('@/lib/auth-sessions');
+      if (!(await isAccessSessionFamilyActive(accessPayload.sub, accessPayload.sid))) {
+        return null;
+      }
+
+      return accessPayload;
+    }
+
+    if (
+      payload.type === 'two_factor' &&
+      typeof payload.sub === 'string' &&
+      typeof payload.email === 'string'
+    ) {
+      return payload as unknown as TwoFactorChallengePayload;
+    }
+
+    return null;
   } catch {
     return null;
   }

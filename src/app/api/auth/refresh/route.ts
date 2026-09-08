@@ -57,6 +57,7 @@ export async function POST(request: NextRequest) {
   const token = await generateAccessToken(
     rotation.user.id,
     rotation.user.email,
+    rotation.familyId,
     rotation.user.name || undefined,
     isAdmin ? 'admin' : undefined,
   );

@@ -26,6 +26,7 @@ function sessionTtlMs(rememberMe: boolean): number {
 
 export type IssuedAuthSession = {
   refreshToken: string;
+  familyId: string;
   expiresAt: Date;
   rememberMe: boolean;
 };
@@ -34,6 +35,7 @@ export type RotatedAuthSession =
   | {
       status: 'ok';
       refreshToken: string;
+      familyId: string;
       expiresAt: Date;
       rememberMe: boolean;
       user: { id: string; email: string; name: string | null; isActive: boolean };
@@ -45,6 +47,34 @@ export type RotatedAuthSession =
 
 function authSessionModelAvailable(): boolean {
   return isDbAvailable() && !!db && hasModel('authSession');
+}
+
+/**
+ * Access JWTs are bound to a server-side refresh-session family. A family is
+ * live only while it still has an unrevoked, unexpired session row and the
+ * owning account remains active. Any store failure therefore fails closed.
+ */
+export async function isAccessSessionFamilyActive(userId: string, familyId: string): Promise<boolean> {
+  if (!userId || !familyId || !authSessionModelAvailable() || !db) return false;
+
+  try {
+    const session = await db.authSession.findFirst({
+      where: {
+        userId,
+        familyId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        user: { select: { isActive: true } },
+      },
+    });
+
+    return session?.user.isActive === true;
+  } catch {
+    return false;
+  }
 }
 
 async function maybeCleanupExpiredAuthSessions(): Promise<void> {
@@ -73,6 +103,7 @@ export async function replaceAuthSession(
   await maybeCleanupExpiredAuthSessions();
 
   const refreshToken = generateRefreshSecret();
+  const familyId = randomUUID();
   const expiresAt = new Date(Date.now() + sessionTtlMs(rememberMe));
   const replacedTokenHash = refreshTokenToReplace ? hashRefreshToken(refreshTokenToReplace) : null;
   const now = new Date();
@@ -95,7 +126,7 @@ export async function replaceAuthSession(
     await tx.authSession.create({
       data: {
         userId,
-        familyId: randomUUID(),
+        familyId,
         tokenHash: hashRefreshToken(refreshToken),
         rememberMe,
         expiresAt,
@@ -103,7 +134,7 @@ export async function replaceAuthSession(
     });
   });
 
-  return { refreshToken, expiresAt, rememberMe };
+  return { refreshToken, familyId, expiresAt, rememberMe };
 }
 
 export async function createAuthSession(userId: string, rememberMe: boolean): Promise<IssuedAuthSession> {
@@ -191,6 +222,7 @@ export async function rotateAuthSession(refreshToken: string): Promise<RotatedAu
       return {
         status: 'ok' as const,
         refreshToken: nextRefreshToken,
+        familyId: session.familyId,
         expiresAt: session.expiresAt,
         rememberMe: session.rememberMe,
         user: session.user,
