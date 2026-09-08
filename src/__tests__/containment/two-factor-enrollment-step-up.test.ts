@@ -69,18 +69,28 @@ describe('Phase 3AH password step-up for 2FA enrollment', () => {
   it('prepares step-up before network transmission and reuses the prepared body for an auth refresh retry', () => {
     const source = readFileSync(API_FETCH, 'utf8');
 
-    const prepareIndex = source.indexOf('const prepared = await prepareTwoFactorStepUp(url, options);');
+    const authFetchIndex = source.indexOf('export async function authFetch(');
+    const prepareIndex = source.indexOf(
+      'const prepared = await prepareTwoFactorStepUp(url, options);',
+      authFetchIndex,
+    );
     const cancelIndex = source.indexOf('if (prepared.cancelled) {', prepareIndex);
     const optionsIndex = source.indexOf('const requestOptions = prepared.options;', cancelIndex);
     const firstFetchIndex = source.indexOf('let res = await fetch(url, {', optionsIndex);
-    const retryIndex = source.indexOf('res = await fetch(url, {', firstFetchIndex + 1);
+    const refreshBranchIndex = source.indexOf(
+      'if (res.status === 401 && !isRefreshBoundaryEndpoint(url)) {',
+      firstFetchIndex,
+    );
+    const retryFetchIndex = source.indexOf('res = await fetch(url, {', refreshBranchIndex);
 
-    expect(prepareIndex).toBeGreaterThan(-1);
+    expect(authFetchIndex).toBeGreaterThan(-1);
+    expect(prepareIndex).toBeGreaterThan(authFetchIndex);
     expect(cancelIndex).toBeGreaterThan(prepareIndex);
     expect(optionsIndex).toBeGreaterThan(cancelIndex);
     expect(firstFetchIndex).toBeGreaterThan(optionsIndex);
-    expect(retryIndex).toBeGreaterThan(firstFetchIndex);
-    expect(source.slice(firstFetchIndex, retryIndex)).toContain('...requestOptions');
-    expect(source.slice(retryIndex)).toContain('...requestOptions');
+    expect(refreshBranchIndex).toBeGreaterThan(firstFetchIndex);
+    expect(retryFetchIndex).toBeGreaterThan(refreshBranchIndex);
+    expect(source.slice(firstFetchIndex, refreshBranchIndex)).toContain('...requestOptions');
+    expect(source.slice(retryFetchIndex)).toContain('...requestOptions');
   });
 });
