@@ -37,10 +37,10 @@ describe('Phase 3AD 2FA setup no-downgrade boundary', () => {
     expect(source).toContain("return 'conflict' as const;");
   });
 
-  it('enables 2FA only if the stored ciphertext is unchanged from the secret whose TOTP was verified', () => {
+  it('enables 2FA only if the stored ciphertext is unchanged from the account-bound secret whose TOTP was verified', () => {
     const source = readFileSync(VERIFY, 'utf8');
 
-    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);');
+    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret, userId);');
     const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })', openIndex);
     const transactionIndex = source.indexOf('db!.$transaction(async (tx) => {', verifyIndex);
     const updateIndex = source.indexOf('const claimed = await tx.userSettings.updateMany({', transactionIndex);
