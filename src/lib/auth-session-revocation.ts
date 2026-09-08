@@ -4,6 +4,8 @@ export type AuthSessionRevocationReason =
   | 'PASSWORD_CHANGED'
   | 'PASSWORD_RESET'
   | 'ADMIN_PASSWORD_RESET'
+  | 'TWO_FACTOR_ENABLED'
+  | 'TWO_FACTOR_DISABLED'
   | 'ACCOUNT_INACTIVE';
 
 type AuthSessionClient = Pick<Prisma.TransactionClient, 'authSession'>;

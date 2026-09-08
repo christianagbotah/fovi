@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { db, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { extractBearerToken, verifyToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
+import { clearRefreshCookie } from '@/lib/auth-sessions';
+import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -67,6 +69,7 @@ export async function POST(request: NextRequest) {
           return false;
         }
 
+        await revokeAllAuthSessionsForUser(tx, userId, 'TWO_FACTOR_ENABLED');
         await revokeTwoFactorChallengesForUser(tx, userId);
         return true;
       })
@@ -83,7 +86,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return authJson({ success: true, message: '2FA enabled.' });
+    const response = authJson(
+      {
+        success: true,
+        message: '2FA enabled. Please sign in again.',
+        reauthenticate: true,
+      },
+      { headers: { 'x-auth-session-invalidated': 'true' } },
+    );
+    clearRefreshCookie(response);
+    return response;
   } catch {
     return authJson({ error: 'Unexpected error' }, { status: 500 });
   }
