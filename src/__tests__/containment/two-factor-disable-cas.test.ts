@@ -6,10 +6,10 @@ const ROOT = resolve(__dirname, '../../..');
 const DISABLE = resolve(ROOT, 'src/app/api/auth/two-factor/disable/route.ts');
 
 describe('Phase 3AF 2FA disable compare-and-swap boundary', () => {
-  it('decrypts then verifies the current TOTP before attempting the disable claim', () => {
+  it('decrypts for the authenticated account then verifies the current TOTP before attempting the disable claim', () => {
     const source = readFileSync(DISABLE, 'utf8');
 
-    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);');
+    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret, userId);');
     const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })', openIndex);
     const transactionIndex = source.indexOf('db!.$transaction(async (tx) => {', verifyIndex);
     const claimIndex = source.indexOf('const claimed = await tx.userSettings.updateMany({', transactionIndex);

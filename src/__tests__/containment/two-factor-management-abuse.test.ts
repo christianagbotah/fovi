@@ -22,7 +22,7 @@ describe('Phase 3AG persistent 2FA management abuse controls', () => {
   it.each([
     ['enable', VERIFY],
     ['disable', DISABLE],
-  ] as const)('%s checks persistent account cooldown before verifying decrypted TOTP', (_name, route) => {
+  ] as const)('%s checks persistent account cooldown before verifying account-bound decrypted TOTP', (_name, route) => {
     const source = readFileSync(route, 'utf8');
 
     expect(source).toContain('getTwoFactorAbuseStatus');
@@ -30,7 +30,7 @@ describe('Phase 3AG persistent 2FA management abuse controls', () => {
     expect(source).toContain('clearTwoFactorFailuresInTransaction');
 
     const settingsIndex = source.indexOf('const settings = await safeDbQuery');
-    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);', settingsIndex);
+    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret, userId);', settingsIndex);
     const abuseIndex = source.indexOf('const abuseStatus = await getTwoFactorAbuseStatus(userId);', openIndex);
     const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })', abuseIndex);
 

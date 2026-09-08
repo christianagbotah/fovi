@@ -52,7 +52,7 @@ describe('Phase 3O two-factor challenge supersession and shell scrolling', () =>
     const verify = readFileSync(TWO_FACTOR_VERIFY, 'utf8');
     const disable = readFileSync(TWO_FACTOR_DISABLE, 'utf8');
 
-    const setupSeal = setup.indexOf('const storedSecret = await sealTwoFactorSecret(secret);');
+    const setupSeal = setup.indexOf('const storedSecret = await sealTwoFactorSecret(secret, user.id);');
     const setupClaim = setup.indexOf('const claimed = await tx.userSettings.updateMany({');
     const setupDisabledPredicate = setup.indexOf('twoFactorEnabled: false,', setupClaim);
     const setupSecretPredicate = setup.indexOf('twoFactorSecret: existingSettings.twoFactorSecret,', setupClaim);
