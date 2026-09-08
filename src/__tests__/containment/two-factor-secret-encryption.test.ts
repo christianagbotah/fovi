@@ -21,6 +21,7 @@ describe('Phase 3AK TOTP secret encryption at rest', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     process.env = ORIGINAL_ENV;
   });
 
@@ -35,6 +36,21 @@ describe('Phase 3AK TOTP secret encryption at rest', () => {
 
     const opened = await openTwoFactorSecret(stored!);
     expect(opened).toEqual({ secret: plaintext, legacyPlaintext: false });
+  });
+
+  it('allows production module import without a build-time key but fails closed when crypto is invoked', async () => {
+    process.env = {
+      ...ORIGINAL_ENV,
+      NODE_ENV: 'production',
+    };
+    delete process.env.ENCRYPTION_KEY;
+    vi.resetModules();
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const encryption = await import('@/lib/encryption');
+
+    await expect(encryption.encrypt('protected-at-runtime')).resolves.toBe('');
+    expect(errorSpy).toHaveBeenCalled();
   });
 
   it('marks unprefixed pre-3AK values as legacy plaintext instead of guessing from base64 shape', async () => {
