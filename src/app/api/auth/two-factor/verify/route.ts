@@ -4,6 +4,12 @@ import { extractBearerToken, verifyToken } from '@/lib/auth';
 import { authJson } from '@/lib/auth-response';
 import { clearRefreshCookie } from '@/lib/auth-sessions';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
+import {
+  clearTwoFactorFailuresInTransaction,
+  getTwoFactorAbuseStatus,
+  recordTwoFactorFailure,
+  type AuthAbuseStatus,
+} from '@/lib/auth-abuse';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
@@ -13,6 +19,17 @@ const twoFactorVerifySchema = z.object({
 });
 
 const limiter = rateLimit({ windowMs: 60_000, maxRequests: 10, keyPrefix: '2fa-verify' });
+
+function twoFactorAbuseBlockedResponse(status: AuthAbuseStatus) {
+  const retryAfterMs = status.locked ? status.retryAfterMs : 60_000;
+  return authJson(
+    { error: status.available ? 'Too many 2FA attempts. Please try again later.' : 'Authentication service unavailable.' },
+    {
+      status: status.available ? 429 : 503,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,9 +67,18 @@ export async function POST(request: NextRequest) {
     const settings = await safeDbQuery(() => db!.userSettings.findUnique({ where: { userId } }));
     if (!settings?.twoFactorSecret) return authJson({ error: '2FA not set up.' }, { status: 400 });
 
+    const abuseStatus = await getTwoFactorAbuseStatus(userId);
+    if (!abuseStatus.available || abuseStatus.locked) {
+      return twoFactorAbuseBlockedResponse(abuseStatus);
+    }
+
     const otplib = await import('otplib');
     const isValid = otplib.verify({ token: code, secret: settings.twoFactorSecret });
-    if (!isValid) return authJson({ error: 'Invalid code.' }, { status: 401 });
+    if (!isValid) {
+      const failed = await recordTwoFactorFailure(userId);
+      if (!failed.available || failed.locked) return twoFactorAbuseBlockedResponse(failed);
+      return authJson({ error: 'Invalid code.' }, { status: 401 });
+    }
 
     const enabled = await safeDbQuery(() =>
       db!.$transaction(async (tx) => {
@@ -69,6 +95,7 @@ export async function POST(request: NextRequest) {
           return false;
         }
 
+        await clearTwoFactorFailuresInTransaction(tx, userId);
         await revokeAllAuthSessionsForUser(tx, userId, 'TWO_FACTOR_ENABLED');
         await revokeTwoFactorChallengesForUser(tx, userId);
         return true;
