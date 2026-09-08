@@ -39,17 +39,18 @@ describe('Phase 3AE 2FA session invalidation', () => {
     expect(challengeRevokeIndex).toBeGreaterThan(sessionRevokeIndex);
   });
 
-  it('disables 2FA and revokes all refresh sessions in the same transaction', () => {
+  it('disables 2FA and revokes all refresh sessions after the disable claim succeeds', () => {
     const source = readFileSync(DISABLE, 'utf8');
 
     expect(source).toContain("import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';");
     expect(source).toContain("import { clearRefreshCookie } from '@/lib/auth-sessions';");
 
     const transactionIndex = source.indexOf('db!.$transaction(async (tx) => {');
-    const disableIndex = source.indexOf('await tx.userSettings.update({', transactionIndex);
+    const disableIndex = source.indexOf('const claimed = await tx.userSettings.updateMany({', transactionIndex);
+    const claimCheckIndex = source.indexOf('if (claimed.count !== 1) {', disableIndex);
     const sessionRevokeIndex = source.indexOf(
       "await revokeAllAuthSessionsForUser(tx, userId, 'TWO_FACTOR_DISABLED');",
-      disableIndex,
+      claimCheckIndex,
     );
     const challengeRevokeIndex = source.indexOf(
       'await revokeTwoFactorChallengesForUser(tx, userId);',
@@ -58,7 +59,8 @@ describe('Phase 3AE 2FA session invalidation', () => {
 
     expect(transactionIndex).toBeGreaterThan(-1);
     expect(disableIndex).toBeGreaterThan(transactionIndex);
-    expect(sessionRevokeIndex).toBeGreaterThan(disableIndex);
+    expect(claimCheckIndex).toBeGreaterThan(disableIndex);
+    expect(sessionRevokeIndex).toBeGreaterThan(claimCheckIndex);
     expect(challengeRevokeIndex).toBeGreaterThan(sessionRevokeIndex);
   });
 
