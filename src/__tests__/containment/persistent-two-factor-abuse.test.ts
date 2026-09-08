@@ -19,11 +19,11 @@ describe('Phase 3S persistent two-factor abuse controls', () => {
     expect(source).toContain('return recordAbuseFailure(TWO_FACTOR_ABUSE_PREFIX, userId);');
   });
 
-  it('checks persistent 2FA cooldown after challenge-user binding but before decrypted TOTP verification', () => {
+  it('checks persistent 2FA cooldown after challenge-user binding but before account-bound decrypted TOTP verification', () => {
     const source = readFileSync(TWO_FACTOR_AUTH, 'utf8');
 
     const bindingIndex = source.indexOf("if (!user || user.email !== challengePayload.email)");
-    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(user.settings.twoFactorSecret);', bindingIndex);
+    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(user.settings.twoFactorSecret, user.id);', bindingIndex);
     const abuseIndex = source.indexOf('await getTwoFactorAbuseStatus(user.id)', openIndex);
     const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })', abuseIndex);
 
