@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { generateAccessToken, verifyToken } from '@/lib/auth';
 import {
+  isSameOriginMutation,
   readRefreshCookie,
   replaceAuthSession,
   setRefreshCookie,
@@ -39,6 +40,10 @@ function twoFactorAbuseBlockedResponse(status: AuthAbuseStatus) {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!isSameOriginMutation(request)) {
+      return authJson({ error: 'Cross-origin two-factor authentication is not allowed.' }, { status: 403 });
+    }
+
     const rateResult = limiter(request);
     if (!rateResult.allowed) {
       return authJson(
