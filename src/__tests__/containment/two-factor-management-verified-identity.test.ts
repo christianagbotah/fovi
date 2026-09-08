@@ -13,7 +13,7 @@ describe('Phase 3AA verified 2FA management identity boundary', () => {
   it.each(ROUTES)('%s derives identity only from a verified access bearer token', (_name, route) => {
     const source = readFileSync(route, 'utf8');
 
-    expect(source).toContain("import { extractBearerToken, verifyToken } from '@/lib/auth';");
+    expect(source).toMatch(/import \{[^}]*extractBearerToken[^}]*verifyToken[^}]*\} from '@\/lib\/auth';/);
     expect(source).toContain('const bearerToken = extractBearerToken(request);');
     expect(source).toContain('const accessPayload = await verifyToken(bearerToken);');
     expect(source).toContain("accessPayload.type !== 'access'");
