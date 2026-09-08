@@ -11,6 +11,7 @@ import {
   type AuthAbuseStatus,
 } from '@/lib/auth-abuse';
 import { revokeTwoFactorChallengesForUser } from '@/lib/two-factor-challenges';
+import { openTwoFactorSecret } from '@/lib/two-factor-secret';
 import { rateLimit } from '@/lib/rate-limit';
 import { z } from 'zod/v4';
 
@@ -69,13 +70,18 @@ export async function POST(request: NextRequest) {
       return authJson({ error: '2FA not enabled.' }, { status: 400 });
     }
 
+    const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);
+    if (!openedSecret) {
+      return authJson({ error: '2FA secret protection service unavailable.' }, { status: 503 });
+    }
+
     const abuseStatus = await getTwoFactorAbuseStatus(userId);
     if (!abuseStatus.available || abuseStatus.locked) {
       return twoFactorAbuseBlockedResponse(abuseStatus);
     }
 
     const otplib = await import('otplib');
-    if (!otplib.verify({ token: code, secret: settings.twoFactorSecret })) {
+    if (!otplib.verify({ token: code, secret: openedSecret.secret })) {
       const failed = await recordTwoFactorFailure(userId);
       if (!failed.available || failed.locked) return twoFactorAbuseBlockedResponse(failed);
       return authJson({ error: 'Invalid code.' }, { status: 401 });

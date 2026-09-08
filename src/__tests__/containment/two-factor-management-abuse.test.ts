@@ -22,7 +22,7 @@ describe('Phase 3AG persistent 2FA management abuse controls', () => {
   it.each([
     ['enable', VERIFY],
     ['disable', DISABLE],
-  ] as const)('%s checks persistent account cooldown before verifying TOTP', (_name, route) => {
+  ] as const)('%s checks persistent account cooldown before verifying decrypted TOTP', (_name, route) => {
     const source = readFileSync(route, 'utf8');
 
     expect(source).toContain('getTwoFactorAbuseStatus');
@@ -30,11 +30,13 @@ describe('Phase 3AG persistent 2FA management abuse controls', () => {
     expect(source).toContain('clearTwoFactorFailuresInTransaction');
 
     const settingsIndex = source.indexOf('const settings = await safeDbQuery');
-    const abuseIndex = source.indexOf('const abuseStatus = await getTwoFactorAbuseStatus(userId);', settingsIndex);
-    const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: settings.twoFactorSecret })', abuseIndex);
+    const openIndex = source.indexOf('const openedSecret = await openTwoFactorSecret(settings.twoFactorSecret);', settingsIndex);
+    const abuseIndex = source.indexOf('const abuseStatus = await getTwoFactorAbuseStatus(userId);', openIndex);
+    const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })', abuseIndex);
 
     expect(settingsIndex).toBeGreaterThan(-1);
-    expect(abuseIndex).toBeGreaterThan(settingsIndex);
+    expect(openIndex).toBeGreaterThan(settingsIndex);
+    expect(abuseIndex).toBeGreaterThan(openIndex);
     expect(verifyIndex).toBeGreaterThan(abuseIndex);
   });
 
@@ -43,7 +45,7 @@ describe('Phase 3AG persistent 2FA management abuse controls', () => {
     ['disable', DISABLE],
   ] as const)('%s records invalid TOTP failures against the authenticated user', (_name, route) => {
     const source = readFileSync(route, 'utf8');
-    const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: settings.twoFactorSecret })');
+    const verifyIndex = source.indexOf('otplib.verify({ token: code, secret: openedSecret.secret })');
     const failureIndex = source.indexOf('const failed = await recordTwoFactorFailure(userId);', verifyIndex);
     const invalidIndex = source.indexOf("{ error: 'Invalid code.' }", failureIndex);
 

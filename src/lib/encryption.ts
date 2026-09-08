@@ -1,15 +1,17 @@
 // ============================================================
-// encryption.ts — AES-256-GCM encryption for broker API keys
-// Supports both sync (Node 22+) and async (Node 18+) crypto APIs
+// encryption.ts — AES-256-GCM encryption for protected secrets
+// Supports both sync (Node 22+) and async WebCrypto APIs.
+// AES-GCM selects the cipher family; the 32-byte key provides AES-256.
 //
 // FAIL-CLOSED in production:
-//   - ENCRYPTION_KEY must be set and >= 32 characters.
+//   - ENCRYPTION_KEY must be set and >= 32 characters before crypto use.
 //   - Production never falls back to a repository-known key.
 //   - Development/test retains a documented fallback for convenience.
-//   - Module throws at load time in production if key is invalid.
+//   - Validation is deferred until encryption/decryption is invoked so
+//     production builds can safely import server route modules without secrets.
 // ============================================================
 
-const ALGORITHM = 'aes-256-gcm';
+const ALGORITHM = 'AES-GCM';
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
@@ -23,42 +25,41 @@ if (!USE_SYNC) {
   console.warn('[encryption] Sync crypto API not available — using async fallback. Consider upgrading to Node.js 22+');
 }
 
-// -- Production-safe key loading --
-// In test/development mode, the module loads with a documented fallback.
-// In production, missing or short ENCRYPTION_KEY causes immediate failure —
-// no fallback to a repository-known value.
-
-const _ENCRYPTION_KEY_RAW = process.env.ENCRYPTION_KEY;
-
 let _cachedKey: Uint8Array | null = null;
-
-if (process.env.NODE_ENV === 'production') {
-  if (!_ENCRYPTION_KEY_RAW || _ENCRYPTION_KEY_RAW.length < 32) {
-    const reason = !_ENCRYPTION_KEY_RAW
-      ? 'ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.'
-      : 'ENCRYPTION_KEY is too short (' + _ENCRYPTION_KEY_RAW.length + ' chars). It must be at least 32 characters.';
-    throw new Error(reason);
-  }
-  _cachedKey = new TextEncoder().encode(_ENCRYPTION_KEY_RAW.slice(0, 32));
-}
 
 /**
  * Get the encryption key.
- * In production, this always returns the pre-validated key.
- * In development/test, uses a documented development-only fallback.
+ * Production validation happens at the point of crypto use rather than module
+ * import so build-time route discovery does not require runtime secrets.
+ * A missing/short production key still throws and is converted by encrypt/
+ * decrypt into a fail-closed empty result for their callers.
  */
 function getKey(): Uint8Array {
   if (_cachedKey) return _cachedKey;
 
+  if (process.env.NODE_ENV === 'production') {
+    const encryptionKey = process.env.ENCRYPTION_KEY;
+    if (!encryptionKey || encryptionKey.length < 32) {
+      const reason = !encryptionKey
+        ? 'ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.'
+        : 'ENCRYPTION_KEY is too short (' + encryptionKey.length + ' chars). It must be at least 32 characters.';
+      throw new Error(reason);
+    }
+
+    _cachedKey = new TextEncoder().encode(encryptionKey.slice(0, 32));
+    return _cachedKey;
+  }
+
   // Development/test only: use a documented, repository-known fallback.
-  // This must NEVER be reached in production.
+  // This branch is structurally unreachable in production.
   const DEV_FALLBACK = 'fovi-dev-encryption-key-32b!';
   const source = process.env.APP_SECRET || DEV_FALLBACK;
   if (typeof (crypto.subtle as any).digestSync === 'function') {
     _cachedKey = (crypto.subtle as any).digestSync('SHA-256', new TextEncoder().encode(source)) as Uint8Array;
     return _cachedKey;
   }
-  // Fallback: simple hash for older Node versions
+
+  // Fallback: simple hash for older development/test runtimes.
   const encoder = new TextEncoder();
   const data = encoder.encode(source);
   let hash = 0;
@@ -80,7 +81,8 @@ function getKey(): Uint8Array {
 
 /**
  * Encrypt a plaintext string.
- * Returns base64-encoded string: base64(iv + authTag + ciphertext)
+ * Returns base64-encoded WebCrypto AES-GCM output prefixed by the 12-byte IV.
+ * WebCrypto appends the authentication tag to the ciphertext.
  */
 export async function encrypt(plaintext: string): Promise<string> {
   if (!plaintext) return '';

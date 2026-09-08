@@ -52,20 +52,22 @@ describe('Phase 3O two-factor challenge supersession and shell scrolling', () =>
     const verify = readFileSync(TWO_FACTOR_VERIFY, 'utf8');
     const disable = readFileSync(TWO_FACTOR_DISABLE, 'utf8');
 
+    const setupSeal = setup.indexOf('const storedSecret = await sealTwoFactorSecret(secret);');
     const setupClaim = setup.indexOf('const claimed = await tx.userSettings.updateMany({');
     const setupDisabledPredicate = setup.indexOf('twoFactorEnabled: false,', setupClaim);
     const setupSecretPredicate = setup.indexOf('twoFactorSecret: existingSettings.twoFactorSecret,', setupClaim);
-    const setupWrite = setup.indexOf('data: { twoFactorSecret: secret },', setupClaim);
+    const setupWrite = setup.indexOf('data: { twoFactorSecret: storedSecret },', setupClaim);
     const setupRevoke = setup.indexOf('await revokeTwoFactorChallengesForUser(tx, user.id);', setupWrite);
 
-    expect(setupClaim).toBeGreaterThan(-1);
+    expect(setupSeal).toBeGreaterThan(-1);
+    expect(setupClaim).toBeGreaterThan(setupSeal);
     expect(setupDisabledPredicate).toBeGreaterThan(setupClaim);
     expect(setupSecretPredicate).toBeGreaterThan(setupDisabledPredicate);
     expect(setupWrite).toBeGreaterThan(setupSecretPredicate);
     expect(setupRevoke).toBeGreaterThan(setupWrite);
 
     const verifyClaim = verify.indexOf('const claimed = await tx.userSettings.updateMany({');
-    const verifyEnable = verify.indexOf('data: { twoFactorEnabled: true },', verifyClaim);
+    const verifyEnable = verify.indexOf('data: { twoFactorEnabled: true', verifyClaim);
     const verifyRevoke = verify.indexOf('await revokeTwoFactorChallengesForUser(tx, userId);', verifyEnable);
     expect(verifyClaim).toBeGreaterThan(-1);
     expect(verifyEnable).toBeGreaterThan(verifyClaim);
