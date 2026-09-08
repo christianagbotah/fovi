@@ -11,8 +11,8 @@ import { NextRequest } from 'next/server';
 
 // ── Production-safe secret loading ──
 // In test mode, we allow explicit env vars (set by vitest setup).
-// In production (NODE_ENV=production or any non-test env), missing
-// secrets cause immediate failure — no fallback to repository-known values.
+// In production (NODE_ENV=production or any non-test env), missing,
+// whitespace-only, whitespace-padded, or undersized secrets fail closed.
 
 const PEPPER_RAW = process.env.AUTH_PEPPER;
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
@@ -20,7 +20,13 @@ const JWT_SECRET_RAW = process.env.JWT_SECRET;
 let _pepper: string;
 let _jwtSecret: string;
 
-if (!PEPPER_RAW || PEPPER_RAW.length < 16) {
+function isInvalidCriticalSecret(value: string | undefined, minLength: number): boolean {
+  if (!value) return true;
+  const trimmed = value.trim();
+  return trimmed.length < minLength || trimmed !== value;
+}
+
+if (isInvalidCriticalSecret(PEPPER_RAW, 16)) {
   if (process.env.NODE_ENV === 'test') {
     // In tests, we only accept explicitly set env vars.
     // Tests that need auth must set AUTH_PEPPER in their setup.
@@ -28,25 +34,25 @@ if (!PEPPER_RAW || PEPPER_RAW.length < 16) {
   } else {
     // Production: fail closed. Do not log the secret value.
     throw new Error(
-      'AUTH_PEPPER is not configured or too short (min 16 chars). ' +
+      'AUTH_PEPPER is not configured, is whitespace-padded, or is too short (min 16 chars). ' +
       'Set this environment variable before starting the application.'
     );
   }
 } else {
-  _pepper = PEPPER_RAW;
+  _pepper = PEPPER_RAW!;
 }
 
-if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
+if (isInvalidCriticalSecret(JWT_SECRET_RAW, 32)) {
   if (process.env.NODE_ENV === 'test') {
     _jwtSecret = JWT_SECRET_RAW || '';
   } else {
     throw new Error(
-      'JWT_SECRET is not configured or too short (min 32 chars). ' +
+      'JWT_SECRET is not configured, is whitespace-padded, or is too short (min 32 chars). ' +
       'Set this environment variable before starting the application.'
     );
   }
 } else {
-  _jwtSecret = JWT_SECRET_RAW;
+  _jwtSecret = JWT_SECRET_RAW!;
 }
 
 const KEY_LENGTH = 64;

@@ -23,6 +23,15 @@ function isPlaceholder(value: string): boolean {
 }
 
 /**
+ * Critical secrets must not be empty after trimming and must not contain
+ * accidental leading/trailing whitespace that changes their effective value.
+ */
+function hasInvalidSecretWhitespace(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length === 0 || trimmed !== value;
+}
+
+/**
  * Check if a URL contains an example/placeholder hostname.
  */
 function isExampleHostname(value: string): boolean {
@@ -137,6 +146,8 @@ export function validateProductionEnvDry(): ValidationResult {
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) {
     fatals.push('JWT_SECRET is not set. Generate a strong random secret and set it as an environment variable.');
+  } else if (hasInvalidSecretWhitespace(jwtSecret)) {
+    fatals.push('JWT_SECRET must not be whitespace-only or contain leading/trailing whitespace.');
   } else if (jwtSecret.length < 32) {
     fatals.push(`JWT_SECRET is too short (${jwtSecret.length} chars). It must be at least 32 characters.`);
   } else if (isPlaceholder(jwtSecret)) {
@@ -147,6 +158,8 @@ export function validateProductionEnvDry(): ValidationResult {
   const authPepper = process.env.AUTH_PEPPER;
   if (!authPepper) {
     fatals.push('AUTH_PEPPER is not set. Generate a strong random pepper and set it as an environment variable.');
+  } else if (hasInvalidSecretWhitespace(authPepper)) {
+    fatals.push('AUTH_PEPPER must not be whitespace-only or contain leading/trailing whitespace.');
   } else if (authPepper.length < 16) {
     fatals.push(`AUTH_PEPPER is too short (${authPepper.length} chars). It must be at least 16 characters.`);
   } else if (isPlaceholder(authPepper)) {
@@ -157,6 +170,8 @@ export function validateProductionEnvDry(): ValidationResult {
   const encryptionKey = process.env.ENCRYPTION_KEY;
   if (!encryptionKey) {
     fatals.push('ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.');
+  } else if (hasInvalidSecretWhitespace(encryptionKey)) {
+    fatals.push('ENCRYPTION_KEY must not be whitespace-only or contain leading/trailing whitespace.');
   } else if (encryptionKey.length < 32) {
     fatals.push(`ENCRYPTION_KEY is too short (${encryptionKey.length} chars). It must be at least 32 characters.`);
   } else if (isPlaceholder(encryptionKey)) {

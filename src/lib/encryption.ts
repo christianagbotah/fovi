@@ -4,7 +4,7 @@
 // AES-GCM selects the cipher family; the 32-byte key provides AES-256.
 //
 // FAIL-CLOSED in production:
-//   - ENCRYPTION_KEY must be set and >= 32 characters before crypto use.
+//   - ENCRYPTION_KEY must be set, unpadded, and >= 32 characters before crypto use.
 //   - Production never falls back to a repository-known key.
 //   - Development/test retains a documented fallback for convenience.
 //   - Validation is deferred until encryption/decryption is invoked so
@@ -31,19 +31,28 @@ let _cachedKey: Uint8Array | null = null;
  * Get the encryption key.
  * Production validation happens at the point of crypto use rather than module
  * import so build-time route discovery does not require runtime secrets.
- * A missing/short production key still throws and is converted by encrypt/
- * decrypt into a fail-closed empty result for their callers.
+ * A missing/short/whitespace-padded production key still throws and is
+ * converted by encrypt/decrypt into a fail-closed empty result for callers.
  */
 function getKey(): Uint8Array {
   if (_cachedKey) return _cachedKey;
 
   if (process.env.NODE_ENV === 'production') {
     const encryptionKey = process.env.ENCRYPTION_KEY;
-    if (!encryptionKey || encryptionKey.length < 32) {
-      const reason = !encryptionKey
-        ? 'ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.'
-        : 'ENCRYPTION_KEY is too short (' + encryptionKey.length + ' chars). It must be at least 32 characters.';
-      throw new Error(reason);
+    if (!encryptionKey) {
+      throw new Error(
+        'ENCRYPTION_KEY is not set. Generate a random key (>= 32 chars) and set it as an environment variable.',
+      );
+    }
+
+    const trimmedKey = encryptionKey.trim();
+    if (trimmedKey.length === 0 || trimmedKey !== encryptionKey) {
+      throw new Error('ENCRYPTION_KEY must not be whitespace-only or contain leading/trailing whitespace.');
+    }
+    if (encryptionKey.length < 32) {
+      throw new Error(
+        'ENCRYPTION_KEY is too short (' + encryptionKey.length + ' chars). It must be at least 32 characters.',
+      );
     }
 
     _cachedKey = new TextEncoder().encode(encryptionKey.slice(0, 32));
