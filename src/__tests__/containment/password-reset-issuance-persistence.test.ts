@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 const ROOT = process.cwd();
 const FORGOT = join(ROOT, 'src/app/api/auth/forgot-password/route.ts');
 
+// The issuance boundary is intentionally source-ordered: a recovery email may
+// only be constructed/sent after persistence of the exact token is confirmed.
 describe('Phase 3AS persistence-confirmed password reset issuance', () => {
   it('positively confirms reset-token persistence before sending recovery email', () => {
     const source = readFileSync(FORGOT, 'utf8');
