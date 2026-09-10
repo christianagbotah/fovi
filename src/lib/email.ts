@@ -142,7 +142,7 @@ export async function sendEmail(options: {
   const transporter = await getTransporter();
   if (!transporter) {
     console.warn('[Email] SMTP not configured — email sending skipped.');
-    return { success: true };
+    return { success: false };
   }
 
   try {
@@ -158,6 +158,9 @@ export async function sendEmail(options: {
     return { success: true };
   } catch (err) {
     console.warn('[Email] Failed to send email:', err instanceof Error ? err.message : err);
-    return { success: true }; // Don't expose email failures to the user
+    // Keep transport failures internal, but report them truthfully to callers.
+    // Security-sensitive issuers (for example email OTP) use this result to
+    // avoid persisting credentials that were never delivered.
+    return { success: false };
   }
 }
