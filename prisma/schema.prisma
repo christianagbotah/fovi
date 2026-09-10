@@ -558,7 +558,7 @@ model BrokerConnection {
   isDemo       Boolean  @default(true)
   isActive     Boolean  @default(false)
   connectionState String @default("DISCONNECTED")
-  
+
   // Encrypted credentials - stored as encrypted strings, NEVER plaintext
   encryptedApiKey      String?
   encryptedApiSecret   String?
@@ -566,12 +566,12 @@ model BrokerConnection {
   encryptedToken       String?
   encryptedRefreshToken String?
   credentialVersion    Int      @default(0) // For rotation tracking
-  
+
   lastConnectedAt DateTime?
   lastErrorAt     DateTime?
   errorMessage    String?
   reconnectAttempts Int @default(0)
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -594,23 +594,23 @@ model ExecutionCommandRecord {
   providerId     String
   commandType    String   // PLACE_MARKET, PLACE_PENDING, MODIFY, CANCEL, etc.
   commandPayload Json     // Full command details (NO credentials)
-  
+
   currentState   String   @default("CREATED")
   previousState  String?
-  
+
   // Idempotency tracking
   requestFingerprint String? // SHA-256 of command params
   deduplicateCount   Int     @default(0)
-  
+
   // Execution result
   brokerOrderId    String?
   brokerPositionId String?
   rejectionReason  String?
   fillPrice        Float?
   fillSize         Float?
-  
+
   correlationId String?
-  
+
   createdAt     DateTime @default(now())
   lastUpdatedAt DateTime @updatedAt
   submittedAt   DateTime?
@@ -656,7 +656,7 @@ model KillSwitchRecord {
   deactivatedAt    DateTime?
   activatedBy      String?
   reason           String?
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -677,10 +677,10 @@ model ReconciliationResult {
   mismatchCount   Int      @default(0)
   discrepancies   Json?    // Array of discrepancy objects
   durationMs      Int?
-  
+
   startedAt   DateTime @default(now())
   completedAt DateTime?
-  
+
   connection BrokerConnection @relation(fields: [connectionId], references: [id])
 
   @@index([accountId])
@@ -702,7 +702,7 @@ model BrokerExecutionAudit {
   correlationId  String?
   commandId      String?
   ipMetadata     Json?    // { ip, userAgent, forwardedFor } - NO credentials
-  
+
   timestamp DateTime @default(now())
 
   @@index([tenantId])
@@ -723,7 +723,7 @@ model IdempotencyRecord {
   requestFingerprint String
   state             String   // Current execution state
   deduplicateCount  Int      @default(0)
-  
+
   createdAt   DateTime @default(now())
   lastSeenAt  DateTime @updatedAt
 
@@ -740,7 +740,7 @@ model ProviderEventLog {
   eventType    String   // QUOTE, FILL, REJECT, DISCONNECT, RECONNECT, ERROR
   eventData    Json     // Event details - NO credentials
   sequenceNum  Int?     // For ordering
-  
+
   timestamp DateTime @default(now())
 
   @@index([providerId])
