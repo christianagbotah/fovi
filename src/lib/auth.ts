@@ -209,11 +209,11 @@ async function isAccessSessionActive(payload: AccessTokenPayload): Promise<boole
       },
       select: {
         id: true,
-        user: { select: { isActive: true } },
+        user: { select: { isActive: true, emailVerified: true } },
       },
     });
 
-    return session?.user.isActive === true;
+    return session?.user.isActive === true && session.user.emailVerified === true;
   } catch {
     return false;
   }
