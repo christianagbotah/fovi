@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
-import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { getHubtelSmsConfig, saveHubtelSmsConfig, sendSms } from '@/lib/hubtel';
+import { INTEGRATION_SECRET_REDACTION } from '@/lib/integration-secret';
 
 const saveSchema = z.object({
   clientId: z.string().min(1),
@@ -13,26 +13,26 @@ const testSchema = z.object({
   to: z.string().min(1),
 });
 
-/**
- * Mask a credential string, showing only the first `n` characters.
- */
-function mask(val: string, n = 4): string {
-  if (!val) return '';
-  return val.length <= n ? '****' : val.slice(0, n) + '****';
-}
-
-// GET: return current SMS config (masked)
+// GET: return current SMS config without exposing credential fragments.
 export async function GET() {
   try {
     const config = await getHubtelSmsConfig();
     if (!config) {
       return NextResponse.json({ configured: false });
     }
+
+    const publicConfig = {
+      clientId: config.clientId ? INTEGRATION_SECRET_REDACTION : '',
+      clientSecret: config.clientSecret ? INTEGRATION_SECRET_REDACTION : '',
+      senderName: config.senderName,
+    };
+
+    // `config` matches the current admin UI contract; retain top-level fields
+    // for compatibility with older callers while keeping secrets fully redacted.
     return NextResponse.json({
       configured: true,
-      clientId: mask(config.clientId),
-      clientSecret: mask(config.clientSecret),
-      senderName: config.senderName,
+      config: publicConfig,
+      ...publicConfig,
     });
   } catch {
     return NextResponse.json({ configured: false });
@@ -65,11 +65,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
     }
 
-    await saveHubtelSmsConfig(parsed.data);
+    let configToSave = parsed.data;
+    if (
+      parsed.data.clientId === INTEGRATION_SECRET_REDACTION
+      || parsed.data.clientSecret === INTEGRATION_SECRET_REDACTION
+    ) {
+      const current = await getHubtelSmsConfig();
+      if (!current) {
+        return NextResponse.json({ error: 'Stored Hubtel SMS credentials cannot be opened.' }, { status: 503 });
+      }
+
+      configToSave = {
+        ...parsed.data,
+        clientId: parsed.data.clientId === INTEGRATION_SECRET_REDACTION
+          ? current.clientId
+          : parsed.data.clientId,
+        clientSecret: parsed.data.clientSecret === INTEGRATION_SECRET_REDACTION
+          ? current.clientSecret
+          : parsed.data.clientSecret,
+      };
+    }
+
+    await saveHubtelSmsConfig(configToSave);
 
     return NextResponse.json({ success: true, message: 'Hubtel SMS config saved successfully.' });
   } catch (err) {
     console.error('[Admin] Failed to save Hubtel SMS config:', err);
-    return NextResponse.json({ error: 'Failed to save config.' }, { status: 500 });
+    const unavailable = err instanceof Error && err.message.includes('credential protection is unavailable');
+    return NextResponse.json(
+      { error: unavailable ? 'Credential protection is unavailable.' : 'Failed to save config.' },
+      { status: unavailable ? 503 : 500 },
+    );
   }
 }
