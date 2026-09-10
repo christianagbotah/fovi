@@ -17,7 +17,7 @@
 //   - The registry does NOT store adapter instances — it creates
 //     them on demand (stateless factory pattern)
 //   - Provider capabilities are registered separately in
-//     CapabilityRegistry; this registry knows only the
+//     the canonical provider registry; this registry knows only the
 //     default capabilities for each provider type
 // ============================================================
 
@@ -26,10 +26,14 @@ import type {
   BrokerAdapter,
   BrokerProviderType,
 } from '@/lib/broker-execution/types/broker-adapter';
+import { logSecurityEvent } from '@/lib/trading-policy';
+import {
+  CANONICAL_PROVIDERS,
+  isCanonicalDemoProvider,
+} from '@/lib/broker-execution/providers/canonical-providers';
 import type {
   ProviderCapabilitySet,
 } from '@/lib/broker-execution/types/capabilities';
-import { logSecurityEvent } from '@/lib/trading-policy';
 
 // ── Adapter factory type ──
 
@@ -191,9 +195,12 @@ export class AdapterRegistry {
       throw new AdapterNotRegisteredError(providerType);
     }
 
-    // Phase 1 containment: only demo adapter is functional
-    // Demo is identified by providerId === 'demo'
-    const isDemo = providerId === 'demo';
+    // Phase 1 containment: only explicitly-demo providers are functional.
+    // Demo classification comes from the canonical registry's
+    // EXPLICIT isDemo property — never from the provider id, display
+    // name, or transport family (REST_WS does NOT imply demo).
+    const canonicalDemo = isCanonicalDemoProvider(providerId);
+    const isDemo = canonicalDemo === true;
 
     if (!isDemo) {
       logSecurityEvent({
@@ -226,19 +233,21 @@ export class AdapterRegistry {
   listProviders(): ProviderInfo[] {
     const result: ProviderInfo[] = [];
 
-    for (const registration of this.registrations.values()) {
-      // In Phase 1, only demo is available
-      const isDemo = registration.providerType === 'REST_WS' ||
-        registration.displayName.toLowerCase().includes('demo');
-      const isAvailable = isDemo; // Phase 1: only demo
+    // Provider availability comes from the canonical registry's
+    // EXPLICIT properties — never from display names or transport
+    // families (REST_WS does NOT imply demo).
+    for (const provider of CANONICAL_PROVIDERS) {
+      const isAvailable = provider.isDemo && provider.isConnectionAvailable;
 
       result.push({
-        providerType: registration.providerType,
-        displayName: registration.displayName,
-        description: registration.description,
+        providerType: provider.providerType as BrokerProviderType,
+        displayName: provider.displayName,
+        description: `Canonical provider ${provider.providerId}`,
         isAvailable,
-        blockedReason: isAvailable ? undefined : 'Phase 1 containment: only demo adapter is functional',
-        defaultCapabilities: registration.providerType,
+        blockedReason: isAvailable
+          ? undefined
+          : 'Phase 1 containment: only explicitly-demo providers are functional',
+        defaultCapabilities: provider.providerType as BrokerProviderType,
       });
     }
 
@@ -250,7 +259,7 @@ export class AdapterRegistry {
    *
    * Returns the capability set that was registered alongside
    * the adapter factory. For runtime capabilities of a specific
-   * connection, use CapabilityRegistry.getCapabilities().
+   * connection, use the canonical provider registry.
    *
    * @param providerType - Provider type to query
    * @throws AdapterNotRegisteredError if type not registered

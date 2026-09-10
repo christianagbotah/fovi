@@ -2,162 +2,95 @@
 // GET /api/broker-execution/capabilities
 // Query broker capabilities.
 //
-// Authorization:
-//   - If connectionId is provided, REQUIRES AUTH + ownership verification
-//     before returning connection-specific capabilities.
-//   - If no connectionId (provider-level capabilities only), the route
-//     is accessible to authenticated users but returns only
-//     non-sensitive capability descriptors — no credential data.
-//   - Public provider capabilities (no connectionId) may be available
-//     without authentication for discovery purposes, but we require
-//     auth to be safe.
+// CORRECTION ROUND (defects 2, 8): connection-specific capability
+// queries resolve the connection from PostgreSQL with PROOF of
+// ownership (fail-closed 503 on DB unavailability). Capability
+// descriptors come from the canonical provider registry — the
+// canonical provider registry is the authoritative source
+// optimization only.
 //
+// Authorization:
+//   - connectionId provided → REQUIRES AUTH + ownership
+//   - no connectionId (provider-level) → REQUIRES AUTH
 // Returns capability sets with no credential data.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserIdSync, getUserIdOrNull, authRequiredResponse } from '@/lib/get-user-id';
+import { getUserIdSync, authRequiredResponse } from '@/lib/get-user-id';
 import { logSecurityEvent } from '@/lib/trading-policy';
-import { getCapabilityRegistry } from '@/lib/broker-execution/capabilities/capability-registry';
-import { getAdapterRegistry } from '@/lib/broker-execution/adapter/adapter-registry';
-import type { BrokerProviderType } from '@/lib/broker-execution/types/broker-adapter';
-import { getConnectionManager } from '@/lib/broker-execution/connection/connection-manager';
+import { resolveOwnedConnection } from '@/lib/broker-execution/security/ownership';
+import {
+  getCanonicalProvider,
+  listPublicProviders,
+} from '@/lib/broker-execution/providers/canonical-providers';
+import { persistenceErrorStatus } from '@/lib/broker-execution/persistence/db-access';
 
 export async function GET(req: NextRequest) {
+  // This route always requires authentication (connection-specific
+  // data is user-scoped; provider-level queries are auth-gated).
+  let userId: string;
+  try {
+    userId = getUserIdSync(req);
+  } catch {
+    return authRequiredResponse();
+  }
+
   const { searchParams } = new URL(req.url);
   const connectionId = searchParams.get('connectionId');
-  const providerType = searchParams.get('providerType');
 
-  // If connectionId is provided, authentication + ownership check is REQUIRED
+  // ── Connection-specific capabilities (ownership proven from DB) ──
   if (connectionId) {
-    let userId: string;
-    try {
-      userId = getUserIdSync(req);
-    } catch {
-      return authRequiredResponse();
-    }
-
-    try {
-      // Ownership verification: verify connection belongs to authenticated user
-      const connectionManager = getConnectionManager();
-      const connection = connectionManager.getConnection(connectionId, userId);
-
-      if (!connection) {
-        return NextResponse.json(
-          { error: 'Connection not found.' },
-          { status: 404 },
-        );
-      }
-
-      if (connection.tenantId !== userId) {
+    const resolution = await resolveOwnedConnection(connectionId, userId);
+    if (!resolution.ok) {
+      if (resolution.status === 403) {
         logSecurityEvent({
           eventType: 'CAPABILITY_OWNERSHIP_VIOLATION',
           route: '/api/broker-execution/capabilities',
           userId,
-          reason: `User attempted to query capabilities for connection belonging to tenant=${connection.tenantId}`,
-        });
-        return NextResponse.json(
-          { error: 'Access denied.', code: 'TENANT_ISOLATION_VIOLATION', remediationPhase: 'containment' },
-          { status: 403 },
-        );
-      }
-
-      // Return connection-specific capabilities
-      const capabilityRegistry = getCapabilityRegistry();
-      const capabilities = capabilityRegistry.getCapabilities(connectionId);
-
-      if (!capabilities) {
-        return NextResponse.json({
-          connectionId,
-          capabilities: null,
-          message: 'Capabilities not yet discovered for this connection. Call discover first.',
+          reason: `Cross-tenant capability query denied for connection=${connectionId}`,
         });
       }
-
-      // Convert Map to plain object for JSON serialization (no credential data)
-      const serializedCapabilities: Record<string, unknown> = {};
-      for (const [key, descriptor] of capabilities.providerCapabilities.capabilities) {
-        serializedCapabilities[key] = {
-          supported: descriptor.supported,
-          constraints: descriptor.constraints,
-          limits: descriptor.limits,
-        };
-      }
-
-      const serializedAccountLimits: Record<string, unknown> = {};
-      for (const [key, descriptor] of capabilities.accountSpecificLimits) {
-        serializedAccountLimits[key] = {
-          supported: descriptor.supported,
-          constraints: descriptor.constraints,
-          limits: descriptor.limits,
-        };
-      }
-
-      return NextResponse.json({
-        connectionId,
-        providerCapabilities: {
-          providerId: capabilities.providerCapabilities.providerId,
-          providerType: capabilities.providerCapabilities.providerType,
-          capabilities: serializedCapabilities,
-          discoveredAt: capabilities.providerCapabilities.discoveredAt,
-        },
-        accountSpecificLimits: serializedAccountLimits,
-      });
-    } catch (error) {
-      logSecurityEvent({
-        eventType: 'CAPABILITY_GET_ERROR',
-        route: '/api/broker-execution/capabilities',
-        userId,
-        reason: error instanceof Error ? error.message : 'Unknown error',
-      });
       return NextResponse.json(
-        { error: 'Failed to query capabilities.' },
-        { status: 500 },
+        { error: resolution.message, code: resolution.code, remediationPhase: 'containment' },
+        { status: resolution.status },
       );
     }
-  }
+    const connection = resolution.connection;
 
-  // Provider-level capabilities (no connectionId)
-  // Require authentication for any capability query
-  const userId = getUserIdOrNull(req);
-  if (!userId && providerType) {
-    // If asking for specific provider type, require auth
-    return authRequiredResponse();
-  }
-
-  try {
-    const adapterRegistry = getAdapterRegistry();
-
-    if (providerType) {
-      // Return capabilities for a specific provider type
-      const capabilities = adapterRegistry.getProviderCapabilities(providerType as BrokerProviderType);
-      return NextResponse.json({
-        providerType,
-        capabilities,
-        phase: '1-containment',
-      });
+    // Capabilities from the canonical registry for the
+    // connection's provider (trusted server-side resolution).
+    const provider = getCanonicalProvider(connection.providerId);
+    if (!provider) {
+      return NextResponse.json(
+        { error: 'Provider for this connection is not registered in the canonical registry.' },
+        { status: 404 },
+      );
     }
 
-    // Return all available provider types with their capability status
-    const providers = adapterRegistry.listProviders();
     return NextResponse.json({
-      providers: providers.map((p) => ({
-        providerType: p.providerType,
-        name: p.displayName,
-        isActive: p.isAvailable,
-        blockedReason: p.blockedReason,
-      })),
-      phase: '1-containment',
+      connectionId,
+      providerId: provider.providerId,
+      providerType: provider.providerType,
+      isDemo: provider.isDemo,
+      isDemoSource: 'canonical-registry', // explicit trusted property, never name-derived
+      capabilities: provider.capabilities,
+      note:
+        'Phase 1: capabilities are resolved from the canonical provider registry ' +
+        '(the authoritative source for provider identity and capabilities).',
     });
-  } catch (error) {
-    logSecurityEvent({
-      eventType: 'CAPABILITY_QUERY_ERROR',
-      route: '/api/broker-execution/capabilities',
-      reason: error instanceof Error ? error.message : 'Unknown error',
-    });
-    return NextResponse.json(
-      { error: 'Failed to query capabilities.' },
-      { status: 500 },
-    );
   }
+
+  // ── Provider-level capabilities (authenticated, no private data) ──
+  const providers = listPublicProviders();
+  return NextResponse.json({
+    providers: providers.map((p) => ({
+      providerId: p.providerId,
+      providerType: p.providerType,
+      isDemo: p.isDemo,
+      isConnectionAvailable: p.isConnectionAvailable,
+      capabilities: p.capabilities,
+    })),
+    count: providers.length,
+    phase: '1-containment',
+  });
 }

@@ -176,6 +176,12 @@ export class Reconciler {
     accountId: string,
     providerId: string,
     input?: ReconciliationInput,
+    persistence?: {
+      /** Authenticated user whose ownership was proven server-side. */
+      authenticatedUserId: string;
+      /** The owned PostgreSQL BrokerConnection id. */
+      connectionId: string;
+    },
   ): Promise<ReconciliationResult> {
     const reconciliationId = uuidv4();
     const startTime = Date.now();
@@ -232,8 +238,26 @@ export class Reconciler {
         mismatchCount,
       };
 
-      // Persist result for audit
-      await this.store.saveResult(accountId, providerId, result);
+      // Persist result for audit (ownership-proven, fail-closed)
+      if (persistence) {
+        await this.store.saveResult({
+          authenticatedUserId: persistence.authenticatedUserId,
+          connectionId: persistence.connectionId,
+          accountId,
+          outcome: {
+            accountId,
+            providerId,
+            connectionId: persistence.connectionId,
+            status: result.status,
+            commandCount: result.commandCount,
+            brokerOrderCount: result.brokerOrderCount,
+            matchCount: result.matchCount,
+            mismatchCount: result.mismatchCount,
+            discrepancies: result.discrepancies as unknown as Array<Record<string, unknown>>,
+            durationMs: result.durationMs,
+          },
+        });
+      }
 
       return result;
     } catch (error) {
@@ -249,7 +273,25 @@ export class Reconciler {
         mismatchCount: 0,
       };
 
-      await this.store.saveResult(accountId, providerId, result);
+      if (persistence) {
+        await this.store.saveResult({
+          authenticatedUserId: persistence.authenticatedUserId,
+          connectionId: persistence.connectionId,
+          accountId,
+          outcome: {
+            accountId,
+            providerId,
+            connectionId: persistence.connectionId,
+            status: result.status,
+            commandCount: result.commandCount,
+            brokerOrderCount: result.brokerOrderCount,
+            matchCount: result.matchCount,
+            mismatchCount: result.mismatchCount,
+            discrepancies: result.discrepancies as unknown as Array<Record<string, unknown>>,
+            durationMs: result.durationMs,
+          },
+        });
+      }
       return result;
     } finally {
       clearTimeout(timeoutHandle);

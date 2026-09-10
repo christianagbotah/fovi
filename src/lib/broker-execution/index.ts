@@ -28,21 +28,24 @@ export {
 } from './adapter/adapter-registry';
 
 // ─── Capability Registry ─────────────────────────────────────────────────
-export {
-  CapabilityRegistry,
-  getCapabilityRegistry,
-  resetCapabilityRegistry,
-} from './capabilities/capability-registry';
+// REMOVED (correction round, defect 14): the capability-registry TTL cache
+// was an unused duplicate store — canonical provider capabilities live in
+// providers/canonical-providers.ts (the authoritative source).
 
 // ─── Connection Security ─────────────────────────────────────────────────
 export {
-  CredentialVault,
-  getCredentialVault,
-  resetCredentialVault,
+  encryptCredentialFields,
+  decryptCredentialFields,
+  redactCredentials,
+  isCredentialRedacted,
+  isEncryptedV3,
+  CredentialEncryptionFailureError,
+  CredentialDecryptionFailureError,
+  REDACTED,
+  CREDENTIAL_FIELDS,
   type BrokerCredentials,
-  type EncryptedCredentialRecord,
-  type CredentialStoreResult,
-  type CredentialRetrieveResult,
+  type EncryptedCredentialFields,
+  type CredentialField,
 } from './connection/credential-vault';
 
 export {
@@ -85,11 +88,7 @@ export {
 } from './execution/policy-gate';
 
 export {
-  evaluateIdempotency,
-  recordIdempotency,
   generateRequestFingerprint,
-  getIdempotencyRecord,
-  clearIdempotencyStore,
 } from './execution/idempotency-gate';
 
 export {
@@ -154,3 +153,54 @@ export {
 } from './observability/audit-trail';
 
 export { metrics } from './observability/metrics';
+
+// ─── Persistence (PostgreSQL-authoritative) ─────────────────────────
+export {
+  requireDb,
+  ServiceUnavailableError,
+  isUniqueViolation,
+  isDbUnavailableError,
+  persistenceErrorStatus,
+} from './persistence/db-access';
+
+export {
+  CommandRepository,
+  toCommandDTO,
+  type ExecutionCommandRow,
+  type ExecutionStateTransitionRow,
+  type CreateCommandResult,
+} from './persistence/command-repository';
+
+export {
+  ConnectionRepository,
+  toSafeConnectionDTO,
+} from './persistence/connection-repository';
+
+export {
+  KillSwitchRepository,
+  KillSwitchEvaluationUnavailableError,
+  GLOBAL_SCOPE_ID,
+} from './persistence/kill-switch-repository';
+
+export {
+  AuditRepository,
+  toAuditDTO,
+} from './persistence/audit-repository';
+
+export {
+  ReconciliationRepository,
+} from './persistence/reconciliation-repository';
+
+export {
+  resolveOwnedConnection,
+  type BrokerConnectionRow,
+  type OwnershipResolution,
+} from './security/ownership';
+
+export {
+  CANONICAL_PROVIDERS,
+  getCanonicalProvider,
+  isCanonicalDemoProvider,
+  resolveProviderForConnection,
+  listPublicProviders,
+} from './providers/canonical-providers';

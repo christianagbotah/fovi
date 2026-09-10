@@ -2,31 +2,39 @@
 // GET/POST /api/broker-execution/reconciliation
 // State reconciliation between command records and broker state.
 //
-// GET:  Get reconciliation status (REQUIRES AUTH + account ownership)
-// POST: Trigger reconciliation (REQUIRES AUTH + account ownership)
-//
-// Account ownership: verify connection belongs to authenticated user.
-// Admin can reconcile any account.
-// Returns 401 if not authenticated, 403 if not authorized.
-//
-// Reconciliation is a READ-ONLY diagnostic operation.
-// It NEVER modifies trading state.
+// CORRECTION ROUND (defect 7):
+//   - Ownership is MANDATORY. The previous implementation only
+//     checked ownership when connectionId was supplied, which let
+//     an authenticated caller omit connectionId and query an
+//     arbitrary accountId. Now BOTH accountId AND connectionId are
+//     required, resolved from trusted PostgreSQL records, and must
+//     correspond to each other AND to the authenticated tenant.
+//   - connectionId is NOT an optional authorization mechanism.
+//   - A verified admin may reconcile across tenants through an
+//     explicit verified-admin branch (before tenant-scoped lookup).
+//   - Reconciliation results are persisted to ReconciliationResult
+//     (PostgreSQL) via the ownership-proven store.
+//   - READ-ONLY and demo/simulator-only: reconciliation never
+//     calls a live broker execution method, and non-demo
+//     connections are refused under Phase 1 containment.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserIdSync, authRequiredResponse } from '@/lib/get-user-id';
-import { logSecurityEvent, CONTAINMENT_CODES } from '@/lib/trading-policy';
-import { getConnectionManager } from '@/lib/broker-execution/connection/connection-manager';
+import { logSecurityEvent } from '@/lib/trading-policy';
+import { resolveOwnedConnection, type BrokerConnectionRow } from '@/lib/broker-execution/security/ownership';
 import { ReconciliationStore } from '@/lib/broker-execution/reconciliation/reconciliation-store';
+import { Reconciler } from '@/lib/broker-execution/reconciliation/reconciler';
+import { CommandRepository } from '@/lib/broker-execution/persistence/command-repository';
+import { getCanonicalProvider } from '@/lib/broker-execution/providers/canonical-providers';
+import { persistenceErrorStatus } from '@/lib/broker-execution/persistence/db-access';
 
-/**
- * Check if the requesting user has admin role.
- */
+/** Check admin role from the verified JWT security context. */
 function isAdmin(req: NextRequest): boolean {
   return req.headers.get('x-user-role') === 'admin';
 }
 
-// ── Reconciliation store singleton ──
+// ── Reconciliation store singleton (stateless — PostgreSQL-backed) ──
 let _reconStore: ReconciliationStore | null = null;
 function getReconStore(): ReconciliationStore {
   if (!_reconStore) {
@@ -35,8 +43,64 @@ function getReconStore(): ReconciliationStore {
   return _reconStore;
 }
 
+/**
+ * Resolve and verify the account+connection pair for the caller.
+ * Mandatory ownership: both identifiers are required and must
+ * correspond to each other and to the authenticated tenant
+ * (admin may cross tenants through the verified-admin branch).
+ */
+async function resolveOwnedAccountConnection(
+  req: NextRequest,
+  userId: string,
+  accountId: string,
+  connectionId: string,
+): Promise<
+  | { ok: true; connection: BrokerConnectionRow }
+  | { ok: false; status: number; code: string; message: string }
+> {
+  const resolution = await resolveOwnedConnection(connectionId, userId, {
+    allowAdminCrossTenant: true,
+    callerIsAdmin: isAdmin(req),
+  });
+  if (!resolution.ok) {
+    return { ok: false, status: resolution.status, code: resolution.code, message: resolution.message };
+  }
+  const connection = resolution.connection;
+
+  // The accountId must correspond to the connection record.
+  const expectedAccountId = connection.accountId ?? connection.id;
+  if (accountId !== expectedAccountId) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'ACCOUNT_CONNECTION_MISMATCH',
+      message: 'accountId does not correspond to the supplied connection.',
+    };
+  }
+
+  return { ok: true, connection };
+}
+
+/** Phase 1 containment: reconciliation is demo/simulator-only. */
+function assertDemoOnly(connection: { providerId: string; isDemo: boolean }): { blocked: boolean; message?: string } {
+  if (!connection.isDemo) {
+    return {
+      blocked: true,
+      message: 'Phase 1 containment: reconciliation is restricted to demo/simulator connections.',
+    };
+  }
+  const canonical = getCanonicalProvider(connection.providerId);
+  if (!canonical || !canonical.isDemo) {
+    return {
+      blocked: true,
+      message: 'Phase 1 containment: the connection provider is not a canonical demo/simulator provider.',
+    };
+  }
+  return { blocked: false };
+}
+
 // ============================================================
-// GET — Get reconciliation status
+// GET — Get reconciliation status (ownership mandatory)
 // ============================================================
 export async function GET(req: NextRequest) {
   let userId: string;
@@ -50,61 +114,32 @@ export async function GET(req: NextRequest) {
   const accountId = searchParams.get('accountId');
   const connectionId = searchParams.get('connectionId');
 
-  if (!accountId) {
+  // connectionId is REQUIRED (defect 7 — not an optional auth mechanism)
+  if (!accountId || !connectionId) {
     return NextResponse.json(
-      { error: 'accountId query parameter is required.' },
+      { error: 'Both accountId and connectionId query parameters are required.' },
       { status: 400 },
     );
   }
 
   try {
-    // Account ownership verification
-    // If connectionId is provided, verify the connection belongs to the user
-    if (connectionId) {
-      const connectionManager = getConnectionManager();
-      const connection = connectionManager.getConnection(connectionId, userId);
-
-      if (!connection) {
-        return NextResponse.json(
-          { error: 'Connection not found.' },
-          { status: 404 },
-        );
-      }
-
-      if (connection.tenantId !== userId && !isAdmin(req)) {
-        logSecurityEvent({
-          eventType: 'RECONCILIATION_OWNERSHIP_VIOLATION',
-          route: '/api/broker-execution/reconciliation',
-          userId,
-          reason: `User attempted to access reconciliation for connection belonging to tenant=${connection.tenantId}`,
-        });
-        return NextResponse.json(
-          { error: 'Access denied. You do not own this connection.', code: 'TENANT_ISOLATION_VIOLATION', remediationPhase: 'containment' },
-          { status: 403 },
-        );
-      }
+    const resolved = await resolveOwnedAccountConnection(req, userId, accountId, connectionId);
+    if (!resolved.ok) {
+      return NextResponse.json(
+        { error: resolved.message, code: resolved.code, remediationPhase: 'containment' },
+        { status: resolved.status },
+      );
     }
 
-    // Get reconciliation history for the account
     const store = getReconStore();
     const limit = Math.min(parseInt(searchParams.get('limit') || '10', 10), 100);
-    const history = await store.getHistory(accountId, limit);
+    const history = await store.getHistory(userId, connectionId, accountId, limit);
     const latest = history.length > 0 ? history[0] : null;
 
     return NextResponse.json({
       accountId,
-      latestReconciliation: latest
-        ? {
-            reconciliationId: latest.reconciliationId,
-            status: latest.status,
-            reconciledAt: latest.reconciledAt,
-            durationMs: latest.durationMs,
-            commandCount: latest.commandCount,
-            matchCount: latest.matchCount,
-            mismatchCount: latest.mismatchCount,
-            discrepancyCount: latest.discrepancies.length,
-          }
-        : null,
+      connectionId,
+      latestReconciliation: latest,
       historyCount: history.length,
       history: history.map((r) => ({
         reconciliationId: r.reconciliationId,
@@ -122,14 +157,14 @@ export async function GET(req: NextRequest) {
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
     return NextResponse.json(
-      { error: 'Failed to get reconciliation status.' },
-      { status: 500 },
+      { error: 'Failed to get reconciliation status.', code: 'SERVICE_UNAVAILABLE' },
+      { status: persistenceErrorStatus(error) },
     );
   }
 }
 
 // ============================================================
-// POST — Trigger reconciliation
+// POST — Trigger reconciliation (ownership mandatory, read-only)
 // ============================================================
 export async function POST(req: NextRequest) {
   let userId: string;
@@ -143,57 +178,84 @@ export async function POST(req: NextRequest) {
   const accountId = body.accountId;
   const connectionId = body.connectionId;
 
-  if (!accountId) {
+  // connectionId is REQUIRED (defect 7)
+  if (!accountId || !connectionId) {
     return NextResponse.json(
-      { error: 'accountId is required.' },
+      { error: 'Both accountId and connectionId are required.' },
       { status: 400 },
     );
   }
 
   try {
-    // Account ownership verification
-    if (connectionId) {
-      const connectionManager = getConnectionManager();
-      const connection = connectionManager.getConnection(connectionId, userId);
+    const resolved = await resolveOwnedAccountConnection(req, userId, accountId, connectionId);
+    if (!resolved.ok) {
+      return NextResponse.json(
+        { error: resolved.message, code: resolved.code, remediationPhase: 'containment' },
+        { status: resolved.status },
+      );
+    }
+    const connection = resolved.connection;
 
-      if (!connection) {
-        return NextResponse.json(
-          { error: 'Connection not found.' },
-          { status: 404 },
-        );
-      }
-
-      if (connection.tenantId !== userId && !isAdmin(req)) {
-        logSecurityEvent({
-          eventType: 'RECONCILIATION_TRIGGER_VIOLATION',
-          route: '/api/broker-execution/reconciliation',
-          userId,
-          reason: `User attempted to trigger reconciliation for connection belonging to tenant=${connection.tenantId}`,
-        });
-        return NextResponse.json(
-          { error: 'Access denied. You do not own this connection.', code: 'TENANT_ISOLATION_VIOLATION', remediationPhase: 'containment' },
-          { status: 403 },
-        );
-      }
+    // Phase 1 containment: demo/simulator connections only.
+    const demoCheck = assertDemoOnly(connection);
+    if (demoCheck.blocked) {
+      logSecurityEvent({
+        eventType: 'RECONCILIATION_NON_DEMO_BLOCKED',
+        route: '/api/broker-execution/reconciliation',
+        userId,
+        reason: `Reconciliation refused for non-demo connection=${connectionId}`,
+      });
+      return NextResponse.json(
+        { error: demoCheck.message, code: 'PHASE1_DEMO_ONLY', remediationPhase: 'containment' },
+        { status: 403 },
+      );
     }
 
-    // Phase 1: Reconciliation is available for demo accounts only.
-    // For now, return a Phase 1 containment response indicating
-    // reconciliation is a no-op (no live accounts to reconcile).
+    // Read-only reconciliation over the authoritative command
+    // records for this connection (NO broker execution method is
+    // called — the input is built exclusively from PostgreSQL
+    // command records and an empty broker-side state).
+    const commandRows = await CommandRepository.listByConnection(connectionId, connection.tenantId);
+
+    const reconciler = new Reconciler(getReconStore());
+    const result = await reconciler.reconcile(
+      accountId,
+      connection.providerId,
+      {
+        foviCommands: commandRows.map((row) => ({
+          commandId: row.commandId,
+          status: row.currentState,
+          brokerOrderId: row.brokerOrderId,
+          brokerPositionId: row.brokerPositionId,
+          fillPrice: row.fillPrice,
+          fillSize: row.fillSize,
+        })) as never,
+        brokerOrders: [],
+        brokerPositions: [],
+        brokerFills: [],
+      },
+      { authenticatedUserId: userId, connectionId },
+    );
+
     logSecurityEvent({
       eventType: 'RECONCILIATION_TRIGGERED',
       route: '/api/broker-execution/reconciliation',
       userId,
-      reason: `Reconciliation triggered for accountId=${accountId}`,
+      reason: `Reconciliation completed for accountId=${accountId} connectionId=${connectionId} status=${result.status}`,
     });
 
-    // In Phase 1, reconciliation runs against demo accounts only.
-    // Return a placeholder result.
     return NextResponse.json({
-      status: 'IDLE',
       accountId,
-      message: 'Phase 1: Reconciliation is available for demo accounts only. No discrepancies detected.',
-      reconciledAt: null,
+      connectionId,
+      status: result.status,
+      commandCount: result.commandCount,
+      matchCount: result.matchCount,
+      mismatchCount: result.mismatchCount,
+      discrepancyCount: result.discrepancies.length,
+      discrepancies: result.discrepancies,
+      durationMs: result.durationMs,
+      reconciledAt: result.reconciledAt,
+      readOnly: true,
       phase: '1-containment',
     });
   } catch (error) {
@@ -204,8 +266,8 @@ export async function POST(req: NextRequest) {
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
     return NextResponse.json(
-      { error: 'Failed to trigger reconciliation.', code: CONTAINMENT_CODES.SERVICE_UNAVAILABLE, remediationPhase: 'containment' },
-      { status: 500 },
+      { error: 'Failed to trigger reconciliation.', code: 'SERVICE_UNAVAILABLE' },
+      { status: persistenceErrorStatus(error) },
     );
   }
 }

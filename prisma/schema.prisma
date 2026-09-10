@@ -649,7 +649,11 @@ model ExecutionStateTransition {
 model KillSwitchRecord {
   id               String   @id @default(cuid())
   scope            String   // GLOBAL, TENANT, ACCOUNT, PROVIDER
-  scopeId          String?  // Null for GLOBAL, tenant/account/provider ID otherwise
+  // Canonical non-null scope identifier. GLOBAL scope always uses the
+  // canonical value 'global'. PostgreSQL composite unique indexes permit
+  // multiple NULL values, so a nullable scopeId would NOT enforce GLOBAL
+  // singleton semantics — scopeId is therefore non-null by design.
+  scopeId          String   @default("global")
   state            String   @default("INACTIVE") // ACTIVE, INACTIVE, TRIGGERED
   emergencyReadOnly Boolean @default(false)
   activatedAt      DateTime?

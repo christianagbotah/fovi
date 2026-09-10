@@ -1,22 +1,24 @@
 // ============================================================
 // GET /api/broker-execution/audit
-// Query audit records — STRICT ADMIN AUTH ONLY.
+// Query the durable, append-only broker-execution audit trail.
 //
-// Must verify admin role (X-User-Role === 'admin').
-// Returns 401 if not authenticated, 403 if not admin.
-// Audit records never contain credentials (by design — see audit.ts).
+// STRICT ADMIN ONLY (verified JWT role via proxy-injected
+// X-User-Role; caller-supplied identity headers are stripped in
+// proxy Step 0).
 //
-// Supports filtering by:
-//   action, dateRange, tenantId (admin only),
-//   commandId, correlationId
+// CORRECTION ROUND (defect 10): queries hit the authoritative
+// BrokerExecutionAudit PostgreSQL table (append-only — no update
+// or delete path exists anywhere). Fail-closed: 503 when the
+// store is unavailable. Records are sanitized (no credentials,
+// redacted network metadata).
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserIdSync, authRequiredResponse } from '@/lib/get-user-id';
 import { logSecurityEvent } from '@/lib/trading-policy';
-import { auditTrail } from '@/lib/broker-execution/observability/audit-trail';
-import type { AuditQueryFilters, AuditAuthContext } from '@/lib/broker-execution/observability/audit-trail';
-import type { AuditAction } from '@/lib/broker-execution/types/audit';
+import { auditTrail, type AuditQueryFilters } from '@/lib/broker-execution/observability/audit-trail';
+import { type AuditAuthContext } from '@/lib/broker-execution/persistence/audit-repository';
+import { persistenceErrorStatus } from '@/lib/broker-execution/persistence/db-access';
 
 /**
  * Verify that the requesting user has admin role.
@@ -61,63 +63,39 @@ export async function GET(req: NextRequest) {
     const filters: AuditQueryFilters = {};
 
     const action = searchParams.get('action');
-    if (action) {
-      filters.action = action as AuditAction;
-    }
-
-    const dateStart = searchParams.get('dateStart');
-    const dateEnd = searchParams.get('dateEnd');
-    if (dateStart && dateEnd) {
-      filters.dateRange = { start: dateStart, end: dateEnd };
-    }
+    if (action) filters.action = action;
 
     const tenantId = searchParams.get('tenantId');
-    if (tenantId) {
-      filters.tenantId = tenantId;
-    }
-
-    const accountId = searchParams.get('accountId');
-    if (accountId) {
-      filters.accountId = accountId;
-    }
-
-    const providerId = searchParams.get('providerId');
-    if (providerId) {
-      filters.providerId = providerId;
-    }
+    if (tenantId) filters.tenantId = tenantId;
 
     const actorId = searchParams.get('actorId');
-    if (actorId) {
-      filters.actorId = actorId;
-    }
+    if (actorId) filters.actorId = actorId;
 
     const commandId = searchParams.get('commandId');
-    if (commandId) {
-      filters.commandId = commandId;
-    }
+    if (commandId) filters.commandId = commandId;
 
     const correlationId = searchParams.get('correlationId');
-    if (correlationId) {
-      filters.correlationId = correlationId;
-    }
+    if (correlationId) filters.correlationId = correlationId;
 
-    // Authorization context: admin can query across tenants
+    const limit = Math.min(parseInt(searchParams.get('limit') || '100', 10), 500);
+    const offset = Math.max(parseInt(searchParams.get('offset') || '0', 10), 0);
+    filters.limit = limit;
+    filters.offset = offset;
+
+    // Authorization context: verified admin (role checked above)
     const auth: AuditAuthContext = {
-      requestingTenantId: userId,
-      isAdmin: true, // We already verified admin role above
+      userId,
+      role: 'admin',
+      isAdmin: true,
     };
 
-    const records = auditTrail.query(filters, auth);
+    const records = await auditTrail.query(filters, auth);
 
-    // Pagination
-    const limit = Math.min(parseInt(searchParams.get('limit') || '100', 10), 500);
-    const offset = parseInt(searchParams.get('offset') || '0', 10);
-    const paginatedRecords = records.slice(offset, offset + limit);
-
-    // Audit records never contain credentials (by design in audit.ts)
+    // Audit records never contain credentials (structural type
+    // constraint + repository-side redaction).
     return NextResponse.json({
-      records: paginatedRecords,
-      total: records.length,
+      records,
+      count: records.length,
       offset,
       limit,
     });
@@ -129,8 +107,8 @@ export async function GET(req: NextRequest) {
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
     return NextResponse.json(
-      { error: 'Failed to query audit records.' },
-      { status: 500 },
+      { error: 'Failed to query audit records.', code: 'SERVICE_UNAVAILABLE' },
+      { status: persistenceErrorStatus(error) },
     );
   }
 }

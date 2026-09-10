@@ -1,8 +1,13 @@
 -- ============================================
 -- Broker Execution Framework Migration
+-- Correction round: canonical KillSwitchRecord.scopeId (non-null,
+-- default 'global') so @@unique([scope, scopeId]) enforces GLOBAL
+-- singleton semantics; identifier reflects 2026 creation date.
+-- SQL generated via 'prisma migrate diff' (base -> head) for
+-- guaranteed schema/migration consistency. PostgreSQL preserved.
 -- ============================================
 
--- BrokerProviderConfig
+-- CreateTable
 CREATE TABLE "BrokerProviderConfig" (
     "id" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
@@ -19,9 +24,7 @@ CREATE TABLE "BrokerProviderConfig" (
     CONSTRAINT "BrokerProviderConfig_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "BrokerProviderConfig_providerId_key" ON "BrokerProviderConfig"("providerId");
-
--- BrokerProviderCapability
+-- CreateTable
 CREATE TABLE "BrokerProviderCapability" (
     "id" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
@@ -32,11 +35,7 @@ CREATE TABLE "BrokerProviderCapability" (
     CONSTRAINT "BrokerProviderCapability_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "BrokerProviderCapability_providerId_capability_key" ON "BrokerProviderCapability"("providerId", "capability");
-
-ALTER TABLE "BrokerProviderCapability" ADD CONSTRAINT "BrokerProviderCapability_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "BrokerProviderConfig"("providerId") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- BrokerConnection
+-- CreateTable
 CREATE TABLE "BrokerConnection" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,
@@ -63,13 +62,7 @@ CREATE TABLE "BrokerConnection" (
     CONSTRAINT "BrokerConnection_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "BrokerConnection_tenantId_idx" ON "BrokerConnection"("tenantId");
-CREATE INDEX "BrokerConnection_tenantId_providerId_idx" ON "BrokerConnection"("tenantId", "providerId");
-CREATE INDEX "BrokerConnection_connectionState_idx" ON "BrokerConnection"("connectionState");
-
-ALTER TABLE "BrokerConnection" ADD CONSTRAINT "BrokerConnection_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "BrokerProviderConfig"("providerId") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- ExecutionCommandRecord
+-- CreateTable
 CREATE TABLE "ExecutionCommandRecord" (
     "id" TEXT NOT NULL,
     "commandId" TEXT NOT NULL,
@@ -100,16 +93,7 @@ CREATE TABLE "ExecutionCommandRecord" (
     CONSTRAINT "ExecutionCommandRecord_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "ExecutionCommandRecord_commandId_key" ON "ExecutionCommandRecord"("commandId");
-CREATE INDEX "ExecutionCommandRecord_tenantId_idx" ON "ExecutionCommandRecord"("tenantId");
-CREATE INDEX "ExecutionCommandRecord_idempotencyKey_tenantId_connectionId_providerId_idx" ON "ExecutionCommandRecord"("idempotencyKey", "tenantId", "connectionId", "providerId");
-CREATE INDEX "ExecutionCommandRecord_commandId_idx" ON "ExecutionCommandRecord"("commandId");
-CREATE INDEX "ExecutionCommandRecord_currentState_idx" ON "ExecutionCommandRecord"("currentState");
-CREATE INDEX "ExecutionCommandRecord_createdAt_idx" ON "ExecutionCommandRecord"("createdAt");
-
-ALTER TABLE "ExecutionCommandRecord" ADD CONSTRAINT "ExecutionCommandRecord_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "BrokerConnection"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- ExecutionStateTransition
+-- CreateTable
 CREATE TABLE "ExecutionStateTransition" (
     "id" TEXT NOT NULL,
     "commandId" TEXT NOT NULL,
@@ -122,16 +106,11 @@ CREATE TABLE "ExecutionStateTransition" (
     CONSTRAINT "ExecutionStateTransition_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "ExecutionStateTransition_commandId_idx" ON "ExecutionStateTransition"("commandId");
-CREATE INDEX "ExecutionStateTransition_timestamp_idx" ON "ExecutionStateTransition"("timestamp");
-
-ALTER TABLE "ExecutionStateTransition" ADD CONSTRAINT "ExecutionStateTransition_commandId_fkey" FOREIGN KEY ("commandId") REFERENCES "ExecutionCommandRecord"("commandId") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- KillSwitchRecord
+-- CreateTable
 CREATE TABLE "KillSwitchRecord" (
     "id" TEXT NOT NULL,
     "scope" TEXT NOT NULL,
-    "scopeId" TEXT,
+    "scopeId" TEXT NOT NULL DEFAULT 'global',
     "state" TEXT NOT NULL DEFAULT 'INACTIVE',
     "emergencyReadOnly" BOOLEAN NOT NULL DEFAULT false,
     "activatedAt" TIMESTAMP(3),
@@ -144,10 +123,7 @@ CREATE TABLE "KillSwitchRecord" (
     CONSTRAINT "KillSwitchRecord_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "KillSwitchRecord_scope_scopeId_key" ON "KillSwitchRecord"("scope", "scopeId");
-CREATE INDEX "KillSwitchRecord_state_idx" ON "KillSwitchRecord"("state");
-
--- ReconciliationResult
+-- CreateTable
 CREATE TABLE "ReconciliationResult" (
     "id" TEXT NOT NULL,
     "accountId" TEXT NOT NULL,
@@ -166,13 +142,7 @@ CREATE TABLE "ReconciliationResult" (
     CONSTRAINT "ReconciliationResult_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "ReconciliationResult_accountId_idx" ON "ReconciliationResult"("accountId");
-CREATE INDEX "ReconciliationResult_connectionId_idx" ON "ReconciliationResult"("connectionId");
-CREATE INDEX "ReconciliationResult_startedAt_idx" ON "ReconciliationResult"("startedAt");
-
-ALTER TABLE "ReconciliationResult" ADD CONSTRAINT "ReconciliationResult_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "BrokerConnection"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- BrokerExecutionAudit
+-- CreateTable
 CREATE TABLE "BrokerExecutionAudit" (
     "id" TEXT NOT NULL,
     "actorId" TEXT NOT NULL,
@@ -191,13 +161,7 @@ CREATE TABLE "BrokerExecutionAudit" (
     CONSTRAINT "BrokerExecutionAudit_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "BrokerExecutionAudit_tenantId_idx" ON "BrokerExecutionAudit"("tenantId");
-CREATE INDEX "BrokerExecutionAudit_actorId_idx" ON "BrokerExecutionAudit"("actorId");
-CREATE INDEX "BrokerExecutionAudit_action_idx" ON "BrokerExecutionAudit"("action");
-CREATE INDEX "BrokerExecutionAudit_commandId_idx" ON "BrokerExecutionAudit"("commandId");
-CREATE INDEX "BrokerExecutionAudit_timestamp_idx" ON "BrokerExecutionAudit"("timestamp");
-
--- IdempotencyRecord
+-- CreateTable
 CREATE TABLE "IdempotencyRecord" (
     "id" TEXT NOT NULL,
     "commandId" TEXT NOT NULL,
@@ -214,11 +178,7 @@ CREATE TABLE "IdempotencyRecord" (
     CONSTRAINT "IdempotencyRecord_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "IdempotencyRecord_idempotencyKey_tenantId_accountId_providerId_key" ON "IdempotencyRecord"("idempotencyKey", "tenantId", "accountId", "providerId");
-CREATE INDEX "IdempotencyRecord_commandId_idx" ON "IdempotencyRecord"("commandId");
-CREATE INDEX "IdempotencyRecord_createdAt_idx" ON "IdempotencyRecord"("createdAt");
-
--- ProviderEventLog
+-- CreateTable
 CREATE TABLE "ProviderEventLog" (
     "id" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
@@ -231,7 +191,108 @@ CREATE TABLE "ProviderEventLog" (
     CONSTRAINT "ProviderEventLog_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateIndex
+CREATE UNIQUE INDEX "BrokerProviderConfig_providerId_key" ON "BrokerProviderConfig"("providerId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "BrokerProviderCapability_providerId_capability_key" ON "BrokerProviderCapability"("providerId", "capability");
+
+-- CreateIndex
+CREATE INDEX "BrokerConnection_tenantId_idx" ON "BrokerConnection"("tenantId");
+
+-- CreateIndex
+CREATE INDEX "BrokerConnection_tenantId_providerId_idx" ON "BrokerConnection"("tenantId", "providerId");
+
+-- CreateIndex
+CREATE INDEX "BrokerConnection_connectionState_idx" ON "BrokerConnection"("connectionState");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ExecutionCommandRecord_commandId_key" ON "ExecutionCommandRecord"("commandId");
+
+-- CreateIndex
+CREATE INDEX "ExecutionCommandRecord_tenantId_idx" ON "ExecutionCommandRecord"("tenantId");
+
+-- CreateIndex
+CREATE INDEX "ExecutionCommandRecord_idempotencyKey_tenantId_connectionId_idx" ON "ExecutionCommandRecord"("idempotencyKey", "tenantId", "connectionId", "providerId");
+
+-- CreateIndex
+CREATE INDEX "ExecutionCommandRecord_commandId_idx" ON "ExecutionCommandRecord"("commandId");
+
+-- CreateIndex
+CREATE INDEX "ExecutionCommandRecord_currentState_idx" ON "ExecutionCommandRecord"("currentState");
+
+-- CreateIndex
+CREATE INDEX "ExecutionCommandRecord_createdAt_idx" ON "ExecutionCommandRecord"("createdAt");
+
+-- CreateIndex
+CREATE INDEX "ExecutionStateTransition_commandId_idx" ON "ExecutionStateTransition"("commandId");
+
+-- CreateIndex
+CREATE INDEX "ExecutionStateTransition_timestamp_idx" ON "ExecutionStateTransition"("timestamp");
+
+-- CreateIndex
+CREATE INDEX "KillSwitchRecord_state_idx" ON "KillSwitchRecord"("state");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "KillSwitchRecord_scope_scopeId_key" ON "KillSwitchRecord"("scope", "scopeId");
+
+-- CreateIndex
+CREATE INDEX "ReconciliationResult_accountId_idx" ON "ReconciliationResult"("accountId");
+
+-- CreateIndex
+CREATE INDEX "ReconciliationResult_connectionId_idx" ON "ReconciliationResult"("connectionId");
+
+-- CreateIndex
+CREATE INDEX "ReconciliationResult_startedAt_idx" ON "ReconciliationResult"("startedAt");
+
+-- CreateIndex
+CREATE INDEX "BrokerExecutionAudit_tenantId_idx" ON "BrokerExecutionAudit"("tenantId");
+
+-- CreateIndex
+CREATE INDEX "BrokerExecutionAudit_actorId_idx" ON "BrokerExecutionAudit"("actorId");
+
+-- CreateIndex
+CREATE INDEX "BrokerExecutionAudit_action_idx" ON "BrokerExecutionAudit"("action");
+
+-- CreateIndex
+CREATE INDEX "BrokerExecutionAudit_commandId_idx" ON "BrokerExecutionAudit"("commandId");
+
+-- CreateIndex
+CREATE INDEX "BrokerExecutionAudit_timestamp_idx" ON "BrokerExecutionAudit"("timestamp");
+
+-- CreateIndex
+CREATE INDEX "IdempotencyRecord_commandId_idx" ON "IdempotencyRecord"("commandId");
+
+-- CreateIndex
+CREATE INDEX "IdempotencyRecord_createdAt_idx" ON "IdempotencyRecord"("createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "IdempotencyRecord_idempotencyKey_tenantId_accountId_provide_key" ON "IdempotencyRecord"("idempotencyKey", "tenantId", "accountId", "providerId");
+
+-- CreateIndex
 CREATE INDEX "ProviderEventLog_providerId_idx" ON "ProviderEventLog"("providerId");
+
+-- CreateIndex
 CREATE INDEX "ProviderEventLog_connectionId_idx" ON "ProviderEventLog"("connectionId");
+
+-- CreateIndex
 CREATE INDEX "ProviderEventLog_eventType_idx" ON "ProviderEventLog"("eventType");
+
+-- CreateIndex
 CREATE INDEX "ProviderEventLog_timestamp_idx" ON "ProviderEventLog"("timestamp");
+
+-- AddForeignKey
+ALTER TABLE "BrokerProviderCapability" ADD CONSTRAINT "BrokerProviderCapability_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "BrokerProviderConfig"("providerId") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BrokerConnection" ADD CONSTRAINT "BrokerConnection_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "BrokerProviderConfig"("providerId") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExecutionCommandRecord" ADD CONSTRAINT "ExecutionCommandRecord_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "BrokerConnection"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExecutionStateTransition" ADD CONSTRAINT "ExecutionStateTransition_commandId_fkey" FOREIGN KEY ("commandId") REFERENCES "ExecutionCommandRecord"("commandId") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ReconciliationResult" ADD CONSTRAINT "ReconciliationResult_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "BrokerConnection"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+

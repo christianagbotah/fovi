@@ -16,7 +16,8 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { getCredentialVault, type BrokerCredentials } from './credential-vault';
+import { type BrokerCredentials } from './credential-vault';
+import { ConnectionRepository } from '../persistence/connection-repository';
 import { logSecurityEvent } from '@/lib/trading-policy';
 
 // ── PKCE types ──
@@ -390,23 +391,24 @@ export class OAuthPKCE {
     //   POST providerConfig.tokenEndpoint
     //   Body: grant_type=authorization_code, code, redirect_uri, client_id, code_verifier
     //
-    // For Phase 1, we simulate the exchange result and store via vault.
+    // For Phase 1, we simulate the exchange result and store via the
+    // connection repository (fail-closed encrypted columns).
 
-    // Store tokens via CredentialVault (enforces Phase 1 containment)
-    const vault = getCredentialVault();
+    // Store tokens via the connection repository (enforces Phase 1
+    // containment + fail-closed encryption in the encrypted columns)
     const credentials: BrokerCredentials = {
       token: code, // In production, this would be the actual access_token
       refreshToken: codeVerifier, // In production, the actual refresh_token
     };
 
-    const storeResult = await vault.storeCredentials(
+    const storeResult = await ConnectionRepository.updateCredentials(
       connectionId,
       tenantId,
       credentials,
-      accountContext,
+      tenantId,
     );
 
-    if (!storeResult.success) {
+    if (!storeResult.ok) {
       logSecurityEvent({
         eventType: 'OAUTH_TOKEN_STORAGE_BLOCKED',
         correlationId,
@@ -414,7 +416,7 @@ export class OAuthPKCE {
       });
       return {
         success: false,
-        error: storeResult.error ?? 'Token storage blocked by containment policy.',
+        error: storeResult.message ?? 'Token storage blocked by containment policy.',
       };
     }
 
@@ -463,22 +465,22 @@ export class OAuthPKCE {
     //   POST providerConfig.tokenEndpoint
     //   Body: grant_type=refresh_token, refresh_token, client_id
     //
-    // For Phase 1, we store the refreshed token via vault.
+    // For Phase 1, we store the refreshed token via the connection
+    // repository (fail-closed encrypted columns).
 
-    const vault = getCredentialVault();
     const credentials: BrokerCredentials = {
       token: refreshToken, // In production, the new access_token
       refreshToken, // In production, the new refresh_token (if rotated)
     };
 
-    const storeResult = await vault.storeCredentials(
+    const storeResult = await ConnectionRepository.updateCredentials(
       connectionId,
       tenantId,
       credentials,
-      accountContext,
+      tenantId,
     );
 
-    if (!storeResult.success) {
+    if (!storeResult.ok) {
       logSecurityEvent({
         eventType: 'OAUTH_TOKEN_REFRESH_BLOCKED',
         correlationId,
@@ -486,7 +488,7 @@ export class OAuthPKCE {
       });
       return {
         success: false,
-        error: storeResult.error ?? 'Token refresh blocked by containment policy.',
+        error: storeResult.message ?? 'Token refresh blocked by containment policy.',
       };
     }
 

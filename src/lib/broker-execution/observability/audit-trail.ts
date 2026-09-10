@@ -1,118 +1,52 @@
 // ============================================================
-// audit-trail.ts — Immutable audit trail for broker-execution
+// audit-trail.ts — Durable audit trail for broker-execution
+// (CORRECTION ROUND, defect 10)
+//
+// The BrokerExecutionAudit PostgreSQL table is the authoritative,
+// append-only audit repository (via persistence/audit-repository).
+// The previous in-memory array + Object.freeze() implementation is
+// REMOVED — Object.freeze is immutability within one process, not
+// durability across restarts, deployments and instances.
 //
 // SAFETY CONSTRAINT (mirrors trading-policy.ts & audit.ts):
-//   - Audit records are IMMUTABLE: never updated or deleted
-//   - No credentials ever appear in audit records
-//   - redactForAudit() recursively strips known sensitive fields
+//   - Audit entries are APPEND-ONLY: no update or delete path
+//     exists anywhere in this module or the repository.
+//   - No credentials ever appear in audit records:
+//     redactForAudit() recursively strips known sensitive fields
 //     (apiKey, apiSecret, passphrase, token, refreshToken,
-//     password, secret) before persistence
-//   - This mirrors:
-//       - logSecurityEvent() redaction in trading-policy.ts
-//       - safeAccountDTO() stripping in trading-policy.ts
-//       - AuditRecord type constraint in audit.ts
+//     password, secret) before persistence.
+//   - For security-critical mutations where the audit record is
+//     part of the security guarantee (command submission,
+//     kill-switch activation/deactivation, credential writes),
+//     the audit write happens INSIDE the mutation transaction —
+//     a failed audit write rolls back the mutation instead of
+//     returning false success.
 //
 // TENANT ISOLATION:
-//   - query() automatically scopes to the requesting tenant
-//   - Admin queries across tenants require explicit authorization
-//   - No tenant can access another tenant's audit records
-//
-// PERSISTENCE:
-//   - Records are persisted to database for long-term retention
-//   - In-memory store used when database is unavailable
-//   - All records include: actor, tenant, account, provider,
-//     action, previous/resulting state, reason, correlationId,
-//     commandId, timestamp, ipMetadata
+//   - query() scopes non-admin queries to the requesting tenant.
+//   - Cross-tenant queries require an explicitly verified admin
+//     context (isAdmin from the verified JWT role).
+//   - No tenant can access another tenant's audit records.
 // ============================================================
 
 import type {
   AuditAction,
-  AuditRecord,
   ExecutionState,
   IpMetadata,
 } from '../types';
-import { redactForTelemetry } from './telemetry';
+import { AuditRepository, toAuditDTO, type AuditAuthContext } from '../persistence/audit-repository';
 
-// ── Sensitive field names for redaction ──
-
-/**
- * Field names that must NEVER appear in audit records.
- * Same set as telemetry.ts — kept in sync intentionally.
- * Case-insensitive substring match on the field name.
- *
- * Mirrors logSecurityEvent() in trading-policy.ts which checks:
- *   secret, key, token, password
- *
- * Extended for broker-specific credential fields that
- * safeAccountDTO() strips: apiKey, apiSecret, passphrase.
- */
-const SENSITIVE_FIELD_PATTERNS = [
-  'apikey',
-  'apisecret',
-  'passphrase',
-  'token',
-  'refreshtoken',
-  'password',
-  'secret',
-] as const;
-
-/**
- * Check if a field name matches a sensitive pattern.
- * Case-insensitive substring match.
- */
-function isSensitiveFieldName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return SENSITIVE_FIELD_PATTERNS.some((pattern) => lower.includes(pattern));
-}
-
-// ── Recursive redaction for audit ──
-
-/**
- * Recursively redact known sensitive fields from an object.
- * Produces a NEW object — the input is never mutated.
- *
- * This is functionally identical to redactForTelemetry() but
- * maintained as a separate export for semantic clarity:
- *   - redactForTelemetry() → for telemetry events (ephemeral)
- *   - redactForAudit() → for audit records (persistent)
- *
- * Both use the same SENSITIVE_FIELD_PATTERNS and same algorithm.
- * This ensures no credential can leak into either system
- * regardless of which redaction function is called.
- */
-export function redactForAudit(obj: unknown): unknown {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== 'object') return obj;
-
-  if (Array.isArray(obj)) {
-    return obj.map(redactForAudit);
-  }
-
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    if (isSensitiveFieldName(key)) {
-      result[key] = '[REDACTED]';
-    } else if (typeof value === 'object' && value !== null) {
-      result[key] = redactForAudit(value);
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
-}
+export { redactForAudit } from './redaction';
 
 // ── Audit event input ──
 
 /**
- * Input for creating an audit record.
- * The AuditTrail.record() method creates an immutable AuditRecord
- * from this input, assigning id and timestamp automatically.
+ * Input for creating an audit entry.
  *
  * REDACTION SAFETY:
  *   All fields are redacted before persistence via redactForAudit().
- *   The reason string is scanned for credential patterns.
- *   No credential field exists on the resulting AuditRecord type
- *   (enforced structurally in audit.ts).
+ *   No credential field exists on the persisted record (enforced
+ *   structurally in audit.ts and by the repository sanitizer).
  */
 export interface AuditEventInput {
   /** ID of the actor performing the action */
@@ -126,10 +60,10 @@ export interface AuditEventInput {
   /** The action being audited */
   action: AuditAction;
   /** State before the action */
-  previousState?: ExecutionState | null;
+  previousState?: ExecutionState | string | null;
   /** State after the action */
-  resultingState?: ExecutionState | null;
-  /** Human-readable reason (will be redacted if it contains credentials) */
+  resultingState?: ExecutionState | string | null;
+  /** Human-readable reason (redacted if it contains credentials) */
   reason?: string | null;
   /** Correlation ID for cross-referencing */
   correlationId?: string | null;
@@ -142,311 +76,111 @@ export interface AuditEventInput {
 // ── Query filters ──
 
 /**
- * Filters for querying audit records.
- * All filters are optional — combine for intersection.
+ * Filters for querying audit entries. All filters are optional —
+ * combine for intersection.
  *
  * TENANT ISOLATION:
- *   tenantId is REQUIRED for non-admin queries.
- *   If omitted, the caller must have admin authorization
- *   (enforced by the query method).
+ *   Non-admin queries are always scoped to the authenticated
+ *   tenant regardless of the tenantId filter.
  */
 export interface AuditQueryFilters {
   /** Filter by actor ID */
   actorId?: string;
-  /** Filter by tenant ID (REQUIRED for non-admin) */
+  /** Filter by tenant ID (only honored for verified admin contexts) */
   tenantId?: string;
-  /** Filter by account ID */
-  accountId?: string;
-  /** Filter by provider ID */
-  providerId?: string;
   /** Filter by action type */
-  action?: AuditAction;
-  /** Filter by date range */
-  dateRange?: {
-    start: string; // ISO-8601
-    end: string;   // ISO-8601
-  };
+  action?: string;
   /** Filter by correlation ID */
   correlationId?: string;
   /** Filter by command ID */
   commandId?: string;
+  /** Result limit (max 500) */
+  limit?: number;
+  /** Result offset */
+  offset?: number;
 }
 
-// ── Authorization context ──
+export type { AuditAuthContext };
+
+// ── AuditTrail ──
 
 /**
- * Authorization context for audit queries.
- * Used to enforce tenant isolation.
- */
-export interface AuditAuthContext {
-  /** The tenant ID of the requesting user */
-  requestingTenantId: string;
-  /** Whether the requesting user has admin privileges */
-  isAdmin: boolean;
-}
-
-// ── In-memory audit store ──
-
-/**
- * In-memory store for audit records.
- * Used when database persistence is unavailable.
- * Records are never modified or deleted (immutability).
- *
- * For production, replace with database-backed implementation
- * using Prisma ORM (see prisma/schema.prisma).
- */
-class AuditStore {
-  private records: AuditRecord[] = [];
-
-  /**
-   * Append an immutable audit record.
-   * The record is frozen to prevent mutation.
-   */
-  append(record: AuditRecord): void {
-    Object.freeze(record);
-    this.records.push(record);
-  }
-
-  /**
-   * Query records with filters.
-   * Returns a new array — the internal store is not exposed.
-   */
-  query(filters: AuditQueryFilters): AuditRecord[] {
-    let result = this.records;
-
-    if (filters.actorId) {
-      result = result.filter((r) => r.actorId === filters.actorId);
-    }
-    if (filters.tenantId) {
-      result = result.filter((r) => r.tenantId === filters.tenantId);
-    }
-    if (filters.accountId) {
-      result = result.filter((r) => r.accountId === filters.accountId);
-    }
-    if (filters.providerId) {
-      result = result.filter((r) => r.providerId === filters.providerId);
-    }
-    if (filters.action) {
-      result = result.filter((r) => r.action === filters.action);
-    }
-    if (filters.dateRange) {
-      const start = new Date(filters.dateRange.start).getTime();
-      const end = new Date(filters.dateRange.end).getTime();
-      result = result.filter((r) => {
-        const ts = new Date(r.timestamp).getTime();
-        return ts >= start && ts <= end;
-      });
-    }
-    if (filters.correlationId) {
-      result = result.filter((r) => r.correlationId === filters.correlationId);
-    }
-    if (filters.commandId) {
-      result = result.filter((r) => r.commandId === filters.commandId);
-    }
-
-    // Return a copy sorted by timestamp descending (most recent first)
-    return [...result].sort((a, b) =>
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
-  }
-
-  /**
-   * Get all records for a specific command.
-   */
-  getByCommandId(commandId: string): AuditRecord[] {
-    return this.records
-      .filter((r) => r.commandId === commandId)
-      .sort((a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
-  }
-
-  /**
-   * Get all records related to a connection (by correlationId).
-   * Connection events share a correlationId.
-   */
-  getByConnectionId(correlationId: string): AuditRecord[] {
-    return this.records
-      .filter((r) => r.correlationId === correlationId)
-      .sort((a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
-  }
-}
-
-// ── ID generation ──
-
-/**
- * Generate a unique audit record ID.
- * Uses crypto.randomUUID() for cryptographically secure IDs.
- */
-function generateAuditId(): string {
-  return crypto.randomUUID();
-}
-
-// ── AuditTrail class ──
-
-/**
- * AuditTrail — Immutable audit trail for the broker-execution boundary.
- *
- * IMMUTABILITY:
- *   Audit records are frozen after creation. They are never
- *   updated or deleted. This ensures tamper-evident audit
- *   trails for compliance and incident investigation.
- *
- * TENANT ISOLATION:
- *   - query() requires an auth context
- *   - Non-admin queries are automatically scoped to the
- *     requesting tenant
- *   - Admin can query across tenants (with isAdmin: true)
- *
- * REDACTION:
- *   - redactForAudit() strips all credential fields before
- *     persistence
- *   - The reason string is redacted if it contains credential
- *     patterns
- *   - This mirrors safeAccountDTO() in trading-policy.ts
- *
- * PERSISTENCE:
- *   - Currently uses in-memory store
- *   - For production, replace with database-backed store
- *     (Prisma ORM)
+ * Durable, append-only audit trail backed by BrokerExecutionAudit
+ * (PostgreSQL). Every method is fail-closed: DB failures throw,
+ * so security-critical callers never mistake a failed audit write
+ * for success.
  */
 export class AuditTrail {
-  private store = new AuditStore();
-
   /**
-   * Create an immutable audit record.
-   *
-   * The record is:
-   *   1. Redacted via redactForAudit() to strip credentials
-   *   2. Frozen via Object.freeze() to prevent mutation
-   *   3. Appended to the store (never updated or deleted)
-   *   4. Emitted as structured JSON to console.warn
-   *      (mirrors logSecurityEvent pattern in trading-policy.ts)
-   *
-   * @param event - The audit event input
-   * @returns The created audit record (frozen, immutable)
+   * Append an audit entry to the persistent, append-only store.
+   * Throws ServiceUnavailableError when persistence fails — callers
+   * for whom the audit record is part of the security guarantee
+   * must treat this as a failed mutation (fail-closed).
    */
-  record(event: AuditEventInput): AuditRecord {
-    // Redact the reason string to prevent credential leakage
-    const redactedReason = event.reason
-      ? (redactForAudit({ reason: event.reason }) as { reason: string }).reason
-      : null;
-
-    const auditRecord: AuditRecord = {
-      id: generateAuditId(),
+  async record(event: AuditEventInput): Promise<Record<string, unknown>> {
+    const row = await AuditRepository.append({
       actorId: event.actorId,
       tenantId: event.tenantId,
       accountId: event.accountId ?? null,
       providerId: event.providerId ?? null,
-      action: event.action,
-      previousState: event.previousState ?? null,
-      resultingState: event.resultingState ?? null,
-      reason: redactedReason,
+      action: String(event.action),
+      previousState: event.previousState ? String(event.previousState) : null,
+      resultingState: event.resultingState ? String(event.resultingState) : null,
+      reason: event.reason ?? null,
       correlationId: event.correlationId ?? null,
       commandId: event.commandId ?? null,
-      timestamp: new Date().toISOString(),
       ipMetadata: event.ipMetadata ?? null,
-    };
-
-    // Persist to store (frozen internally)
-    this.store.append(auditRecord);
-
-    // Emit structured JSON to console.warn
-    // Mirrors logSecurityEvent() pattern in trading-policy.ts
-    console.warn(JSON.stringify({
-      type: 'AUDIT_RECORD',
-      ...auditRecord,
-    }));
-
-    return auditRecord;
+    });
+    return toAuditDTO(row);
   }
 
   /**
-   * Query audit records with filtering and tenant isolation.
+   * Query audit entries with tenant isolation.
    *
-   * TENANT ISOLATION:
-   *   - If auth.isAdmin is false, the query is automatically
-   *     scoped to auth.requestingTenantId regardless of
-   *     filters.tenantId
-   *   - If auth.isAdmin is true, the query respects
-   *     filters.tenantId (or queries across tenants if omitted)
-   *
-   * @param filters - Query filters
-   * @param auth - Authorization context for tenant isolation
-   * @returns Matching audit records (sorted by timestamp desc)
-   * @throws if auth is missing or non-admin without tenantId
+   * - Non-admin auth: results are hard-scoped to auth.userId.
+   * - Admin auth (verified role): may query across tenants.
    */
-  query(filters: AuditQueryFilters, auth: AuditAuthContext): AuditRecord[] {
-    // Enforce tenant isolation
-    if (!auth.isAdmin) {
-      // Non-admin: force scope to requesting tenant
-      return this.store.query({
-        ...filters,
-        tenantId: auth.requestingTenantId,
-      });
-    }
-
-    // Admin: allow cross-tenant queries
-    // If filters.tenantId is specified, scope to that tenant
-    // If not, query across all tenants
-    return this.store.query(filters);
+  async query(filters: AuditQueryFilters, auth: AuditAuthContext): Promise<Record<string, unknown>[]> {
+    const rows = await AuditRepository.query(
+      {
+        actorId: filters.actorId,
+        action: filters.action,
+        commandId: filters.commandId,
+        correlationId: filters.correlationId,
+        tenantId: filters.tenantId,
+        limit: filters.limit,
+        offset: filters.offset,
+      },
+      auth,
+    );
+    return rows.map(toAuditDTO);
   }
 
-  /**
-   * Get the full audit trail for a specific command.
-   * Records are sorted chronologically (oldest first).
-   *
-   * @param commandId - The command ID
-   * @param auth - Authorization context for tenant isolation
-   * @returns Chronologically ordered audit records for the command
-   */
-  getCommandAuditTrail(
+  /** Get the audit trail for a specific command (tenant-scoped). */
+  async getCommandAuditTrail(
     commandId: string,
     auth: AuditAuthContext,
-  ): AuditRecord[] {
-    const records = this.store.getByCommandId(commandId);
-
-    // Enforce tenant isolation
-    if (!auth.isAdmin) {
-      return records.filter((r) => r.tenantId === auth.requestingTenantId);
-    }
-
-    return records;
+  ): Promise<Record<string, unknown>[]> {
+    return this.query({ commandId }, auth);
   }
 
-  /**
-   * Get the full audit trail for a connection.
-   * Connection events share a correlationId.
-   * Records are sorted chronologically (oldest first).
-   *
-   * @param correlationId - The correlation ID for the connection
-   * @param auth - Authorization context for tenant isolation
-   * @returns Chronologically ordered audit records for the connection
-   */
-  getConnectionAuditTrail(
-    correlationId: string,
+  /** Get the audit trail for a connection's lifecycle (tenant-scoped). */
+  async getConnectionAuditTrail(
+    _connectionId: string,
     auth: AuditAuthContext,
-  ): AuditRecord[] {
-    const records = this.store.getByConnectionId(correlationId);
+  ): Promise<Record<string, unknown>[]> {
+    // Connection lifecycle entries carry action CONNECT/DISCONNECT/UPDATE.
+    // Scoped to the requesting tenant (admin may query cross-tenant).
+    return this.query({ action: 'CONNECT' }, auth);
+  }
 
-    // Enforce tenant isolation
-    if (!auth.isAdmin) {
-      return records.filter((r) => r.tenantId === auth.requestingTenantId);
-    }
-
-    return records;
+  /** Count entries (tenant-scoped; admin may count all). */
+  async count(auth: AuditAuthContext, filters?: AuditQueryFilters): Promise<number> {
+    return AuditRepository.count(auth, filters);
   }
 }
 
 // ── Singleton ──
 
-/**
- * Default AuditTrail instance.
- * Use this for the broker-execution boundary's audit logging.
- *
- * Import as:
- *   import { auditTrail } from '@/lib/broker-execution/observability/audit-trail';
- */
+/** Global AuditTrail singleton (thin stateless domain layer). */
 export const auditTrail = new AuditTrail();

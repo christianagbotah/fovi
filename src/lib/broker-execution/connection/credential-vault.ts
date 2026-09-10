@@ -1,22 +1,38 @@
 // ============================================================
-// credential-vault.ts — Encrypted credential storage for broker connections
+// credential-vault.ts — Fail-closed credential encryption for
+// broker connections (CORRECTION ROUND, defect 5).
 //
 // SECURITY CONTRACT:
-//   - All credentials encrypted with AES-256-GCM via @/lib/encryption
-//   - AAD bound to "fovi:broker-credential:{tenantId}:{connectionId}"
-//     prevents ciphertext transplant across tenants or connections
-//   - enforcePhase1CredentialIntake() MUST be called before any
-//     non-demo credential storage — Phase 1 blocks live credential intake
-//   - Credentials are NEVER returned in API responses — only decrypted
-//     for broker adapter use via retrieveCredentials()
-//   - redactCredentials() replaces every field with "***REDACTED***"
+//   - This module is the CRYPTO LAYER ONLY. Persistence lives in
+//     the BrokerConnection encrypted columns via
+//     connection-repository.ts. There is NO in-memory credential
+//     store and NO in-memory credential truth.
+//   - Encryption uses AES-256-GCM via @/lib/encryption with AAD
+//     bound to "fovi:broker-credential:{tenantId}:{connectionId}"
+//     — ciphertext cannot be transplanted across tenants or
+//     connections.
+//   - WRITE PATH (encryptCredentialFields): for every non-empty
+//     field, encrypt(), verify the ciphertext is non-empty AND
+//     structurally valid (round-trip decrypt must reproduce the
+//     plaintext). If ANY required encryption fails, the ENTIRE
+//     write is aborted — no partial credential sets, no success.
+//     The underlying encrypt() returns '' on failure, so an
+//     unchecked result would persist "enc:v3:" with an empty
+//     payload — that is now impossible.
+//   - READ PATH (decryptCredentialFields): every stored non-empty
+//     encrypted value must successfully decrypt. If ANY required
+//     value fails authentication/decryption, the ENTIRE retrieval
+//     fails — a partially populated credential set is NEVER
+//     returned as success.
+//   - Phase 1 credential intake enforcement
+//     (enforcePhase1CredentialIntake) happens at the persistence
+//     boundary (connection-repository) BEFORE encryption.
+//   - Plaintext secrets are never logged.
 //   - Encrypted format: enc:v3:{base64(iv+ciphertext+tag)}
-//     (v3 = AAD-bound, distinguishes from legacy v1/v2 formats)
 // ============================================================
 
 import { encrypt, decrypt } from '@/lib/encryption';
-import { enforcePhase1CredentialIntake, logSecurityEvent } from '@/lib/trading-policy';
-import { v4 as uuidv4 } from 'uuid';
+import { logSecurityEvent } from '@/lib/trading-policy';
 
 // ── Credential field types ──
 
@@ -34,40 +50,47 @@ export interface BrokerCredentials {
   refreshToken?: string;
 }
 
+/** The ordered credential field list (single source of truth). */
+export const CREDENTIAL_FIELDS = [
+  'apiKey',
+  'apiSecret',
+  'passphrase',
+  'token',
+  'refreshToken',
+] as const;
+
+export type CredentialField = (typeof CREDENTIAL_FIELDS)[number];
+
+/** Encrypted field map. Absent fields are undefined; stored empty strings are invalid. */
+export type EncryptedCredentialFields = Partial<Record<CredentialField, string>>;
+
+// ── Fail-closed error types ──
+
 /**
- * Encrypted credential record stored in the vault.
- * Each field is individually encrypted with AAD binding.
- * Format per field: "enc:v3:{base64(iv+ciphertext+tag)}"
+ * Thrown when a required credential encryption fails or produces
+ * an invalid ciphertext. The ENTIRE credential write must abort.
  */
-export interface EncryptedCredentialRecord {
-  connectionId: string;
-  tenantId: string;
-  encryptedFields: Record<keyof BrokerCredentials, string>;
-  createdAt: string;
-  updatedAt: string;
+export class CredentialEncryptionFailureError extends Error {
+  readonly code = 'CREDENTIAL_ENCRYPTION_FAILED';
+
+  constructor(field: CredentialField, detail: string) {
+    super(`Credential encryption failed for field '${field}': ${detail}`);
+    this.name = 'CredentialEncryptionFailureError';
+  }
 }
 
 /**
- * Result of a credential storage operation.
- * Contains the encrypted record — NEVER the plaintext.
+ * Thrown when a stored encrypted credential fails decryption or
+ * authentication. The ENTIRE credential retrieval must fail —
+ * partial credential sets are never returned as success.
  */
-export interface CredentialStoreResult {
-  success: boolean;
-  connectionId: string;
-  tenantId: string;
-  encryptedRecord: EncryptedCredentialRecord | null;
-  error?: string;
-}
+export class CredentialDecryptionFailureError extends Error {
+  readonly code = 'CREDENTIAL_DECRYPTION_FAILED';
 
-/**
- * Result of a credential retrieval operation.
- * Plaintext credentials are ONLY available here — this type
- * must NEVER appear in API responses.
- */
-export interface CredentialRetrieveResult {
-  success: boolean;
-  credentials: BrokerCredentials | null;
-  error?: string;
+  constructor(field: CredentialField, detail: string) {
+    super(`Credential decryption failed for field '${field}': ${detail}`);
+    this.name = 'CredentialDecryptionFailureError';
+  }
 }
 
 // ── Constants ──
@@ -107,472 +130,174 @@ function addPrefix(base64Payload: string): string {
   return `${ENCRYPTION_PREFIX}${base64Payload}`;
 }
 
-// ── CredentialVault class ──
+// ── Fail-closed encrypt ──
 
 /**
- * CredentialVault manages encrypted credential storage for broker connections.
+ * Encrypt every non-empty credential field with AAD binding, with
+ * fail-closed verification:
  *
- * SECURITY GUARANTEES:
- *   1. All credentials encrypted with AES-256-GCM (encryption.ts)
- *   2. AAD binding prevents cross-tenant/cross-connection decryption
- *   3. Phase 1 enforcement: non-demo credential intake is blocked
- *   4. Credentials NEVER appear in API responses
- *   5. Redaction utilities ensure safe logging/serialization
+ *   1. encrypt() the value.
+ *   2. Verify the returned ciphertext is NON-EMPTY (the underlying
+ *      encrypt() returns '' on failure).
+ *   3. Verify structural validity: base64-decodes to at least
+ *      IV(12) + AUTH_TAG(16) + 1 ciphertext byte.
+ *   4. Verify round-trip: decrypt(ciphertext, aad) === plaintext.
  *
- * STORAGE MODEL:
- *   In-memory store with Map keyed by "{tenantId}:{connectionId}".
- *   In production, this would be backed by a persistent encrypted store
- *   (database with encryption at rest). The in-memory model ensures
- *   credentials never touch disk unencrypted and provides the same
- *   security contract for the vault API surface.
+ * If ANY non-empty field fails any check, this throws
+ * CredentialEncryptionFailureError — the caller must abort the
+ * ENTIRE credential write (no partial persistence, no success).
+ *
+ * @returns Map of encrypted fields ("enc:v3:{base64}"). Fields that
+ *          were absent/empty in the input are absent in the result.
  */
-export class CredentialVault {
-  private readonly store = new Map<string, EncryptedCredentialRecord>();
+export async function encryptCredentialFields(
+  credentials: BrokerCredentials,
+  tenantId: string,
+  connectionId: string,
+): Promise<EncryptedCredentialFields> {
+  const aad = buildCredentialAAD(tenantId, connectionId);
+  const encrypted: EncryptedCredentialFields = {};
 
-  /**
-   * Build the composite key for the internal store.
-   */
-  private storeKey(connectionId: string, tenantId: string): string {
-    return `${tenantId}:${connectionId}`;
+  for (const field of CREDENTIAL_FIELDS) {
+    const value = credentials[field];
+    if (!value || value.length === 0) continue; // absent field — not an error
+
+    const ciphertext = await encrypt(value, aad);
+
+    // Check 1: non-empty ciphertext (encrypt() returns '' on failure).
+    if (!ciphertext || ciphertext.length === 0) {
+      logSecurityEvent({
+        eventType: 'CREDENTIAL_ENCRYPT_EMPTY_RESULT',
+        reason: `encrypt() returned an empty result for field '${field}' (connection=${connectionId})`,
+      });
+      throw new CredentialEncryptionFailureError(field, 'encrypt() returned an empty result');
+    }
+
+    // Check 2: structural validity — base64 payload must decode to
+    // at least IV (12 bytes) + auth tag (16 bytes) + 1 ciphertext byte.
+    const payload = Buffer.from(ciphertext, 'base64');
+    if (payload.length < 12 + 16 + 1 || Buffer.compare(Buffer.from(ciphertext, 'base64'), payload) !== 0) {
+      logSecurityEvent({
+        eventType: 'CREDENTIAL_ENCRYPT_INVALID_STRUCTURE',
+        reason: `encrypt() returned a structurally invalid ciphertext for field '${field}' (connection=${connectionId})`,
+      });
+      throw new CredentialEncryptionFailureError(field, 'ciphertext is structurally invalid');
+    }
+
+    // Check 3: round-trip verification — the ciphertext must decrypt
+    // back to the exact plaintext under the same AAD.
+    const roundTrip = await decrypt(ciphertext, aad);
+    if (roundTrip !== value) {
+      logSecurityEvent({
+        eventType: 'CREDENTIAL_ENCRYPT_ROUNDTRIP_FAILED',
+        reason: `Round-trip verification failed for field '${field}' (connection=${connectionId})`,
+      });
+      throw new CredentialEncryptionFailureError(field, 'round-trip verification failed');
+    }
+
+    encrypted[field] = addPrefix(ciphertext);
   }
 
-  /**
-   * Store credentials for a broker connection.
-   *
-   * CONTAINMENT:
-   *   - Calls enforcePhase1CredentialIntake() before any non-demo
-   *     credential storage. Phase 1 blocks live credential intake.
-   *   - Demo credentials (broker=demo, accountType=demo, isDemo=true)
-   *     are the only credentials allowed during Phase 1.
-   *
-   * ENCRYPTION:
-   *   - Each credential field is individually encrypted with AES-256-GCM
-   *   - AAD bound to "fovi:broker-credential:{tenantId}:{connectionId}"
-   *   - Output format: "enc:v3:{base64(iv+ciphertext+tag)}"
-   *
-   * @param connectionId - Unique connection identifier
-   * @param tenantId - Tenant identifier for isolation
-   * @param credentials - Plaintext credential fields to encrypt and store
-   * @param accountContext - Account context for Phase 1 enforcement
-   */
-  async storeCredentials(
-    connectionId: string,
-    tenantId: string,
-    credentials: BrokerCredentials,
-    accountContext: {
-      broker: string;
-      accountType: string;
-      isDemo?: boolean | null;
-    },
-  ): Promise<CredentialStoreResult> {
-    const correlationId = uuidv4();
-
-    // Phase 1 enforcement: block non-demo credential intake
-    const policyResult = enforcePhase1CredentialIntake(
-      accountContext.broker,
-      accountContext.accountType,
-      accountContext.isDemo,
-    );
-
-    if (policyResult.blocked) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_STORAGE_BLOCKED',
-        correlationId,
-        reason: `Phase 1 blocked credential storage for connection=${connectionId} tenant=${tenantId} broker=${accountContext.broker}`,
-      });
-      return {
-        success: false,
-        connectionId,
-        tenantId,
-        encryptedRecord: null,
-        error: 'Phase 1 containment: credential intake is not permitted for non-demo accounts.',
-      };
-    }
-
-    try {
-      const aad = buildCredentialAAD(tenantId, connectionId);
-      const encryptedFields: Record<keyof BrokerCredentials, string> = {
-        apiKey: '',
-        apiSecret: '',
-        passphrase: '',
-        token: '',
-        refreshToken: '',
-      };
-
-      // Encrypt each non-empty field individually
-      const fields: (keyof BrokerCredentials)[] = [
-        'apiKey', 'apiSecret', 'passphrase', 'token', 'refreshToken',
-      ];
-
-      for (const field of fields) {
-        const value = credentials[field];
-        if (value && value.length > 0) {
-          const encrypted = await encrypt(value, aad);
-          encryptedFields[field] = addPrefix(encrypted);
-        }
-      }
-
-      const now = new Date().toISOString();
-      const record: EncryptedCredentialRecord = {
-        connectionId,
-        tenantId,
-        encryptedFields,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      this.store.set(this.storeKey(connectionId, tenantId), record);
-
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_STORED',
-        correlationId,
-        reason: `Credentials encrypted and stored for connection=${connectionId} tenant=${tenantId}`,
-      });
-
-      return {
-        success: true,
-        connectionId,
-        tenantId,
-        encryptedRecord: record,
-      };
-    } catch (error) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_STORAGE_ERROR',
-        correlationId,
-        reason: `Failed to encrypt/store credentials for connection=${connectionId} tenant=${tenantId}: ${error instanceof Error ? error.message : 'unknown'}`,
-      });
-      return {
-        success: false,
-        connectionId,
-        tenantId,
-        encryptedRecord: null,
-        error: 'Credential encryption failed.',
-      };
-    }
-  }
-
-  /**
-   * Retrieve and decrypt credentials for a broker connection.
-   *
-   * SECURITY: This method is INTERNAL ONLY — for broker adapter use.
-   * Credentials must NEVER be exposed through API responses.
-   * Use redactCredentials() for any external-facing representation.
-   *
-   * AAD binding ensures that credentials can only be decrypted
-   * with the correct tenant+connection context. A mismatch
-   * (e.g., cross-tenant attempt) will fail decryption.
-   *
-   * @param connectionId - Unique connection identifier
-   * @param tenantId - Tenant identifier (must match the stored record)
-   */
-  async retrieveCredentials(
-    connectionId: string,
-    tenantId: string,
-  ): Promise<CredentialRetrieveResult> {
-    const correlationId = uuidv4();
-    const key = this.storeKey(connectionId, tenantId);
-    const record = this.store.get(key);
-
-    if (!record) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_RETRIEVAL_MISSING',
-        correlationId,
-        reason: `No credentials found for connection=${connectionId} tenant=${tenantId}`,
-      });
-      return {
-        success: false,
-        credentials: null,
-        error: 'Credentials not found for this connection.',
-      };
-    }
-
-    try {
-      const aad = buildCredentialAAD(tenantId, connectionId);
-      const credentials: BrokerCredentials = {};
-
-      const fields: (keyof BrokerCredentials)[] = [
-        'apiKey', 'apiSecret', 'passphrase', 'token', 'refreshToken',
-      ];
-
-      for (const field of fields) {
-        const encryptedValue = record.encryptedFields[field];
-        if (encryptedValue && isEncryptedV3(encryptedValue)) {
-          const rawBase64 = stripPrefix(encryptedValue);
-          const decrypted = await decrypt(rawBase64, aad);
-          if (decrypted) {
-            credentials[field] = decrypted;
-          }
-        }
-      }
-
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_RETRIEVED',
-        correlationId,
-        reason: `Credentials decrypted for connection=${connectionId} tenant=${tenantId}`,
-      });
-
-      return {
-        success: true,
-        credentials,
-      };
-    } catch (error) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_RETRIEVAL_ERROR',
-        correlationId,
-        reason: `Failed to decrypt credentials for connection=${connectionId} tenant=${tenantId}: ${error instanceof Error ? error.message : 'unknown'}`,
-      });
-      return {
-        success: false,
-        credentials: null,
-        error: 'Credential decryption failed.',
-      };
-    }
-  }
-
-  /**
-   * Rotate credentials for a broker connection.
-   *
-   * Replaces existing encrypted credentials with new encrypted values.
-   * The old credentials are overwritten in memory (no history retained
-   * in the vault — audit trail captures the rotation event).
-   *
-   * CONTAINMENT: Same Phase 1 enforcement as storeCredentials().
-   *
-   * @param connectionId - Unique connection identifier
-   * @param tenantId - Tenant identifier
-   * @param newCredentials - New plaintext credential fields
-   * @param accountContext - Account context for Phase 1 enforcement
-   */
-  async rotateCredentials(
-    connectionId: string,
-    tenantId: string,
-    newCredentials: BrokerCredentials,
-    accountContext: {
-      broker: string;
-      accountType: string;
-      isDemo?: boolean | null;
-    },
-  ): Promise<CredentialStoreResult> {
-    const correlationId = uuidv4();
-
-    // Phase 1 enforcement
-    const policyResult = enforcePhase1CredentialIntake(
-      accountContext.broker,
-      accountContext.accountType,
-      accountContext.isDemo,
-    );
-
-    if (policyResult.blocked) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_ROTATION_BLOCKED',
-        correlationId,
-        reason: `Phase 1 blocked credential rotation for connection=${connectionId} tenant=${tenantId}`,
-      });
-      return {
-        success: false,
-        connectionId,
-        tenantId,
-        encryptedRecord: null,
-        error: 'Phase 1 containment: credential rotation is not permitted for non-demo accounts.',
-      };
-    }
-
-    // Verify existing credentials exist
-    const key = this.storeKey(connectionId, tenantId);
-    const existing = this.store.get(key);
-    if (!existing) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_ROTATION_MISSING',
-        correlationId,
-        reason: `Cannot rotate: no existing credentials for connection=${connectionId} tenant=${tenantId}`,
-      });
-      return {
-        success: false,
-        connectionId,
-        tenantId,
-        encryptedRecord: null,
-        error: 'No existing credentials to rotate.',
-      };
-    }
-
-    try {
-      const aad = buildCredentialAAD(tenantId, connectionId);
-      const encryptedFields: Record<keyof BrokerCredentials, string> = {
-        apiKey: '',
-        apiSecret: '',
-        passphrase: '',
-        token: '',
-        refreshToken: '',
-      };
-
-      const fields: (keyof BrokerCredentials)[] = [
-        'apiKey', 'apiSecret', 'passphrase', 'token', 'refreshToken',
-      ];
-
-      for (const field of fields) {
-        const value = newCredentials[field];
-        if (value && value.length > 0) {
-          const encrypted = await encrypt(value, aad);
-          encryptedFields[field] = addPrefix(encrypted);
-        }
-      }
-
-      const now = new Date().toISOString();
-      const record: EncryptedCredentialRecord = {
-        connectionId,
-        tenantId,
-        encryptedFields,
-        createdAt: existing.createdAt, // preserve original creation time
-        updatedAt: now,
-      };
-
-      this.store.set(key, record);
-
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_ROTATED',
-        correlationId,
-        reason: `Credentials rotated for connection=${connectionId} tenant=${tenantId}`,
-      });
-
-      return {
-        success: true,
-        connectionId,
-        tenantId,
-        encryptedRecord: record,
-      };
-    } catch (error) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_ROTATION_ERROR',
-        correlationId,
-        reason: `Failed to rotate credentials for connection=${connectionId} tenant=${tenantId}: ${error instanceof Error ? error.message : 'unknown'}`,
-      });
-      return {
-        success: false,
-        connectionId,
-        tenantId,
-        encryptedRecord: null,
-        error: 'Credential rotation encryption failed.',
-      };
-    }
-  }
-
-  /**
-   * Revoke (securely remove) credentials for a broker connection.
-   *
-   * Overwrites the in-memory record and deletes it from the store.
-   * In a persistent backing store, this would also issue a secure
-   * delete command. The audit trail records the revocation.
-   *
-   * @param connectionId - Unique connection identifier
-   * @param tenantId - Tenant identifier
-   */
-  revokeCredentials(connectionId: string, tenantId: string): boolean {
-    const correlationId = uuidv4();
-    const key = this.storeKey(connectionId, tenantId);
-    const record = this.store.get(key);
-
-    if (!record) {
-      logSecurityEvent({
-        eventType: 'CREDENTIAL_REVOKE_MISSING',
-        correlationId,
-        reason: `No credentials to revoke for connection=${connectionId} tenant=${tenantId}`,
-      });
-      return false;
-    }
-
-    // Secure overwrite: replace encrypted fields with zeros before deletion
-    const fields: (keyof BrokerCredentials)[] = [
-      'apiKey', 'apiSecret', 'passphrase', 'token', 'refreshToken',
-    ];
-    for (const field of fields) {
-      if (record.encryptedFields[field]) {
-        record.encryptedFields[field] = '';
-      }
-    }
-
-    this.store.delete(key);
-
-    logSecurityEvent({
-      eventType: 'CREDENTIAL_REVOKED',
-      correlationId,
-      reason: `Credentials revoked and removed for connection=${connectionId} tenant=${tenantId}`,
-    });
-
-    return true;
-  }
-
-  /**
-   * Check if credentials exist for a connection.
-   */
-  hasCredentials(connectionId: string, tenantId: string): boolean {
-    return this.store.has(this.storeKey(connectionId, tenantId));
-  }
-
-  /**
-   * Redact all credential fields — safe for API responses and logging.
-   *
-   * Returns a copy of the credentials object with every field
-   * replaced by "***REDACTED***". This ensures credentials are
-   * NEVER leaked through API responses or log output.
-   */
-  redactCredentials(credentials: BrokerCredentials): Record<keyof BrokerCredentials, string> {
-    const redacted: Record<keyof BrokerCredentials, string> = {
-      apiKey: REDACTED_VALUE,
-      apiSecret: REDACTED_VALUE,
-      passphrase: REDACTED_VALUE,
-      token: REDACTED_VALUE,
-      refreshToken: REDACTED_VALUE,
-    };
-
-    // Only include fields that were present in the input
-    const fields: (keyof BrokerCredentials)[] = [
-      'apiKey', 'apiSecret', 'passphrase', 'token', 'refreshToken',
-    ];
-    for (const field of fields) {
-      if (credentials[field] === undefined) {
-        delete redacted[field];
-      }
-    }
-
-    return redacted;
-  }
-
-  /**
-   * Check if a value is a redacted credential placeholder.
-   * Useful for filtering redacted values in downstream processing.
-   */
-  isCredentialRedacted(value: string | undefined | null): boolean {
-    return value === REDACTED_VALUE;
-  }
-
-  /**
-   * Get the redacted constant value (for external comparison).
-   */
-  get redactedValue(): string {
-    return REDACTED_VALUE;
-  }
+  return encrypted;
 }
 
-// ── Singleton instance ──
+// ── Fail-closed decrypt ──
 
 /**
- * Global CredentialVault singleton.
- * In production with multiple processes, this would be backed by
- * a shared encrypted store (e.g., database with encryption at rest).
- * The singleton ensures a single source of truth within a process.
+ * Decrypt stored encrypted credential fields with fail-closed
+ * whole-retrieval semantics:
+ *
+ *   For every stored non-empty value:
+ *     - it must be in the v3 AAD-bound format;
+ *     - it must decrypt to a NON-EMPTY plaintext (decrypt() returns
+ *       '' on authentication/decryption failure).
+ *
+ * If ANY stored non-empty value fails, this throws
+ * CredentialDecryptionFailureError — the caller must fail the
+ * ENTIRE retrieval. A partially populated credential set is never
+ * returned as success.
+ *
+ * @param stored Map of stored values (from BrokerConnection
+ *        encrypted* columns). Empty-string entries mean "no value
+ *        stored" and are skipped.
  */
-let _instance: CredentialVault | null = null;
+export async function decryptCredentialFields(
+  stored: Partial<Record<CredentialField, string | null | undefined>>,
+  tenantId: string,
+  connectionId: string,
+): Promise<BrokerCredentials> {
+  const aad = buildCredentialAAD(tenantId, connectionId);
+  const credentials: BrokerCredentials = {};
 
-export function getCredentialVault(): CredentialVault {
-  if (!_instance) {
-    _instance = new CredentialVault();
+  for (const field of CREDENTIAL_FIELDS) {
+    const storedValue = stored[field];
+    if (!storedValue || storedValue.length === 0) continue; // nothing stored — not an error
+
+    if (!isEncryptedV3(storedValue)) {
+      logSecurityEvent({
+        eventType: 'CREDENTIAL_DECRYPT_INVALID_FORMAT',
+        reason: `Stored value for field '${field}' is not in the v3 AAD-bound format (connection=${connectionId})`,
+      });
+      throw new CredentialDecryptionFailureError(field, 'stored value is not in enc:v3 format');
+    }
+
+    const rawBase64 = stripPrefix(storedValue);
+    if (rawBase64.length === 0) {
+      logSecurityEvent({
+        eventType: 'CREDENTIAL_DECRYPT_EMPTY_PAYLOAD',
+        reason: `Stored value for field '${field}' has an empty encrypted payload (connection=${connectionId})`,
+      });
+      throw new CredentialDecryptionFailureError(field, 'empty encrypted payload');
+    }
+
+    const plaintext = await decrypt(rawBase64, aad);
+    if (!plaintext || plaintext.length === 0) {
+      // decrypt() returns '' on ANY failure: wrong key, tampered tag,
+      // wrong AAD (cross-tenant transplant attempt), corruption.
+      logSecurityEvent({
+        eventType: 'CREDENTIAL_DECRYPT_AUTH_FAILED',
+        reason: `Decryption/authentication failed for field '${field}' (connection=${connectionId})`,
+      });
+      throw new CredentialDecryptionFailureError(
+        field,
+        'decryption or authentication failed (wrong key, tampered ciphertext, or AAD mismatch)',
+      );
+    }
+
+    credentials[field] = plaintext;
   }
-  return _instance;
+
+  return credentials;
+}
+
+// ── Redaction utilities (unchanged contract) ──
+
+/** The redacted placeholder value. */
+export const REDACTED = REDACTED_VALUE;
+
+/**
+ * Redact all credential fields — safe for API responses and logging.
+ *
+ * Returns a copy of the credentials object with every field
+ * replaced by "***REDACTED***". This ensures credentials are
+ * NEVER leaked through API responses or log output.
+ */
+export function redactCredentials(
+  credentials: BrokerCredentials,
+): Partial<Record<CredentialField, string>> {
+  const redacted: Partial<Record<CredentialField, string>> = {};
+  for (const field of CREDENTIAL_FIELDS) {
+    if (credentials[field] !== undefined) {
+      redacted[field] = REDACTED_VALUE;
+    }
+  }
+  return redacted;
 }
 
 /**
- * Reset the singleton (for testing only).
+ * Check if a value is a redacted credential placeholder.
+ * Useful for filtering redacted values in downstream processing.
  */
-export function resetCredentialVault(): void {
-  _instance = null;
+export function isCredentialRedacted(value: string | undefined | null): boolean {
+  return value === REDACTED_VALUE;
 }

@@ -120,6 +120,18 @@ export interface PolicyEvaluationContext {
   executionEnabled: boolean;
   /** Whether the provider is registered and active */
   providerActive: boolean;
+  /**
+   * CORRECTION ROUND: server-side provenance for the submission.
+   * actorId: the authenticated user (from the verified proxy identity).
+   * connectionId: the PostgreSQL BrokerConnection id this command
+   * targets (required for the ExecutionCommandRecord FK).
+   * ipMetadata: sanitized network metadata for audit records.
+   * These fields are populated by the API boundary from trusted
+   * records — never from caller-supplied values.
+   */
+  actorId?: string;
+  connectionId?: string;
+  ipMetadata?: unknown;
 }
 
 // ── Gate-specific containment codes ──

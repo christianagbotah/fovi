@@ -1,49 +1,51 @@
 // ============================================================
-// execution-provider.ts — Full execution flow orchestrator
+// execution-provider.ts — THE central command orchestration
+// boundary (CORRECTION ROUND, defects 1, 3, 4, 9, 10)
 //
 // CONTAINMENT CONSTRAINT:
-//   The ExecutionProvider orchestrates the full execution flow
-//   from command receipt through the complete gate chain.
+//   The ExecutionProvider is the ONE central orchestration boundary
+//   for all command submission in the broker-execution framework.
+//   API routes do NOT call enforceLiveTradingPolicy() directly and
+//   do NOT construct policy contexts from caller-supplied values —
+//   they resolve the connection/account from PostgreSQL, prove
+//   ownership server-side, build the policy context from trusted
+//   DB/canonical-registry records, and hand the command to THIS
+//   boundary.
 //
-//   FLOW:
-//     1. Receive command
-//     2. Validate command structure (dry-run)
-//     3. Policy gate (evaluateExecutionPolicy)
-//        → enforceLiveTradingPolicy() is the FIRST check
-//        → If ANY gate fails → BLOCKED, STOP
-//     4. Idempotency gate (evaluateIdempotency)
-//        → If duplicate and not allowed → BLOCKED, STOP
-//     5. State machine transition
-//        → VALIDATING → APPROVED (if all gates pass)
-//        → VALIDATING → BLOCKED (if any gate fails)
-//     6. STOP — Execution is disabled in Phase 1
-//        Even if all gates pass, execution is NOT submitted
-//        to any broker adapter. This is a hard Phase 1
-//        containment constraint.
-//
-//   The ExecutionProvider MUST import and respect
-//   enforceLiveTradingPolicy() from trading-policy.ts.
-//   There is NO way to bypass this. Even validateCommand()
-//   checks authorization but NEVER submits.
+//   FLOW (submitCommand):
+//     1. Receive command (tenant/account/provider context already
+//        derived server-side by the route from trusted records)
+//     2. Validate command structure (dry-run, pure)
+//     3. enforceLiveTradingPolicy() — UNCONDITIONAL first
+//        containment check (also re-checked inside the policy
+//        gate as gate 1 — defense in depth)
+//     4. Kill-switch evaluation — AUTHORITATIVE PostgreSQL query.
+//        If the store is unreachable this fails CLOSED: the
+//        submission is rejected as unavailable (never "assume no
+//        kill switch").
+//     5. Full policy gate chain (11 gates)
+//     6. Atomic persistence: command record + state transitions +
+//        idempotency claim + audit entry in ONE PostgreSQL
+//        transaction. Concurrent identical submissions produce
+//        exactly one authoritative record (unique-constraint
+//        serialized).
+//     7. STOP — execution is disabled in Phase 1. NO broker
+//        adapter execution method is EVER called. No command
+//        leaves the persistence boundary toward a broker.
 //
 //   Phase 1 behavior:
-//     - submitCommand() will ALWAYS be blocked by the policy
-//       gate for any non-demo account
-//     - Even for demo accounts, execution stops at step 6
-//       (execution is disabled)
-//     - No broker adapter is ever called
-//     - No funds are ever affected
+//     - The routes construct contexts with executionEnabled=false
+//       (a hard constant, not env-trust) — every submission ends
+//       BLOCKED at the environment gate after passing the
+//       unconditional containment check.
+//     - Even for demo connections, execution stops after the
+//       state machine records the outcome. No funds are affected.
 // ============================================================
 
 import { enforceLiveTradingPolicy, logSecurityEvent } from '@/lib/trading-policy';
-import type {
-  ExecutionCommand,
-  ExecutionState,
-} from '@/lib/broker-execution/types';
-import {
-  ExecutionState as ExecutionStateEnum,
-} from '@/lib/broker-execution/types';
-import type { ExecutionStateRecord } from '@/lib/broker-execution/types/state-machine';
+import type { ExecutionCommand, ExecutionState } from '@/lib/broker-execution/types';
+import { ExecutionState as ExecutionStateEnum } from '@/lib/broker-execution/types';
+import { isValidTransition } from '@/lib/broker-execution/types/state-machine';
 import type { KillSwitch } from '@/lib/broker-execution/types/kill-switches';
 import {
   evaluateExecutionPolicy,
@@ -51,18 +53,14 @@ import {
   type PolicyDecision,
   type PolicyEvaluationContext,
 } from './policy-gate';
-import { evaluateKillSwitches } from '@/lib/broker-execution/kill-switches/kill-switch-manager';
+import { evaluateKillSwitches, KillSwitchEvaluationUnavailableError } from '@/lib/broker-execution/kill-switches/kill-switch-manager';
+import { generateRequestFingerprint } from './idempotency-gate';
 import {
-  evaluateIdempotency,
-  recordIdempotency,
-  updateIdempotencyState,
-} from './idempotency-gate';
-import {
-  ExecutionStateMachine,
-  executionStateMachine,
-  InvalidTransitionError,
-  TerminalStateError,
-} from './state-machine';
+  CommandRepository,
+  toCommandDTO,
+  type ExecutionCommandRow,
+} from '../persistence/command-repository';
+import { ServiceUnavailableError } from '../persistence/db-access';
 import { v4 as uuidv4 } from 'uuid';
 
 // ── Execution result ──
@@ -70,35 +68,38 @@ import { v4 as uuidv4 } from 'uuid';
 /**
  * Result of submitting a command through the execution provider.
  *
- * - commandId: The stable UUID of the command
- * - state: The current execution state
- * - decision: The policy gate decision (if evaluated)
- * - idempotencyResult: The idempotency gate result (if evaluated)
- * - stateRecord: The full state machine record (if created)
- * - blocked: true if the command was blocked at any gate
- * - reason: Human-readable explanation of the outcome
+ * - outcome: what happened at the boundary
+ *   - BLOCKED: a gate denied the command (persisted as BLOCKED)
+ *   - APPROVED: all gates passed; execution stopped (Phase 1)
+ *   - DUPLICATE: safe retry — deduplicated to the existing record
+ *   - CONFLICT: same idempotency key with a different fingerprint
+ *   - UNAVAILABLE: fail-closed (e.g. kill-switch store or the
+ *     authoritative command store unreachable) — the route maps
+ *     this to 503
  */
 export interface ExecutionResult {
-  /** The command ID */
+  /** The command ID (of the authoritative record) */
   commandId: string;
-  /** Current execution state */
+  /** Current execution state of the authoritative record */
   state: ExecutionState;
   /** Policy gate decision (if evaluated) */
   policyDecision: PolicyDecision | null;
-  /** Idempotency evaluation result (if evaluated) */
-  idempotencyBlocked: boolean;
-  /** Full state machine record (if created) */
-  stateRecord: ExecutionStateRecord | null;
-  /** Whether the command was blocked */
+  /** Outcome classification */
+  outcome: 'BLOCKED' | 'APPROVED' | 'DUPLICATE' | 'CONFLICT' | 'UNAVAILABLE';
+  /** Whether the command was blocked by containment */
   blocked: boolean;
+  /** Whether fail-closed unavailability caused the rejection */
+  unavailable: boolean;
   /** Human-readable explanation */
   reason: string;
+  /** The persisted command record (safe DTO), when available */
+  record: Record<string, unknown> | null;
 }
 
 // ── Validation result ──
 
 /**
- * Result of dry-run validation (never submits).
+ * Result of dry-run validation (never submits, never persists).
  */
 export interface ValidationResult {
   /** Whether the command is structurally valid */
@@ -113,64 +114,39 @@ export interface ValidationResult {
   authorizationReason: string | null;
 }
 
-// ── ExecutionProvider class ──
+// ── ExecutionProvider ──
 
 /**
  * Orchestrates the full execution flow for broker commands.
+ * This is the single central command orchestration boundary.
  *
- * This is the top-level entry point for all command submission
- * in the broker-execution boundary. It coordinates:
- *   - Command validation (structure check)
- *   - Policy gate evaluation (enforceLiveTradingPolicy + all gates)
- *   - Idempotency gate evaluation (deduplication)
- *   - State machine transitions (lifecycle management)
- *
- * IMPORTANT: During Phase 1, execution is ALWAYS blocked.
- * No command reaches the broker adapter. Even if all gates
- * pass, the flow stops after state machine approval.
- * This is a hard architectural constraint.
- *
- * Usage:
- * ```ts
- * const provider = new ExecutionProvider();
- * const result = await provider.submitCommand(command, context);
- * if (result.blocked) {
- *   // Command was blocked — inspect result.reason
- * } else {
- *   // All gates passed but execution is disabled (Phase 1)
- *   // Command is in APPROVED state, waiting for Phase 2
- * }
- * ```
+ * IMPORTANT: During Phase 1, no command reaches a broker adapter.
+ * Even if all gates pass, the flow stops after persistence of the
+ * APPROVED state. This is a hard architectural constraint.
  */
 export class ExecutionProvider {
-  private stateMachine: ExecutionStateMachine;
-
-  constructor(stateMachine?: ExecutionStateMachine) {
-    this.stateMachine = stateMachine ?? executionStateMachine;
-  }
-
   // ── Submit command (full flow) ──
 
   /**
-   * Submit an execution command through the full execution flow.
+   * Submit an execution command through the central orchestration
+   * boundary.
    *
-   * Flow:
-   *   1. Validate command structure
-   *   2. Policy gate (enforceLiveTradingPolicy is FIRST check)
-   *   3. Idempotency gate
-   *   4. State machine transitions
-   *   5. STOP — execution disabled in Phase 1
+   * The caller (API route) MUST have:
+   *   - authenticated the caller;
+   *   - resolved the account/connection from PostgreSQL;
+   *   - proven ownership from server-side records;
+   *   - derived broker/provider/demo/account context from trusted
+   *     DB/canonical-registry records;
+   *   - constructed the policy context server-side.
    *
-   * This method will ALWAYS result in a blocked or stopped
-   * command during Phase 1:
-   *   - Non-demo accounts: blocked by enforceLiveTradingPolicy()
-   *   - Demo accounts: all gates may pass, but execution is
-   *     disabled (step 5), so the command stays in APPROVED
-   *     state and is never submitted to the broker adapter.
-   *
-   * @param command - The execution command to submit
-   * @param context - Policy evaluation context
-   * @returns ExecutionResult with the outcome
+   * This method:
+   *   1. Validates command structure
+   *   2. enforceLiveTradingPolicy() — unconditional first check
+   *   3. Evaluates kill switches (fail-closed on store failure)
+   *   4. Evaluates the full 11-gate policy chain
+   *   5. Persists command + transitions + idempotency + audit
+   *      atomically
+   *   6. STOPS — no adapter call in Phase 1
    */
   async submitCommand(
     command: ExecutionCommand,
@@ -183,264 +159,205 @@ export class ExecutionProvider {
       commandId: command.commandId,
       commandType: command.commandType,
       correlationId,
-      reason: 'Command submitted to execution provider',
+      reason: 'Command submitted to central execution boundary',
     });
 
     // ── Step 1: Validate command structure ──
     const validation = validateCommandForDryRun(command);
     if (!validation.isValid) {
-      logSecurityEvent({
-        eventType: 'EXECUTION_PROVIDER_VALIDATION_FAILED',
-        commandId: command.commandId,
-        correlationId,
-        reason: `Command validation failed: ${validation.errors.join('; ')}`,
-      });
-
-      // Create record and block immediately
-      const record = this.stateMachine.createRecord(command);
-      const blockedRecord = this.stateMachine.getBlockTransition(
-        command,
-        `Command validation failed: ${validation.errors.join('; ')}`,
-      );
-
-      return {
-        commandId: command.commandId,
-        state: ExecutionStateEnum.BLOCKED,
+      return this.persistBlocked(command, context, null, {
         policyDecision: null,
-        idempotencyBlocked: false,
-        stateRecord: blockedRecord,
-        blocked: true,
         reason: `Command validation failed: ${validation.errors.join('; ')}`,
-      };
+        actorId: context.actorId ?? 'execution-provider',
+      });
     }
 
-    // ── Step 2: Policy gate (enforceLiveTradingPolicy is FIRST) ──
-    //
-    // NOTE: We ALSO call enforceLiveTradingPolicy() directly here
-    // as a belt-and-suspenders measure. The policy gate already
-    // calls it as its first gate, but we call it again to ensure
-    // that even if someone modifies the policy gate evaluation
-    // order, the containment is never bypassed.
-    //
-    // This double-check is intentional and NOT redundant — it
-    // provides defense-in-depth for the most critical containment
-    // constraint.
+    // ── Step 2: enforceLiveTradingPolicy() — UNCONDITIONAL first check ──
+    // Belt-and-suspenders: the policy gate also calls it as gate 1,
+    // but this direct call guarantees the containment can never be
+    // bypassed by reordering the gate chain. Fail-closed if it throws.
     try {
       const directPolicyCheck = enforceLiveTradingPolicy(
         context.account,
         command.commandType,
       );
       if (directPolicyCheck.blocked) {
-        // Even before the policy gate evaluates, enforceLiveTradingPolicy
-        // blocks this command. Create record and block.
-        const record = this.stateMachine.createRecord(command);
-        const blockedRecord = this.stateMachine.getBlockTransition(
-          command,
-          `enforceLiveTradingPolicy() blocked: ${directPolicyCheck.blocked ? 'live trading not permitted' : 'unknown'}`,
-        );
-
-        return {
-          commandId: command.commandId,
-          state: ExecutionStateEnum.BLOCKED,
+        return this.persistBlocked(command, context, null, {
           policyDecision: {
             allowed: false,
-            reason: `enforceLiveTradingPolicy() unconditionally blocked execution`,
+            reason: 'enforceLiveTradingPolicy() unconditionally blocked execution.',
             containmentCode: 'PHASE1_LIVE_TRADING_DISABLED',
             evaluatedGates: ['trading-policy'],
           },
-          idempotencyBlocked: false,
-          stateRecord: blockedRecord,
-          blocked: true,
-          reason: `Trading policy blocked execution (Phase 1 containment). Command ${command.commandId} was denied.`,
-        };
+          reason:
+            'Trading policy blocked execution (Phase 1 containment). ' +
+            `Command ${command.commandId} was denied.`,
+          actorId: context.actorId ?? 'execution-provider',
+        });
       }
     } catch (error) {
-      // If enforceLiveTradingPolicy() throws, fail-closed
-      const record = this.stateMachine.createRecord(command);
-      const blockedRecord = this.stateMachine.getBlockTransition(
-        command,
-        `enforceLiveTradingPolicy() threw: ${error instanceof Error ? error.message : String(error)}`,
-      );
-
-      return {
-        commandId: command.commandId,
-        state: ExecutionStateEnum.BLOCKED,
+      return this.persistBlocked(command, context, null, {
         policyDecision: {
           allowed: false,
-          reason: `enforceLiveTradingPolicy() threw an exception`,
+          reason: 'enforceLiveTradingPolicy() threw an exception.',
           containmentCode: 'PHASE1_LIVE_TRADING_DISABLED',
           evaluatedGates: ['trading-policy'],
         },
-        idempotencyBlocked: false,
-        stateRecord: blockedRecord,
-        blocked: true,
         reason: `Trading policy threw (fail-closed). Command ${command.commandId} was denied.`,
-      };
+        actorId: context.actorId ?? 'execution-provider',
+        logDetail: error instanceof Error ? error.message : String(error),
+      });
     }
 
-    // Now evaluate the full policy gate chain
-    const policyDecision = evaluateExecutionPolicy(command, context);
+    // ── Step 3: Kill-switch evaluation (fail-closed) ──
+    // Authoritative PostgreSQL query. If the store is unreachable,
+    // the submission fails CLOSED — we NEVER assume no kill switch.
+    let killSwitchStatus: KillSwitch | null;
+    try {
+      killSwitchStatus = await evaluateKillSwitches(command);
+    } catch (error) {
+      if (error instanceof KillSwitchEvaluationUnavailableError || error instanceof ServiceUnavailableError) {
+        logSecurityEvent({
+          eventType: 'EXECUTION_PROVIDER_KILL_SWITCH_UNAVAILABLE',
+          commandId: command.commandId,
+          correlationId,
+          reason: 'Kill-switch store unreachable — submission fail-closed',
+        });
+        return {
+          commandId: command.commandId,
+          state: ExecutionStateEnum.BLOCKED,
+          policyDecision: null,
+          outcome: 'UNAVAILABLE',
+          blocked: true,
+          unavailable: true,
+          reason:
+            'Fail-closed: kill-switch state could not be authoritatively evaluated. ' +
+            'Command submission is unavailable.',
+          record: null,
+        };
+      }
+      throw error;
+    }
+
+    // ── Step 4: Full policy gate chain ──
+    const effectiveContext: PolicyEvaluationContext = {
+      ...context,
+      killSwitchStatus,
+    };
+    const policyDecision = evaluateExecutionPolicy(command, effectiveContext);
 
     if (!policyDecision.allowed) {
-      // Policy gate denied — block the command
-      const record = this.stateMachine.createRecord(command);
-      const blockedRecord = this.stateMachine.getBlockTransition(
-        command,
-        `Policy gate denied: ${policyDecision.containmentCode} - ${policyDecision.reason}`,
-      );
-
-      logSecurityEvent({
-        eventType: 'EXECUTION_PROVIDER_POLICY_BLOCKED',
-        commandId: command.commandId,
-        correlationId,
-        containmentCode: policyDecision.containmentCode,
-        evaluatedGates: policyDecision.evaluatedGates,
+      return this.persistBlocked(command, context, killSwitchStatus, {
+        policyDecision,
         reason: policyDecision.reason,
+        actorId: context.actorId ?? 'execution-provider',
       });
-
-      return {
-        commandId: command.commandId,
-        state: ExecutionStateEnum.BLOCKED,
-        policyDecision,
-        idempotencyBlocked: false,
-        stateRecord: blockedRecord,
-        blocked: true,
-        reason: policyDecision.reason,
-      };
     }
 
-    // ── Step 3: Idempotency gate ──
-    const idempotencyResult = await evaluateIdempotency(command);
+    // ── Step 5: Atomic persistence (command + transitions +
+    // idempotency claim + audit in ONE transaction) ──
+    const requestFingerprint = await generateRequestFingerprint(command);
+    const actorId = context.actorId ?? 'execution-provider';
 
-    if (idempotencyResult.isDuplicate && !idempotencyResult.allowed) {
-      // Conflicting duplicate — block the command
-      const record = this.stateMachine.createRecord(command);
-      const blockedRecord = this.stateMachine.getBlockTransition(
-        command,
-        `Idempotency gate denied: duplicate command with conflicting parameters. Existing command: ${idempotencyResult.existingRecord?.commandId}`,
-      );
+    // Validate the transition chain against the state machine rules
+    // (defense-in-depth: invalid chains are never persisted).
+    assertValidTransitionChain([
+      { fromState: ExecutionStateEnum.CREATED, toState: ExecutionStateEnum.VALIDATING },
+      { fromState: ExecutionStateEnum.VALIDATING, toState: ExecutionStateEnum.APPROVED },
+    ]);
 
-      logSecurityEvent({
-        eventType: 'EXECUTION_PROVIDER_IDEMPOTENCY_BLOCKED',
+    try {
+      const createResult = await CommandRepository.createWithIdempotencyAndAudit({
         commandId: command.commandId,
+        idempotencyKey: command.idempotencyKey,
+        tenantId: command.tenantId,
+        connectionId: context.connectionId ?? command.accountId,
+        accountId: command.accountId,
+        providerId: command.providerId,
+        commandType: command.commandType,
+        commandPayload: this.sanitizePayload(command),
+        requestFingerprint,
         correlationId,
-        existingCommandId: idempotencyResult.existingRecord?.commandId,
-        reason: 'Idempotency gate blocked conflicting duplicate',
+        finalState: ExecutionStateEnum.APPROVED,
+        transitions: [
+          {
+            fromState: ExecutionStateEnum.CREATED,
+            toState: ExecutionStateEnum.VALIDATING,
+            reason: 'Policy evaluation started',
+            actorId,
+          },
+          {
+            fromState: ExecutionStateEnum.VALIDATING,
+            toState: ExecutionStateEnum.APPROVED,
+            reason: `All policy gates passed: ${policyDecision.evaluatedGates.join(', ')}`,
+            actorId,
+          },
+        ],
+        audit: {
+          actorId,
+          tenantId: command.tenantId,
+          accountId: command.accountId,
+          providerId: command.providerId,
+          action: 'COMMAND_SUBMIT',
+          previousState: ExecutionStateEnum.VALIDATING,
+          resultingState: ExecutionStateEnum.APPROVED,
+          reason: `Command approved by all gates; execution stopped (Phase 1). ${policyDecision.reason}`,
+          correlationId,
+          commandId: command.commandId,
+          ipMetadata: context.ipMetadata ?? null,
+        },
       });
 
-      return {
-        commandId: command.commandId,
-        state: ExecutionStateEnum.BLOCKED,
-        policyDecision,
-        idempotencyBlocked: true,
-        stateRecord: blockedRecord,
-        blocked: true,
-        reason: `Idempotency gate denied: conflicting duplicate. Existing command ${idempotencyResult.existingRecord?.commandId} is in progress.`,
-      };
+      // Safe-retry bookkeeping: atomically increment the dedup count.
+      if (createResult.outcome === 'DUPLICATE') {
+        await this.bumpDeduplicateCount(command);
+      }
+
+      return this.mapCreateResult(createResult, policyDecision, ExecutionStateEnum.APPROVED);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableError) {
+        logSecurityEvent({
+          eventType: 'EXECUTION_PROVIDER_PERSISTENCE_UNAVAILABLE',
+          commandId: command.commandId,
+          correlationId,
+          reason: 'Authoritative command store unreachable — submission fail-closed',
+        });
+        return {
+          commandId: command.commandId,
+          state: ExecutionStateEnum.BLOCKED,
+          policyDecision,
+          outcome: 'UNAVAILABLE',
+          blocked: true,
+          unavailable: true,
+          reason:
+            'Fail-closed: the authoritative command store is unavailable. ' +
+            'Command submission is not persisted and not executed.',
+          record: null,
+        };
+      }
+      throw error;
     }
-
-    if (idempotencyResult.isDuplicate && idempotencyResult.allowed) {
-      // Safe retry — return the existing command's state
-      logSecurityEvent({
-        eventType: 'EXECUTION_PROVIDER_IDEMPOTENCY_RETRY',
-        commandId: command.commandId,
-        correlationId,
-        existingCommandId: idempotencyResult.existingRecord?.commandId,
-        reason: 'Safe retry — returning existing command state',
-      });
-
-      const existingRecord = this.stateMachine.getRecord(
-        idempotencyResult.existingRecord?.commandId ?? command.commandId,
-      );
-
-      return {
-        commandId: idempotencyResult.existingRecord?.commandId ?? command.commandId,
-        state: idempotencyResult.existingRecord?.state ?? ExecutionStateEnum.BLOCKED,
-        policyDecision,
-        idempotencyBlocked: false,
-        stateRecord: existingRecord,
-        blocked: false,
-        reason: `Safe retry — command already processed. State: ${idempotencyResult.existingRecord?.state}`,
-      };
-    }
-
-    // ── Step 4: State machine transitions ──
-    // Command is new and all gates passed
-    const record = this.stateMachine.createRecord(command);
-
-    // Record idempotency
-    await recordIdempotency(command, ExecutionStateEnum.VALIDATING);
-
-    // Transition to VALIDATING (already done by createRecord → getBlockTransition
-    // path, but we need explicit VALIDATING → APPROVED)
-    const validatingRecord = this.stateMachine.transition(
-      record,
-      ExecutionStateEnum.VALIDATING,
-      'Policy evaluation started',
-      'execution-provider',
-    );
-
-    // All gates passed — transition to APPROVED
-    const approvedRecord = this.stateMachine.transition(
-      validatingRecord,
-      ExecutionStateEnum.APPROVED,
-      `All policy gates passed: ${policyDecision.evaluatedGates.join(', ')}`,
-      'execution-provider',
-    );
-
-    // Update idempotency state
-    await updateIdempotencyState(command, ExecutionStateEnum.APPROVED);
-
-    // ── Step 5: STOP — Execution disabled in Phase 1 ──
-    // The command is APPROVED but execution is NOT submitted
-    // to any broker adapter. This is a hard Phase 1 constraint.
-    // In Phase 2, this is where the command would transition
-    // to QUEUED → SUBMITTING → broker adapter call.
-
-    logSecurityEvent({
-      eventType: 'EXECUTION_PROVIDER_APPROVED_BUT_STOPPED',
-      commandId: command.commandId,
-      correlationId,
-      reason: 'Command approved by all gates but execution is disabled in Phase 1. Command stays in APPROVED state.',
-    });
-
-    return {
-      commandId: command.commandId,
-      state: ExecutionStateEnum.APPROVED,
-      policyDecision,
-      idempotencyBlocked: false,
-      stateRecord: approvedRecord,
-      blocked: false,
-      reason: `All gates passed but execution is disabled in Phase 1. Command ${command.commandId} is in APPROVED state. No broker action was taken. No funds were affected.`,
-    };
   }
 
-  // ── Validate command (dry-run, never submits) ──
+  // ── Validate command (dry-run, never submits, never persists) ──
 
   /**
    * Validate an execution command without submitting it.
    *
    * This performs:
    *   - Structural validation (field presence and format)
-   *   - Authorization check (caller must be authorized)
+   *   - Authorization check (caller must be identified)
    *
    * It does NOT:
    *   - Evaluate the policy gate
    *   - Check idempotency
-   *   - Create a state machine record
+   *   - Persist ANY record (no command, no transition, no audit)
    *   - Submit to any broker adapter
    *
-   * This is safe to call from any context (API route, UI, test)
-   * without side effects.
-   *
-   * @param command - The execution command to validate
-   * @returns ValidationResult with isValid, errors, warnings, isAuthorized
+   * This is safe to call from any context without side effects.
    */
   validateCommand(command: ExecutionCommand): ValidationResult {
     const validation = validateCommandForDryRun(command);
-
-    // Authorization check — the caller must be authorized
-    // This does NOT submit the command or create any records
     const isAuthorized = !!command.tenantId && !!command.accountId;
 
     return {
@@ -454,44 +371,248 @@ export class ExecutionProvider {
     };
   }
 
-  // ── Get command status (read-only) ──
+  // ── Get command status (read-only, tenant-scoped) ──
 
   /**
-   * Get the current status of a command by its ID.
-   *
-   * This is a read-only query. It does not modify any state
-   * or trigger any side effects. It returns:
-   *   - The current execution state
-   *   - The full state machine record (with transition history)
-   *   - The idempotency record (if any)
-   *
-   * @param commandId - The command ID to query
-   * @returns The current status, or null if the command is not found
+   * Get the current status of a command by its ID, restricted to
+   * the requesting tenant. This is a read-only PostgreSQL query
+   * against the authoritative command store — the same store
+   * POST /commands writes, so a command created by POST is always
+   * retrievable here.
    */
-  getCommandStatus(commandId: string): {
-    state: ExecutionState;
-    stateRecord: ExecutionStateRecord | null;
-    commandId: string;
-  } | null {
-    const stateRecord = this.stateMachine.getRecord(commandId);
+  async getCommandStatus(
+    commandId: string,
+    tenantId: string,
+  ): Promise<{ state: ExecutionState; record: Record<string, unknown> | null } | null> {
+    const row = await CommandRepository.findByCommandIdAndTenant(commandId, tenantId);
+    if (!row) return null;
+    return {
+      state: row.currentState as ExecutionState,
+      record: toCommandDTO(row),
+    };
+  }
 
-    if (!stateRecord) {
-      return null;
+  // ── Internals ──
+
+  /**
+   * Persist a BLOCKED outcome (validation failure, containment
+   * denial, or gate failure) with its transitions, idempotency
+   * claim and audit entry — atomically.
+   */
+  private async persistBlocked(
+    command: ExecutionCommand,
+    context: PolicyEvaluationContext,
+    killSwitchStatus: KillSwitch | null,
+    params: {
+      policyDecision: PolicyDecision | null;
+      reason: string;
+      actorId: string;
+      logDetail?: string;
+    },
+  ): Promise<ExecutionResult> {
+    const requestFingerprint = await generateRequestFingerprint(command);
+
+    // Validate the transition chain against the state machine rules
+    // (defense-in-depth: invalid chains are never persisted).
+    assertValidTransitionChain([
+      { fromState: ExecutionStateEnum.CREATED, toState: ExecutionStateEnum.VALIDATING },
+      { fromState: ExecutionStateEnum.VALIDATING, toState: ExecutionStateEnum.BLOCKED },
+    ]);
+
+    // Policy decision when null (validation failure path): synthesize.
+    const policyDecision =
+      params.policyDecision ??
+      {
+        allowed: false,
+        reason: params.reason,
+        containmentCode: 'COMMAND_VALIDATION_FAILED',
+        evaluatedGates: ['validation'],
+      };
+
+    try {
+      const createResult = await CommandRepository.createWithIdempotencyAndAudit({
+        commandId: command.commandId,
+        idempotencyKey: command.idempotencyKey,
+        tenantId: command.tenantId,
+        connectionId: context.connectionId ?? command.accountId,
+        accountId: command.accountId,
+        providerId: command.providerId,
+        commandType: command.commandType,
+        commandPayload: this.sanitizePayload(command),
+        requestFingerprint,
+        correlationId: command.correlationId,
+        finalState: ExecutionStateEnum.BLOCKED,
+        transitions: [
+          {
+            fromState: ExecutionStateEnum.CREATED,
+            toState: ExecutionStateEnum.VALIDATING,
+            reason: 'Policy evaluation started',
+            actorId: params.actorId,
+          },
+          {
+            fromState: ExecutionStateEnum.VALIDATING,
+            toState: ExecutionStateEnum.BLOCKED,
+            reason: params.reason,
+            actorId: params.actorId,
+          },
+        ],
+        audit: {
+          actorId: params.actorId,
+          tenantId: command.tenantId,
+          accountId: command.accountId,
+          providerId: command.providerId,
+          action: 'COMMAND_BLOCKED',
+          previousState: ExecutionStateEnum.VALIDATING,
+          resultingState: ExecutionStateEnum.BLOCKED,
+          reason: params.logDetail ?? params.reason,
+          correlationId: command.correlationId,
+          commandId: command.commandId,
+          ipMetadata: context.ipMetadata ?? null,
+        },
+      });
+
+      // Safe-retry bookkeeping: atomically increment the dedup count.
+      if (createResult.outcome === 'DUPLICATE') {
+        await this.bumpDeduplicateCount(command);
+      }
+
+      logSecurityEvent({
+        eventType: 'EXECUTION_PROVIDER_BLOCKED',
+        commandId: command.commandId,
+        correlationId: command.correlationId,
+        containmentCode: policyDecision.containmentCode,
+        killSwitchId: killSwitchStatus?.id,
+        reason: params.reason,
+      });
+
+      return this.mapCreateResult(createResult, policyDecision, ExecutionStateEnum.BLOCKED);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableError) {
+        logSecurityEvent({
+          eventType: 'EXECUTION_PROVIDER_PERSISTENCE_UNAVAILABLE',
+          commandId: command.commandId,
+          correlationId: command.correlationId,
+          reason: 'Authoritative command store unreachable — blocked outcome not persisted (fail-closed)',
+        });
+        return {
+          commandId: command.commandId,
+          state: ExecutionStateEnum.BLOCKED,
+          policyDecision,
+          outcome: 'UNAVAILABLE',
+          blocked: true,
+          unavailable: true,
+          reason:
+            'Fail-closed: the authoritative command store is unavailable. ' +
+            'The command is neither persisted nor executed.',
+          record: null,
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Atomically increment the deduplicate count for a safe retry.
+   * Best-effort: the dedupe verdict itself comes from the existing
+   * authoritative record; a failed count increment is logged but does
+   * not change the dedupe outcome.
+   */
+  private async bumpDeduplicateCount(command: ExecutionCommand): Promise<void> {
+    try {
+      await CommandRepository.incrementDeduplicateCount(
+        command.idempotencyKey,
+        command.tenantId,
+        command.accountId,
+        command.providerId,
+      );
+    } catch (error) {
+      logSecurityEvent({
+        eventType: 'IDEMPOTENCY_DEDUP_COUNT_INCREMENT_FAILED',
+        commandId: command.commandId,
+        correlationId: command.correlationId,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+    }
+  }
+
+  /** Map a repository create outcome to an ExecutionResult. */
+  private mapCreateResult(
+    createResult: { outcome: 'CREATED'; command: ExecutionCommandRow } | { outcome: 'DUPLICATE'; commandId: string; existingState: string } | { outcome: 'CONFLICT'; commandId: string | null },
+    policyDecision: PolicyDecision,
+    finalState: ExecutionState,
+  ): ExecutionResult {
+    if (createResult.outcome === 'CREATED') {
+      const isBlocked = finalState === ExecutionStateEnum.BLOCKED;
+      return {
+        commandId: createResult.command.commandId,
+        state: finalState,
+        policyDecision,
+        outcome: isBlocked ? 'BLOCKED' : 'APPROVED',
+        blocked: isBlocked,
+        unavailable: false,
+        reason: isBlocked
+          ? `Command ${createResult.command.commandId} was blocked by the execution boundary and persisted in BLOCKED state. No broker action was taken.`
+          : `All gates passed but execution is disabled in Phase 1. Command ${createResult.command.commandId} is persisted in APPROVED state. No broker action was taken. No funds were affected.`,
+        record: toCommandDTO(createResult.command),
+      };
+    }
+
+    if (createResult.outcome === 'DUPLICATE') {
+      return {
+        commandId: createResult.commandId,
+        state: createResult.existingState as ExecutionState,
+        policyDecision,
+        outcome: 'DUPLICATE',
+        blocked: createResult.existingState === ExecutionStateEnum.BLOCKED,
+        unavailable: false,
+        reason: `Safe retry — command already processed with the same idempotency key and fingerprint. State: ${createResult.existingState}`,
+        record: null,
+      };
     }
 
     return {
-      commandId,
-      state: stateRecord.currentState,
-      stateRecord,
+      commandId: createResult.commandId ?? '',
+      state: ExecutionStateEnum.BLOCKED,
+      policyDecision,
+      outcome: 'CONFLICT',
+      blocked: true,
+      unavailable: false,
+      reason:
+        'Idempotency conflict: this idempotency key is already claimed by a command with a different request fingerprint.',
+      record: null,
     };
+  }
+
+  /**
+   * Build the persisted command payload. Commands NEVER contain
+   * credentials; this projection also drops nothing extra — the
+   * payload is the full command for audit purposes.
+   */
+  private sanitizePayload(command: ExecutionCommand): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(command)) as Record<string, unknown>;
   }
 }
 
 // ── Singleton instance ──
 
 /**
+ * Validate a transition chain against the ALLOWED_TRANSITIONS map.
+ * Defense-in-depth: an invalid chain throws instead of persisting.
+ */
+function assertValidTransitionChain(
+  chain: Array<{ fromState: string; toState: string }>,
+): void {
+  for (const link of chain) {
+    if (!isValidTransition(link.fromState as ExecutionState, link.toState as ExecutionState)) {
+      throw new Error(
+        `Invalid state transition ${link.fromState} → ${link.toState}: rejected by the execution state machine.`,
+      );
+    }
+  }
+}
+
+/**
  * Default singleton instance of the ExecutionProvider.
- * Use this for all command submission unless you need
- * a separate instance with a custom state machine (for testing).
+ * All command submission flows through this single boundary.
  */
 export const executionProvider = new ExecutionProvider();

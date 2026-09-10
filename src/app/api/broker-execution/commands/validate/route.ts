@@ -2,20 +2,30 @@
 // POST /api/broker-execution/commands/validate
 // Validate a command (dry-run only, NEVER submits).
 //
-// REQUIRES AUTH + ownership/tenant checks.
-// Returns validation result without executing.
-// Does NOT submit any order — purely structural validation.
+// CORRECTION ROUND (defect 2): ownership is now proven from
+// server-side PostgreSQL records — `tenantId = userId` alone is
+// NOT accepted as proof that the accountId belongs to the user.
+// The route resolves the supplied connection from PostgreSQL and
+// requires ownership; if DB availability cannot be proven it
+// returns 503 and fails closed.
 //
-// This uses validateCommandForDryRun() from policy-gate.ts
-// which checks structure and completeness but never enters
-// the state machine or calls the broker adapter.
+// Dry-run validation remains NON-EXECUTING and NON-PERSISTING:
+//   - no state transition is recorded
+//   - no command record is created
+//   - no idempotency key is claimed
+//   - no broker adapter method is called
+// It purely checks structure against the server-side command
+// built from trusted records.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getUserIdSync, authRequiredResponse } from '@/lib/get-user-id';
-import { logSecurityEvent, CONTAINMENT_CODES } from '@/lib/trading-policy';
+import { logSecurityEvent } from '@/lib/trading-policy';
+import { resolveOwnedConnection } from '@/lib/broker-execution/security/ownership';
 import { validateCommandForDryRun } from '@/lib/broker-execution/execution/policy-gate';
+import type { ExecutionCommand, CommandType } from '@/lib/broker-execution/types';
+import { persistenceErrorStatus } from '@/lib/broker-execution/persistence/db-access';
 import { v4 as uuidv4 } from 'uuid';
 
 // ── Validation request schema ──
@@ -24,18 +34,29 @@ const ValidateCommandSchema = z.object({
     'PLACE_MARKET', 'PLACE_PENDING', 'MODIFY',
     'CANCEL', 'CLOSE_POSITION', 'PARTIAL_CLOSE', 'UPDATE_PROTECTION',
   ]),
-  accountId: z.string().min(1),
-  providerId: z.string().min(1),
+  /** The BrokerConnection this command targets (ownership proven server-side). */
+  connectionId: z.string().min(1),
   idempotencyKey: z.string().min(1),
   symbol: z.string().optional(),
   side: z.enum(['BUY', 'SELL']).optional(),
   size: z.number().positive().optional(),
   price: z.number().positive().optional(),
+  orderType: z.string().optional(),
+  stopPrice: z.number().positive().optional(),
+  timeInForce: z.string().optional(),
+  expireAt: z.string().optional(),
   brokerOrderId: z.string().optional(),
   brokerPositionId: z.string().optional(),
   closeSize: z.number().positive().optional(),
   stopLoss: z.number().positive().optional(),
   takeProfit: z.number().positive().optional(),
+  newPrice: z.number().positive().optional(),
+  newStopLoss: z.number().positive().optional(),
+  newTakeProfit: z.number().positive().optional(),
+  newSize: z.number().positive().optional(),
+  newStopPrice: z.number().positive().optional(),
+  trailingStop: z.boolean().optional(),
+  trailingStopDistance: z.number().positive().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -55,62 +76,74 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-
   const data = parsed.data;
-  const correlationId = uuidv4();
-  const commandId = uuidv4();
 
-  // Ownership verification: the accountId/providerId must belong to
-  // the authenticated user's tenant. We validate by constructing the
-  // command with the authenticated userId as tenantId.
-  const command = {
-    commandId,
+  // ── Ownership: resolve the connection from PostgreSQL (fail-closed) ──
+  const resolution = await resolveOwnedConnection(data.connectionId, userId);
+  if (!resolution.ok) {
+    return NextResponse.json(
+      { error: resolution.message, code: resolution.code, remediationPhase: 'containment' },
+      { status: resolution.status },
+    );
+  }
+  const connection = resolution.connection;
+
+  // ── Build the command server-side from trusted DB records ──
+  const command: ExecutionCommand = {
+    commandId: uuidv4(),
     idempotencyKey: data.idempotencyKey,
-    tenantId: userId, // Enforce tenant ownership
-    accountId: data.accountId,
-    providerId: data.providerId,
-    correlationId,
+    tenantId: connection.tenantId, // from DB — ownership proven server-side
+    accountId: connection.accountId ?? connection.id, // from DB
+    providerId: connection.providerId, // from DB
+    correlationId: uuidv4(),
     createdAt: new Date().toISOString(),
-    commandType: data.commandType,
-    // Command-type-specific fields
+    commandType: data.commandType as CommandType,
     symbol: data.symbol,
     side: data.side,
     size: data.size,
     price: data.price,
+    orderType: data.orderType,
+    stopPrice: data.stopPrice,
+    timeInForce: data.timeInForce,
+    expireAt: data.expireAt,
     brokerOrderId: data.brokerOrderId,
     brokerPositionId: data.brokerPositionId,
     closeSize: data.closeSize,
     stopLoss: data.stopLoss,
     takeProfit: data.takeProfit,
-  };
+    newPrice: data.newPrice,
+    newStopLoss: data.newStopLoss,
+    newTakeProfit: data.newTakeProfit,
+    newSize: data.newSize,
+    newStopPrice: data.newStopPrice,
+    trailingStop: data.trailingStop,
+    trailingStopDistance: data.trailingStopDistance,
+  } as ExecutionCommand;
 
-  // Dry-run validation: structural check only, NEVER submits
-  const validation = validateCommandForDryRun(command as never);
+  // Dry-run validation: structural check only, NEVER submits and
+  // NEVER persists (no command record, no transition, no audit).
+  const validation = validateCommandForDryRun(command);
 
   logSecurityEvent({
     eventType: 'COMMAND_VALIDATE_DRY_RUN',
     route: '/api/broker-execution/commands/validate',
     userId,
-    correlationId,
+    correlationId: command.correlationId,
     reason: `Dry-run validation for commandType=${data.commandType} isValid=${validation.isValid}`,
   });
 
-  // Phase 1: Even if structural validation passes, note that
-  // execution is not permitted in Phase 1
   return NextResponse.json({
-    commandId,
-    correlationId,
+    commandId: command.commandId,
+    correlationId: command.correlationId,
     validation: {
       isValid: validation.isValid,
       errors: validation.errors,
       warnings: validation.warnings,
     },
+    executionPermitted: false, // ALWAYS false in Phase 1
     phase1Note: validation.isValid
       ? 'Command is structurally valid but execution is not permitted in Phase 1 containment.'
       : undefined,
-    executionPermitted: false, // ALWAYS false in Phase 1
-    code: validation.isValid
-      ? undefined
-      : CONTAINMENT_CODES.CONFIGURATION_REQUIRED,
+    remediationPhase: 'containment',
   });
 }
