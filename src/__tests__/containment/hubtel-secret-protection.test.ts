@@ -65,10 +65,10 @@ describe('Phase 3AV Hubtel credential protection', () => {
   it('encrypts all protected values before SystemConfig persistence', () => {
     const source = readFileSync(HUBTEL, 'utf8');
     const smsSeal = source.indexOf("sealIntegrationSecret(config.clientSecret, 'hubtel-sms-client-secret')");
-    const smsStore = source.indexOf("where: { key: 'hubtel_sms' }");
+    const smsStore = source.indexOf("where: { key: 'hubtel_sms' }", smsSeal);
     const paymentSeal = source.indexOf("sealIntegrationSecret(config.clientSecret, 'hubtel-payment-client-secret')");
     const accountSeal = source.indexOf("sealIntegrationSecret(config.accountNumber, 'hubtel-payment-account-number')");
-    const paymentStore = source.indexOf("where: { key: 'hubtel_payment' }");
+    const paymentStore = source.indexOf("where: { key: 'hubtel_payment' }", accountSeal);
 
     expect(smsSeal).toBeGreaterThanOrEqual(0);
     expect(smsStore).toBeGreaterThan(smsSeal);
