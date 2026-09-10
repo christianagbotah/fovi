@@ -118,6 +118,15 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Email ownership is a prerequisite for every persistent authenticated
+      // session and for issuing a password-bound two-factor challenge.
+      if (!user.emailVerified) {
+        return authJson(
+          { error: 'Email verification is required before sign-in.', code: 'EMAIL_VERIFICATION_REQUIRED' },
+          { status: 403 }
+        );
+      }
+
       if (user.settings?.twoFactorEnabled) {
         const issuedChallenge = await issueTwoFactorChallenge(user.id, user.email);
         if (!issuedChallenge) {
