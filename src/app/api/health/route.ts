@@ -3,33 +3,35 @@ import { db, hasModel } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  const start = Date.now();
-  const checks: Record<string, { ok: boolean; latencyMs: number; detail?: string }> = {};
+type PublicHealthCheck = { ok: boolean };
 
-  // DB check
+export async function GET() {
+  const checks: Record<string, PublicHealthCheck> = {};
+
+  // Keep the public probe limited to boolean readiness. Do not expose raw
+  // database errors, query latency, process uptime, package versions, or other
+  // operational details that can fingerprint the deployment.
   if (db && hasModel('user')) {
     try {
-      const t0 = Date.now();
       await db.$queryRaw`SELECT 1`;
-      checks.database = { ok: true, latencyMs: Date.now() - t0 };
-    } catch (err: any) {
-      checks.database = { ok: false, latencyMs: Date.now() - start, detail: err.message?.slice(0, 100) };
+      checks.database = { ok: true };
+    } catch {
+      checks.database = { ok: false };
     }
   } else {
-    checks.database = { ok: false, latencyMs: 0, detail: 'DB not connected (demo mode)' };
+    checks.database = { ok: false };
   }
 
-  const allOk = Object.values(checks).every(c => c.ok);
+  const allOk = Object.values(checks).every(check => check.ok);
 
-  return NextResponse.json({
-    status: allOk ? 'healthy' : 'degraded',
-    uptime: process.uptime(),
-    version: process.env.npm_package_version || '1.0.0',
-    checks,
-    timestamp: new Date().toISOString(),
-  }, {
-    status: allOk ? 200 : 503,
-    headers: { 'Cache-Control': 'no-store' },
-  });
+  return NextResponse.json(
+    {
+      status: allOk ? 'healthy' : 'degraded',
+      checks,
+    },
+    {
+      status: allOk ? 200 : 503,
+      headers: { 'Cache-Control': 'no-store' },
+    },
+  );
 }
