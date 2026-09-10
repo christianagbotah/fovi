@@ -82,15 +82,26 @@ export async function POST(request: NextRequest) {
         const hashedToken = hashToken(resetToken);
         const expiry = new Date(Date.now() + 60 * 60 * 1000);
 
-        await safeDbQuery(() =>
+        // A recovery email is only useful and safe to issue after the exact
+        // token being placed in that email is positively persisted. safeDbQuery
+        // returns undefined on database failure, so treat that as an internal
+        // no-issuance outcome while preserving the generic anti-enumeration
+        // response. This also avoids leaving an older stored token silently
+        // active while emailing a newer token that was never committed.
+        const persistedReset = await safeDbQuery(() =>
           db!.user.update({
             where: { id: user.id },
             data: {
               resetToken: hashedToken,
               resetTokenExpiry: expiry,
             },
+            select: { id: true },
           })
         );
+
+        if (!persistedReset) {
+          return genericRecoveryResponse();
+        }
 
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3002';
         const resetLink = `${baseUrl}/auth/reset-password?token=${resetToken}`;
