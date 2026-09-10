@@ -45,6 +45,15 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
+  if (rotation.status === 'unverified') {
+    const response = authJson(
+      { error: 'Email verification is required before sign-in.', code: 'EMAIL_VERIFICATION_REQUIRED' },
+      { status: 403 },
+    );
+    clearRefreshCookie(response);
+    return response;
+  }
+
   if (rotation.status === 'invalid' || rotation.status === 'reused') {
     const response = authJson({ error: 'Refresh session is invalid or expired.' }, { status: 401 });
     clearRefreshCookie(response);
