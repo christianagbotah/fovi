@@ -58,6 +58,7 @@ if (isInvalidCriticalSecret(JWT_SECRET_RAW, 32)) {
 const KEY_LENGTH = 64;
 const ITERATIONS = 100000;
 const DIGEST = 'sha512';
+const JWT_ALGORITHM = 'HS256' as const;
 export const ACCESS_TOKEN_TTL = '15m';
 
 // Encode the secret as Uint8Array for jose
@@ -154,7 +155,7 @@ export async function generateAccessToken(
   if (sessionFamilyId) payload.sid = sessionFamilyId;
 
   return new SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: JWT_ALGORITHM })
     .setIssuedAt()
     .setExpirationTime(ACCESS_TOKEN_TTL)
     .sign(getSecretKey());
@@ -176,7 +177,7 @@ export async function generateTwoFactorChallenge(
   };
 
   return new SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: JWT_ALGORITHM })
     .setJti(challengeId)
     .setIssuedAt()
     .setExpirationTime('5m')
@@ -219,17 +220,64 @@ async function isAccessSessionActive(payload: AccessTokenPayload): Promise<boole
   }
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * Enforce the claim shape produced by Fovi's own JWT issuers.
+ *
+ * jose validates signature integrity and expiration when exp is present, but
+ * it does not require application-specific claims to exist. Requiring the
+ * issuer's own shape here prevents an otherwise-valid JWT signed with the
+ * shared key from entering the application with an unknown/missing token
+ * type or without the one-time challenge identifier required by 2FA.
+ */
+function hasValidJwtClaimShape(payload: Record<string, unknown>): boolean {
+  if (!isNonEmptyString(payload.sub) || !isNonEmptyString(payload.email)) return false;
+
+  if (
+    typeof payload.iat !== 'number' ||
+    !Number.isFinite(payload.iat) ||
+    typeof payload.exp !== 'number' ||
+    !Number.isFinite(payload.exp) ||
+    payload.exp <= payload.iat
+  ) {
+    return false;
+  }
+
+  if (payload.type === 'access') {
+    if (payload.sid !== undefined && !isNonEmptyString(payload.sid)) return false;
+    return true;
+  }
+
+  if (payload.type === 'two_factor') {
+    return isNonEmptyString(payload.jti);
+  }
+
+  return false;
+}
+
 /**
  * Verify a JWT and return its payload, or null if invalid/expired. Production
  * access tokens additionally require a live matching auth-session family.
+ *
+ * Verification is constrained to the exact algorithm used by Fovi's issuer
+ * and to the two supported application token shapes. Unknown token types,
+ * missing required temporal claims, and 2FA challenges without a jti fail
+ * closed before any route can treat them as authenticated state.
  */
 export async function verifyToken(token: string): Promise<JwtPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, getSecretKey());
+    const { payload } = await jwtVerify(token, getSecretKey(), {
+      algorithms: [JWT_ALGORITHM],
+    });
+
+    if (!hasValidJwtClaimShape(payload as Record<string, unknown>)) return null;
+
     const verified = payload as unknown as JwtPayload;
 
     if (verified.type === 'access') {
-      if (!verified.sub || !verified.email) return null;
       if (!(await isAccessSessionActive(verified))) return null;
     }
 
