@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { openSmtpPassword } from '@/lib/smtp-secret';
 
 // ============================================================
 // Types
@@ -54,7 +55,10 @@ export function invalidateSmtpCache(): void {
 
 /**
  * Read SMTP config from the database (with 5-min memory cache).
- * Falls back to process.env.* variables if no DB config exists.
+ * Database passwords may be legacy plaintext or protected enc:v1: storage;
+ * only the decrypted runtime copy is cached. Unknown encrypted versions and
+ * decryption failures fail closed instead of being passed to nodemailer.
+ * Falls back to process.env.* variables if no usable DB config exists.
  */
 export async function getSmtpConfig(): Promise<SmtpConfig | null> {
   const cached = getCached<SmtpConfig>('smtp');
@@ -69,8 +73,18 @@ export async function getSmtpConfig(): Promise<SmtpConfig | null> {
     if (row) {
       try {
         const parsed = JSON.parse(row.config) as SmtpConfig;
-        setCache('smtp', parsed);
-        return parsed;
+        const password = await openSmtpPassword(parsed.password);
+        if (!password) {
+          console.warn('[Email] Stored SMTP password could not be opened.');
+          return null;
+        }
+
+        const runtimeConfig: SmtpConfig = {
+          ...parsed,
+          password,
+        };
+        setCache('smtp', runtimeConfig);
+        return runtimeConfig;
       } catch {
         // Bad JSON — fall through to env vars
       }
