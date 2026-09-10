@@ -38,11 +38,12 @@ export type RotatedAuthSession =
       familyId: string;
       expiresAt: Date;
       rememberMe: boolean;
-      user: { id: string; email: string; name: string | null; isActive: boolean };
+      user: { id: string; email: string; name: string | null; isActive: boolean; emailVerified: boolean };
     }
   | { status: 'invalid' }
   | { status: 'reused' }
   | { status: 'inactive' }
+  | { status: 'unverified' }
   | { status: 'unavailable' };
 
 export type AuthSessionRevocationResult = 'revoked' | 'not_found' | 'unavailable';
@@ -131,7 +132,7 @@ export async function rotateAuthSession(refreshToken: string): Promise<RotatedAu
         where: { tokenHash },
         include: {
           user: {
-            select: { id: true, email: true, name: true, isActive: true },
+            select: { id: true, email: true, name: true, isActive: true, emailVerified: true },
           },
         },
       });
@@ -165,6 +166,14 @@ export async function rotateAuthSession(refreshToken: string): Promise<RotatedAu
           data: { revokedAt: now, revokeReason: 'ACCOUNT_INACTIVE' },
         });
         return { status: 'inactive' as const };
+      }
+
+      if (!session.user.emailVerified) {
+        await tx.authSession.updateMany({
+          where: { familyId: session.familyId, revokedAt: null },
+          data: { revokedAt: now, revokeReason: 'EMAIL_UNVERIFIED' },
+        });
+        return { status: 'unverified' as const };
       }
 
       // Compare-and-swap the active token. If another request already rotated
