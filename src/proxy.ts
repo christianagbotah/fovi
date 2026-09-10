@@ -45,6 +45,12 @@ const PUBLIC_PATHS: string[] = [
   // It is intentionally listed here so unauthenticated callers get the
   // 503 response from the route handler, not a 401 from the proxy.
   '/api/trading/webhook',
+  // ── Broker-execution public routes ──
+  // /api/broker-execution/health: Public health check (read-only, no sensitive data)
+  '/api/broker-execution/health',
+  // /api/broker-execution/providers: Public read-only provider catalog
+  // (no account/user/private information, no credentials, no connection details)
+  '/api/broker-execution/providers',
 ];
 
 // ── CLASS 2: Internal service routes (exact match, secret only) ──

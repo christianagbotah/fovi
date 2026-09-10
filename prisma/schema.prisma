@@ -511,3 +511,240 @@ model PaperTradeSettlement {
   @@index([accountId])
   @@index([botId])
 }
+
+// ============================================
+// Broker Execution Framework Models
+// ============================================
+
+/// Broker provider catalog entry
+model BrokerProviderConfig {
+  id          String   @id @default(cuid())
+  providerId  String   @unique // e.g., "demo", "mt5-icmarkets", "ctrader-pepperstone"
+  providerType String  // MT4, MT5, CTRADER, FIX_API, REST_WS, OAUTH_API, BRIDGE
+  name        String
+  description String?
+  authType    String   // API_KEY, OAUTH2, CERTIFICATE, BRIDGE
+  config      Json?    // Provider-specific config (REST URLs, etc.) - NO credentials
+  isActive    Boolean  @default(true)
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  capabilities BrokerProviderCapability[]
+  connections  BrokerConnection[]
+}
+
+/// Provider capability flags
+model BrokerProviderCapability {
+  id         String @id @default(cuid())
+  providerId String
+  capability String // Enum value from BrokerCapability
+  supported  Boolean @default(true)
+  constraints Json?  // Limits, restrictions, etc.
+
+  provider BrokerProviderConfig @relation(fields: [providerId], references: [providerId])
+
+  @@unique([providerId, capability])
+}
+
+/// Broker connection (tenant-scoped)
+model BrokerConnection {
+  id           String   @id @default(cuid())
+  tenantId     String   // Owner user/tenant
+  providerId   String
+  accountId    String?  // Broker-side account ID
+  accountName  String?
+  accountType  String   @default("demo") // demo, live
+  isDemo       Boolean  @default(true)
+  isActive     Boolean  @default(false)
+  connectionState String @default("DISCONNECTED")
+  
+  // Encrypted credentials - stored as encrypted strings, NEVER plaintext
+  encryptedApiKey      String?
+  encryptedApiSecret   String?
+  encryptedPassphrase  String?
+  encryptedToken       String?
+  encryptedRefreshToken String?
+  credentialVersion    Int      @default(0) // For rotation tracking
+  
+  lastConnectedAt DateTime?
+  lastErrorAt     DateTime?
+  errorMessage    String?
+  reconnectAttempts Int @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  provider        BrokerProviderConfig @relation(fields: [providerId], references: [providerId])
+  executionCommands ExecutionCommandRecord[]
+  reconciliationResults ReconciliationResult[]
+
+  @@index([tenantId])
+  @@index([tenantId, providerId])
+  @@index([connectionState])
+}
+
+/// Execution command record
+model ExecutionCommandRecord {
+  id             String   @id @default(cuid())
+  commandId      String   @unique // Stable UUID for idempotency
+  idempotencyKey String   // Client-provided idempotency key
+  tenantId       String
+  connectionId   String
+  providerId     String
+  commandType    String   // PLACE_MARKET, PLACE_PENDING, MODIFY, CANCEL, etc.
+  commandPayload Json     // Full command details (NO credentials)
+  
+  currentState   String   @default("CREATED")
+  previousState  String?
+  
+  // Idempotency tracking
+  requestFingerprint String? // SHA-256 of command params
+  deduplicateCount   Int     @default(0)
+  
+  // Execution result
+  brokerOrderId    String?
+  brokerPositionId String?
+  rejectionReason  String?
+  fillPrice        Float?
+  fillSize         Float?
+  
+  correlationId String?
+  
+  createdAt     DateTime @default(now())
+  lastUpdatedAt DateTime @updatedAt
+  submittedAt   DateTime?
+  acknowledgedAt DateTime?
+  filledAt      DateTime?
+  rejectedAt    DateTime?
+  expiredAt     DateTime?
+
+  connection BrokerConnection @relation(fields: [connectionId], references: [id])
+  stateTransitions ExecutionStateTransition[]
+
+  @@index([tenantId])
+  @@index([idempotencyKey, tenantId, connectionId, providerId])
+  @@index([commandId])
+  @@index([currentState])
+  @@index([createdAt])
+}
+
+/// State transition record
+model ExecutionStateTransition {
+  id        String   @id @default(cuid())
+  commandId String
+  fromState String
+  toState   String
+  reason    String?
+  actorId   String?
+  timestamp DateTime @default(now())
+
+  command ExecutionCommandRecord @relation(fields: [commandId], references: [commandId])
+
+  @@index([commandId])
+  @@index([timestamp])
+}
+
+/// Kill switch record
+model KillSwitchRecord {
+  id               String   @id @default(cuid())
+  scope            String   // GLOBAL, TENANT, ACCOUNT, PROVIDER
+  scopeId          String?  // Null for GLOBAL, tenant/account/provider ID otherwise
+  state            String   @default("INACTIVE") // ACTIVE, INACTIVE, TRIGGERED
+  emergencyReadOnly Boolean @default(false)
+  activatedAt      DateTime?
+  deactivatedAt    DateTime?
+  activatedBy      String?
+  reason           String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, scopeId])
+  @@index([state])
+}
+
+/// Reconciliation result
+model ReconciliationResult {
+  id              String   @id @default(cuid())
+  accountId       String
+  providerId      String
+  connectionId    String
+  status          String   // IDLE, RUNNING, COMPLETED, FAILED, PARTIAL
+  commandCount    Int      @default(0)
+  brokerOrderCount Int     @default(0)
+  matchCount      Int      @default(0)
+  mismatchCount   Int      @default(0)
+  discrepancies   Json?    // Array of discrepancy objects
+  durationMs      Int?
+  
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  
+  connection BrokerConnection @relation(fields: [connectionId], references: [id])
+
+  @@index([accountId])
+  @@index([connectionId])
+  @@index([startedAt])
+}
+
+/// Broker execution audit record
+model BrokerExecutionAudit {
+  id             String   @id @default(cuid())
+  actorId        String
+  tenantId       String
+  accountId      String?
+  providerId     String?
+  action         String   // CONNECT, DISCONNECT, COMMAND_SUBMIT, etc.
+  previousState  String?
+  resultingState String?
+  reason         String?
+  correlationId  String?
+  commandId      String?
+  ipMetadata     Json?    // { ip, userAgent, forwardedFor } - NO credentials
+  
+  timestamp DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([actorId])
+  @@index([action])
+  @@index([commandId])
+  @@index([timestamp])
+}
+
+/// Idempotency record
+model IdempotencyRecord {
+  id                String   @id @default(cuid())
+  commandId         String
+  idempotencyKey    String
+  tenantId          String
+  accountId         String
+  providerId        String
+  requestFingerprint String
+  state             String   // Current execution state
+  deduplicateCount  Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  lastSeenAt  DateTime @updatedAt
+
+  @@unique([idempotencyKey, tenantId, accountId, providerId])
+  @@index([commandId])
+  @@index([createdAt])
+}
+
+/// Provider event log (internal only)
+model ProviderEventLog {
+  id           String   @id @default(cuid())
+  providerId   String
+  connectionId String?
+  eventType    String   // QUOTE, FILL, REJECT, DISCONNECT, RECONNECT, ERROR
+  eventData    Json     // Event details - NO credentials
+  sequenceNum  Int?     // For ordering
+  
+  timestamp DateTime @default(now())
+
+  @@index([providerId])
+  @@index([connectionId])
+  @@index([eventType])
+  @@index([timestamp])
+}
