@@ -6,6 +6,7 @@ const ROOT = process.cwd();
 const SIGNIN = join(ROOT, 'src/app/api/auth/signin/route.ts');
 const REFRESH = join(ROOT, 'src/app/api/auth/refresh/route.ts');
 const SESSIONS = join(ROOT, 'src/lib/auth-sessions.ts');
+const AUTH = join(ROOT, 'src/lib/auth.ts');
 
 describe('Phase 3AT verified-email session boundary', () => {
   it('requires verified email after password proof and before any authenticated continuation', () => {
@@ -86,5 +87,20 @@ describe('Phase 3AT verified-email session boundary', () => {
     expect(guardBlock).toContain("code: 'EMAIL_VERIFICATION_REQUIRED'");
     expect(guardBlock).toContain('{ status: 403 }');
     expect(guardBlock).not.toContain('setRefreshCookie');
+  });
+
+  it('rejects already-issued bearer tokens when the account email is no longer verified', () => {
+    const source = readFileSync(AUTH, 'utf8');
+
+    expect(source).toContain('user: { select: { isActive: true, emailVerified: true } }');
+    expect(source).toContain('session?.user.isActive === true && session.user.emailVerified === true');
+
+    const lookup = source.indexOf('const session = await db.authSession.findFirst({');
+    const verifiedState = source.indexOf('emailVerified: true', lookup);
+    const decision = source.indexOf('session?.user.isActive === true && session.user.emailVerified === true', verifiedState);
+
+    expect(lookup).toBeGreaterThanOrEqual(0);
+    expect(verifiedState).toBeGreaterThan(lookup);
+    expect(decision).toBeGreaterThan(verifiedState);
   });
 });
