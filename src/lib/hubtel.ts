@@ -1,4 +1,5 @@
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { openIntegrationSecret, sealIntegrationSecret } from '@/lib/integration-secret';
 
 // ============================================================
 // Types
@@ -49,6 +50,8 @@ function setCache<T>(key: string, data: T): void {
 
 /**
  * Read Hubtel SMS config from the database (with 5-min memory cache).
+ * Protected values are decrypted only into the server-side runtime config.
+ * Legacy plaintext remains readable until the next admin save.
  */
 export async function getHubtelSmsConfig(): Promise<HubtelSmsConfig | null> {
   const cached = getCached<HubtelSmsConfig>('hubtel_sms');
@@ -64,8 +67,21 @@ export async function getHubtelSmsConfig(): Promise<HubtelSmsConfig | null> {
 
   try {
     const parsed = JSON.parse(row.config) as HubtelSmsConfig;
-    setCache('hubtel_sms', parsed);
-    return parsed;
+    const clientId = await openIntegrationSecret(parsed.clientId, 'hubtel-sms-client-id');
+    const clientSecret = await openIntegrationSecret(parsed.clientSecret, 'hubtel-sms-client-secret');
+
+    if (!clientId || !clientSecret) {
+      console.warn('[Hubtel SMS] Stored credentials could not be opened.');
+      return null;
+    }
+
+    const runtimeConfig: HubtelSmsConfig = {
+      ...parsed,
+      clientId,
+      clientSecret,
+    };
+    setCache('hubtel_sms', runtimeConfig);
+    return runtimeConfig;
   } catch {
     return null;
   }
@@ -73,6 +89,8 @@ export async function getHubtelSmsConfig(): Promise<HubtelSmsConfig | null> {
 
 /**
  * Read Hubtel Payment config from the database (with 5-min memory cache).
+ * Protected values are decrypted only into the server-side runtime config.
+ * Legacy plaintext remains readable until the next admin save.
  */
 export async function getHubtelPaymentConfig(): Promise<HubtelPaymentConfig | null> {
   const cached = getCached<HubtelPaymentConfig>('hubtel_payment');
@@ -88,42 +106,85 @@ export async function getHubtelPaymentConfig(): Promise<HubtelPaymentConfig | nu
 
   try {
     const parsed = JSON.parse(row.config) as HubtelPaymentConfig;
-    setCache('hubtel_payment', parsed);
-    return parsed;
+    const clientId = await openIntegrationSecret(parsed.clientId, 'hubtel-payment-client-id');
+    const clientSecret = await openIntegrationSecret(parsed.clientSecret, 'hubtel-payment-client-secret');
+    const accountNumber = await openIntegrationSecret(parsed.accountNumber, 'hubtel-payment-account-number');
+
+    if (!clientId || !clientSecret || !accountNumber) {
+      console.warn('[Hubtel Payment] Stored credentials could not be opened.');
+      return null;
+    }
+
+    const runtimeConfig: HubtelPaymentConfig = {
+      ...parsed,
+      clientId,
+      clientSecret,
+      accountNumber,
+    };
+    setCache('hubtel_payment', runtimeConfig);
+    return runtimeConfig;
   } catch {
     return null;
   }
 }
 
 /**
- * Save Hubtel SMS config to the database and update cache.
+ * Save Hubtel SMS config with protected credential storage and cache only the
+ * plaintext runtime copy after the database write succeeds.
  */
 export async function saveHubtelSmsConfig(config: HubtelSmsConfig): Promise<void> {
   if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
     throw new Error('Database is not available');
   }
 
+  const clientId = await sealIntegrationSecret(config.clientId, 'hubtel-sms-client-id');
+  const clientSecret = await sealIntegrationSecret(config.clientSecret, 'hubtel-sms-client-secret');
+  if (!clientId || !clientSecret) {
+    throw new Error('Hubtel SMS credential protection is unavailable');
+  }
+
+  const storedConfig = {
+    ...config,
+    clientId,
+    clientSecret,
+  };
+
   await db.systemConfig.upsert({
     where: { key: 'hubtel_sms' },
-    create: { key: 'hubtel_sms', config: JSON.stringify(config) },
-    update: { config: JSON.stringify(config) },
+    create: { key: 'hubtel_sms', config: JSON.stringify(storedConfig) },
+    update: { config: JSON.stringify(storedConfig) },
   });
 
   setCache('hubtel_sms', config);
 }
 
 /**
- * Save Hubtel Payment config to the database and update cache.
+ * Save Hubtel Payment config with protected credential storage and cache only
+ * the plaintext runtime copy after the database write succeeds.
  */
 export async function saveHubtelPaymentConfig(config: HubtelPaymentConfig): Promise<void> {
   if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
     throw new Error('Database is not available');
   }
 
+  const clientId = await sealIntegrationSecret(config.clientId, 'hubtel-payment-client-id');
+  const clientSecret = await sealIntegrationSecret(config.clientSecret, 'hubtel-payment-client-secret');
+  const accountNumber = await sealIntegrationSecret(config.accountNumber, 'hubtel-payment-account-number');
+  if (!clientId || !clientSecret || !accountNumber) {
+    throw new Error('Hubtel Payment credential protection is unavailable');
+  }
+
+  const storedConfig = {
+    ...config,
+    clientId,
+    clientSecret,
+    accountNumber,
+  };
+
   await db.systemConfig.upsert({
     where: { key: 'hubtel_payment' },
-    create: { key: 'hubtel_payment', config: JSON.stringify(config) },
-    update: { config: JSON.stringify(config) },
+    create: { key: 'hubtel_payment', config: JSON.stringify(storedConfig) },
+    update: { config: JSON.stringify(storedConfig) },
   });
 
   setCache('hubtel_payment', config);
