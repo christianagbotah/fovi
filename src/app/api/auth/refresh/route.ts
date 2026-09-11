@@ -51,14 +51,13 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  const isAdmin =
-    !!process.env.ADMIN_EMAIL &&
-    rotation.user.email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
+  // Phase 3BB: refreshed JWTs carry identity/session state only. Current
+  // administrative authority is resolved from durable RBAC at request time.
   const token = await generateAccessToken(
     rotation.user.id,
     rotation.user.email,
     rotation.user.name || undefined,
-    isAdmin ? 'admin' : undefined,
+    undefined,
     rotation.familyId,
   );
 
