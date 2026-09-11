@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { invalidateSmtpCache } from '@/lib/email';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 const saveSchema = z.object({
   host: z.string().min(1),
@@ -11,16 +13,18 @@ const saveSchema = z.object({
   from: z.string().min(1),
 });
 
-/**
- * Mask a credential string, showing only the first `n` characters.
- */
 function mask(val: string, n = 4): string {
   if (!val) return '';
   return val.length <= n ? '****' : val.slice(0, n) + '****';
 }
 
-// GET: return current SMTP config (masked)
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
       return NextResponse.json({ configured: false });
@@ -30,12 +34,9 @@ export async function GET() {
       db!.systemConfig.findUnique({ where: { key: 'smtp' } })
     );
 
-    if (!row) {
-      return NextResponse.json({ configured: false });
-    }
+    if (!row) return NextResponse.json({ configured: false });
 
     const config = JSON.parse(row.config) as Record<string, unknown>;
-
     return NextResponse.json({
       configured: true,
       host: (config.host as string) || '',
@@ -49,8 +50,13 @@ export async function GET() {
   }
 }
 
-// POST: save SMTP config
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await request.json();
     const parsed = saveSchema.safeParse(body);
@@ -69,7 +75,6 @@ export async function POST(request: NextRequest) {
     });
 
     invalidateSmtpCache();
-
     return NextResponse.json({ success: true, message: 'SMTP config saved successfully.' });
   } catch (err) {
     console.error('[Admin] Failed to save SMTP config:', err);
