@@ -76,6 +76,28 @@ function matchesAnyPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some(p => pathname.startsWith(p));
 }
 
+/**
+ * Phase 3AX: an "admin" JWT claim is not a permanent authority grant.
+ * Admin authority is currently derived from ADMIN_EMAIL at sign-in time, so
+ * every request must revalidate that the claim still matches the current
+ * configuration. This makes ADMIN_EMAIL removal/change take effect for already
+ * issued access tokens and prevents a stale admin claim from being propagated
+ * through X-User-Role to downstream route handlers.
+ */
+function hasCurrentAdminAuthority(payload: { role?: string; email?: string }): boolean {
+  if (payload.role !== 'admin') return false;
+
+  const configuredAdminEmail = process.env.ADMIN_EMAIL;
+  if (!configuredAdminEmail || configuredAdminEmail.trim() !== configuredAdminEmail) {
+    return false;
+  }
+
+  const tokenEmail = payload.email;
+  if (!tokenEmail || tokenEmail.trim() !== tokenEmail) return false;
+
+  return tokenEmail.toLowerCase() === configuredAdminEmail.toLowerCase();
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -151,15 +173,21 @@ export async function proxy(request: NextRequest) {
     );
   }
 
+  // Phase 3AX: preserve non-admin roles as issued, but an admin claim is only
+  // propagated when it still matches the current ADMIN_EMAIL configuration.
+  const verifiedRole = payload.role === 'admin'
+    ? (hasCurrentAdminAuthority(payload) ? 'admin' : undefined)
+    : payload.role;
+
   // 3b. Valid access token — inject verified user headers
   cleanedHeaders.set('X-User-Id', payload.sub);
   cleanedHeaders.set('X-User-Email', payload.email || '');
-  if (payload.role) cleanedHeaders.set('X-User-Role', payload.role);
+  if (verifiedRole) cleanedHeaders.set('X-User-Role', verifiedRole);
   if (payload.name) cleanedHeaders.set('X-User-Name', payload.name);
 
-  // 3c. Admin routes require admin role
+  // 3c. Admin routes require current admin authority, not only a stale JWT role.
   if (matchesAnyPrefix(pathname, ADMIN_PREFIXES)) {
-    if (payload.role !== 'admin') {
+    if (verifiedRole !== 'admin') {
       return NextResponse.json(
         {
           error: 'Admin access required.',
