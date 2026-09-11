@@ -1,0 +1,119 @@
+name: Phase 1 CI Gate
+
+on:
+  push:
+    branches:
+      - 'phase-1-*'
+  pull_request:
+    branches:
+      - phase-1-emergency-containment
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase1-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test, containment, soak, lint, typecheck, and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.3.4'
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install mini-service dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in auto-trade-engine balance-sync market-service; do
+            echo "Installing mini-services/${service}"
+            (cd "mini-services/${service}" && bun install --frozen-lockfile)
+          done
+
+      - name: Generate Prisma client
+        run: bunx prisma generate
+
+      - name: Deploy script syntax check
+        run: bash -n deploy.sh
+
+      - name: Determine comparison base
+        id: base
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            BASE_SHA="$PR_BASE_SHA"
+          else
+            BASE_SHA="$PUSH_BEFORE_SHA"
+          fi
+
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            BASE_SHA="$(git rev-parse HEAD^)"
+          fi
+
+          git cat-file -e "${BASE_SHA}^{commit}"
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Comparison base: $BASE_SHA"
+
+      - name: Containment tests
+        run: bun run test:containment-only
+
+      - name: Deterministic paper soak gate
+        run: bun run test:soak
+
+      - name: Full Vitest suite
+        run: bun run test
+
+      - name: Lint changed source files
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx')
+
+          if (( ${#FILES[@]} == 0 )); then
+            echo "No changed JS/TS files to lint."
+            exit 0
+          fi
+
+          printf 'Linting changed files:\n%s\n' "${FILES[@]}"
+          bunx eslint "${FILES[@]}"
+
+      - name: Whitespace / patch integrity
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: git diff --check "$BASE_SHA" "$GITHUB_SHA"
+
+      - name: Root TypeScript — zero debt
+        run: bunx tsc --noEmit --pretty false
+
+      - name: Mini-services TypeScript — zero debt
+        run: bunx tsc -p mini-services/tsconfig.json --pretty false
+
+      - name: Production build
+        env:
+          # CI-only ephemeral values. These are never deployment/runtime secrets.
+          AUTH_PEPPER: ci-build-only-pepper-${{ github.run_id }}-${{ github.run_attempt }}
+          JWT_SECRET: ci-build-only-jwt-secret-${{ github.run_id }}-${{ github.run_attempt }}-not-for-runtime
+        run: bun run build
