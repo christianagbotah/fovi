@@ -3,6 +3,8 @@ import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 // ============================================================
 // Zod schemas
@@ -26,6 +28,12 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_USERS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const { id } = await params;
 
@@ -93,6 +101,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_USERS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const { id } = await params;
 
