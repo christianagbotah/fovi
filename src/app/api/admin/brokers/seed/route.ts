@@ -4,8 +4,10 @@
 // Also updates existing brokers with any new fields
 // ============================================================
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 const DEFAULT_BROKERS = [
   {
@@ -87,7 +89,13 @@ const DEFAULT_BROKERS = [
   },
 ];
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_BROKERS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     let created = 0;
@@ -97,12 +105,10 @@ export async function POST() {
     for (const broker of DEFAULT_BROKERS) {
       const existing = await db.brokerProvider.findUnique({ where: { code: broker.code } });
       if (existing) {
-        // Don't resurrect soft-deleted brokers — only update active ones
         if (existing.deleted) {
           skipped++;
           continue;
         }
-        // Update existing brokers with new fields
         await db.brokerProvider.update({
           where: { code: broker.code },
           data: {
