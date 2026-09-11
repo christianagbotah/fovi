@@ -22,6 +22,30 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
+    # Real PostgreSQL (correction round 2, item 6): the broker-execution
+    # suites that model PostgreSQL-only semantics (GLOBAL kill-switch
+    # singleton, atomic idempotency, audit-write rollback, fresh-DB
+    # provider bootstrap with no provider-table FK) run against a real
+    # PostgreSQL instance instead of the in-memory test double.
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: fovi_ci
+          POSTGRES_PASSWORD: fovi_ci_runtime_pw
+          POSTGRES_DB: fovi_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fovi_ci -d fovi_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://fovi_ci:fovi_ci_runtime_pw@127.0.0.1:5432/fovi_ci
+      BROKER_PG_TEST_URL: postgresql://fovi_ci:fovi_ci_runtime_pw@127.0.0.1:5432/fovi_ci
+
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,6 +72,9 @@ jobs:
 
       - name: Generate Prisma client
         run: bunx prisma generate
+
+      - name: Fresh PostgreSQL migration gate (real DB)
+        run: bun run scripts/migrate-production.ts
 
       - name: Deploy script syntax check
         run: bash -n deploy.sh
