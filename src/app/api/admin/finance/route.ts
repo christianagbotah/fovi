@@ -1,17 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { db, isDbAvailable, hasModel, safeDbQuery, DEMO_USER_ID } from '@/lib/db';
 
 // ============================================================
 // GET /api/admin/finance — Admin financial dashboard
-// Returns platform-wide financial metrics and per-user stats
+// Phase 3BB coarse authorization is enforced by the durable RBAC request
+// boundary. Phase 3BC adds finance-specific authorization in this handler.
+// Returns platform-wide financial metrics and per-user stats.
 // ============================================================
-export async function GET(request: NextRequest) {
-  // Verify admin role from header (middleware also enforces this)
-  const userRole = request.headers.get('x-user-role');
-  if (userRole !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden: admin access required' }, { status: 403 });
-  }
-
+export async function GET() {
   if (!isDbAvailable() || !db || !hasModel('user')) {
     return NextResponse.json({
       totalUsers: 0,
@@ -171,7 +167,7 @@ export async function GET(request: NextRequest) {
         const accountIds = allAccounts.map((a) => a.id);
         const accountIdToUserId = new Map(allAccounts.map((a) => [a.id, a.userId]));
 
-        let openPositionsByUser: Record<string, number> = {};
+        const openPositionsByUser: Record<string, number> = {};
         if (accountIds.length > 0) {
           const openPositions = await db!.position.groupBy({
             by: ['accountId'],

@@ -4,7 +4,8 @@
 //   1. PUBLIC_PATHS — exact match, no auth needed
 //   2. INTERNAL_SERVICE_PATHS — exact match, internal secret only
 //   3. Everything else — requires valid access JWT
-// Admin routes require verified admin JWT.
+// Phase 3BB: Admin authorization is resolved from durable RBAC state.
+// JWT role claims are identity metadata only and never authorize admin access.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -63,7 +64,7 @@ const INTERNAL_SERVICE_PATHS: string[] = [
   '/api/trading/bots/engine/trigger',
 ];
 
-// ── CLASS 3: Admin routes (prefix match, admin JWT required) ──
+// ── CLASS 3: Admin routes (prefix match, durable RBAC required) ──
 const ADMIN_PREFIXES: string[] = [
   '/api/admin/',
 ];
@@ -130,7 +131,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request: { headers: cleanedHeaders } });
   }
 
-  // ── STEP 3: CLASS 3 — All remaining routes require JWT ──
+  // ── STEP 3: CLASS 3 — All remaining routes require JWT identity ──
 
   const token = extractBearerToken(request);
   let payload: Awaited<ReturnType<typeof verifyToken>> = null;
@@ -151,20 +152,38 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  // 3b. Valid access token — inject verified user headers
+  // 3b. JWT establishes identity only. Never propagate payload.role: legacy or
+  // attacker-influenced role claims must not become a downstream trust header.
   cleanedHeaders.set('X-User-Id', payload.sub);
   cleanedHeaders.set('X-User-Email', payload.email || '');
-  if (payload.role) cleanedHeaders.set('X-User-Role', payload.role);
   if (payload.name) cleanedHeaders.set('X-User-Name', payload.name);
 
-  // 3c. Admin routes require admin role
+  // 3c. Admin routes require CURRENT durable permission state. A JWT carrying
+  // role="admin" is insufficient. Storage/model/query failures are distinct
+  // from a user who is authenticated but lacks the required permission.
+  // Load RBAC lazily so non-admin traffic never initializes the database-backed
+  // authorization module merely by crossing the request boundary.
   if (matchesAnyPrefix(pathname, ADMIN_PREFIXES)) {
-    if (payload.role !== 'admin') {
+    const { AUTHZ_PERMISSIONS, getAuthorizationSnapshot } = await import('@/lib/rbac');
+    const authorization = await getAuthorizationSnapshot(payload.sub);
+
+    if (!authorization) {
+      return NextResponse.json(
+        {
+          error: 'Authorization service unavailable.',
+          code: 'AUTHORIZATION_UNAVAILABLE',
+          remediationPhase: 'phase-3bb',
+        },
+        { status: 503 },
+      );
+    }
+
+    if (!authorization.permissions.includes(AUTHZ_PERMISSIONS.ADMIN_ACCESS)) {
       return NextResponse.json(
         {
           error: 'Admin access required.',
           code: 'FORBIDDEN',
-          remediationPhase: 'containment',
+          remediationPhase: 'phase-3bb',
         },
         { status: 403 },
       );
