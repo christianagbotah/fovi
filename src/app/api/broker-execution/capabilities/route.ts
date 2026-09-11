@@ -17,7 +17,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserIdSync, authRequiredResponse } from '@/lib/get-user-id';
-import { logSecurityEvent } from '@/lib/trading-policy';
 import { resolveOwnedConnection } from '@/lib/broker-execution/security/ownership';
 import {
   getCanonicalProvider,
@@ -42,14 +41,10 @@ export async function GET(req: NextRequest) {
   if (connectionId) {
     const resolution = await resolveOwnedConnection(connectionId, userId);
     if (!resolution.ok) {
-      if (resolution.status === 403) {
-        logSecurityEvent({
-          eventType: 'CAPABILITY_OWNERSHIP_VIOLATION',
-          route: '/api/broker-execution/capabilities',
-          userId,
-          reason: `Cross-tenant capability query denied for connection=${connectionId}`,
-        });
-      }
+      // Round 2, item 2: foreign and non-existent connections are
+      // INDISTINGUISHABLE (identical 404 CONNECTION_NOT_FOUND). The
+      // ownership resolver logs the real violation server-side; this
+      // route simply forwards the indistinguishable failure.
       return NextResponse.json(
         { error: resolution.message, code: resolution.code, remediationPhase: 'containment' },
         { status: resolution.status },

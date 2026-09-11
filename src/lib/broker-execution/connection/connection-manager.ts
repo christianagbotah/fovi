@@ -24,6 +24,14 @@
 //     credential-vault.ts). getConnection() NEVER returns
 //     credentials; getConnectionWithCredentials() is INTERNAL ONLY.
 //   - Tenant isolation is enforced by DB-backed ownership checks.
+//     A connection owned by another tenant resolves to the
+//     indistinguishable 404 CONNECTION_NOT_FOUND (round 2, item 2)
+//     — TenantIsolationError is retained as a defensive guard but
+//     the ownership resolver no longer distinguishes foreign from
+//     non-existent connections.
+//   - Operational state (isActive/connectionState) is SERVER-DERIVED
+//     (round 2, item 5): callers may only update harmless metadata
+//     (accountName). No public path can set isActive.
 //   - All operations write audit entries (transactional where
 //     security-critical).
 // ============================================================
@@ -34,6 +42,7 @@ import {
   toSafeConnectionDTO,
 } from '../persistence/connection-repository';
 import { resolveOwnedConnection, type BrokerConnectionRow } from '../security/ownership';
+import { getCanonicalProvider } from '../providers/canonical-providers';
 import type { BrokerCredentials } from './credential-vault';
 
 // ── Public types ──
@@ -66,10 +75,13 @@ export interface ConnectionRecordWithCredentials {
   credentials: BrokerCredentials;
 }
 
-/** Mutable connection updates (credentials are NOT updatable here). */
+/**
+ * Mutable connection updates (round 2, item 5): harmless metadata
+ * ONLY. `isActive` is deliberately absent — operational connection
+ * state is derived server-side, never caller-controlled.
+ */
 export interface ConnectionUpdates {
   accountName?: string | null;
-  isActive?: boolean;
 }
 
 /** Connection test result. */
@@ -81,7 +93,15 @@ export interface ConnectionTestResult {
   message: string;
 }
 
-/** Thrown on cross-tenant access attempts. */
+/**
+ * Thrown on cross-tenant access attempts.
+ *
+ * Round 2, item 2: the ownership resolver now returns the
+ * indistinguishable 404 CONNECTION_NOT_FOUND for foreign
+ * connections, so this error is a defensive guard only. It is
+ * kept so any future re-introduction of a 403-style path remains
+ * mapped consistently by routes.
+ */
 export class TenantIsolationError extends Error {
   constructor() {
     super('Tenant isolation violation: connection belongs to another tenant.');
@@ -130,14 +150,14 @@ export class ConnectionManager {
 
   /**
    * Get a connection by id (ownership enforced). NEVER returns
-   * credentials. Returns null when not found. Throws
-   * TenantIsolationError on cross-tenant access, and a typed
-   * service-unavailable error when the DB cannot be reached.
+   * credentials. Returns null when not found OR when the connection
+   * belongs to another tenant (indistinguishable 404 — round 2,
+   * item 2). Throws a typed service-unavailable error when the DB
+   * cannot be reached.
    */
   async getConnection(connectionId: string, tenantId: string): Promise<ConnectionRecord | null> {
     const resolution = await resolveOwnedConnection(connectionId, tenantId);
     if (!resolution.ok) {
-      if (resolution.status === 403) throw new TenantIsolationError();
       if (resolution.status === 503) {
         const error = new Error(resolution.message) as Error & { status?: number; code?: string };
         error.status = 503;
@@ -161,7 +181,6 @@ export class ConnectionManager {
   ): Promise<ConnectionRecordWithCredentials | null> {
     const resolution = await resolveOwnedConnection(connectionId, tenantId);
     if (!resolution.ok) {
-      if (resolution.status === 403) throw new TenantIsolationError();
       if (resolution.status === 503) {
         const error = new Error(resolution.message) as Error & { status?: number; code?: string };
         error.status = 503;
@@ -183,7 +202,7 @@ export class ConnectionManager {
     return rows.map((row) => toSafeConnectionDTO(row) as ConnectionRecord);
   }
 
-  /** Update mutable connection attributes (ownership enforced). */
+  /** Update harmless connection metadata (ownership enforced). */
   async updateConnection(
     connectionId: string,
     tenantId: string,
@@ -197,7 +216,6 @@ export class ConnectionManager {
       requestContext?.actorId ?? tenantId,
     );
     if (!result.ok) {
-      if (result.status === 403) throw new TenantIsolationError();
       const error = new Error(result.message) as Error & { status?: number; code?: string };
       error.status = result.status;
       error.code = result.code;
@@ -218,7 +236,6 @@ export class ConnectionManager {
       requestContext?.actorId ?? tenantId,
     );
     if (!result.ok) {
-      if (result.status === 403) throw new TenantIsolationError();
       const error = new Error(result.message) as Error & { status?: number; code?: string };
       error.status = result.status;
       error.code = result.code;
@@ -228,29 +245,63 @@ export class ConnectionManager {
   }
 
   /**
-   * Test a connection. In Phase 1 only the deterministic simulator
-   * provider exists — the "test" verifies the connection record
-   * resolves and the provider is canonically demo. It NEVER
-   * contacts an external broker.
+   * Test a connection (round 2, item 5) — DEMO GATED ON BOTH SIDES.
+   *
+   * A test can only report success when BOTH of these hold:
+   *   1. the canonical provider registry classifies the provider
+   *      as isDemo === true, AND
+   *   2. the persisted connection record itself is isDemo === true.
+   *
+   * A real/non-demo connection can NEVER be reported as
+   * "tested successfully". No external broker is EVER contacted
+   * (there is no transport in Phase 1) — the check is purely a
+   * registry/record consistency verification.
    */
   async testConnection(connectionId: string, tenantId: string): Promise<ConnectionTestResult> {
     const resolution = await resolveOwnedConnection(connectionId, tenantId);
     if (!resolution.ok) {
-      if (resolution.status === 403) throw new TenantIsolationError();
       const error = new Error(resolution.message) as Error & { status?: number; code?: string };
       error.status = resolution.status;
       error.code = resolution.code;
       throw error;
     }
     const connection = resolution.connection;
+
+    // Canonical-registry demo classification (trusted, server-side).
+    const canonical = getCanonicalProvider(connection.providerId);
+    const canonicalIsDemo = canonical?.isDemo === true;
+
+    // Persisted-record demo classification.
+    const recordIsDemo = connection.isDemo === true;
+
+    if (!canonical || !canonicalIsDemo || !recordIsDemo) {
+      logSecurityEvent({
+        eventType: 'CONNECTION_TEST_NON_DEMO_REFUSED',
+        route: 'connection-manager.testConnection',
+        userId: tenantId,
+        reason: `Connection test refused for non-demo connection=${connectionId} ` +
+          `(provider=${connection.providerId}, canonicalIsDemo=${canonical ? canonicalIsDemo : 'unknown'}, recordIsDemo=${recordIsDemo})`,
+      });
+      return {
+        success: false,
+        providerId: connection.providerId,
+        isDemo: recordIsDemo,
+        connectionState: connection.connectionState,
+        message:
+          'Connection test refused: only demo/simulator connections can be tested ' +
+          'under Phase 1 containment. No external broker contact was made.',
+      };
+    }
+
     return {
       success: true,
       providerId: connection.providerId,
-      isDemo: connection.isDemo,
+      isDemo: true,
       connectionState: connection.connectionState,
       message:
-        'Phase 1: connection record verified against the canonical provider registry. ' +
-        'No external broker contact is possible under containment.',
+        'Phase 1: demo connection verified against the canonical provider registry ' +
+        '(isDemo on both the registry and the record). No external broker contact ' +
+        'is possible under containment.',
     };
   }
 }

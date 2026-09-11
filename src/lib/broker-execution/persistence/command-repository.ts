@@ -28,6 +28,7 @@ import {
   isUniqueViolation,
   isDbUnavailableError,
 } from './db-access';
+import { sanitizeBrokerAuditInput } from '../observability/redaction';
 
 // ── Row shapes (Prisma model projections) ──
 
@@ -183,8 +184,11 @@ export const CommandRepository = {
 
         // Audit is part of the security guarantee: a failed audit
         // write rolls back the whole mutation (fail-closed).
+        // The input is sanitized with the SAME pure sanitizer used
+        // by the standalone AuditRepository (round 2, item 4) — safe
+        // to call inside this transaction (no second DB operation).
         await tx.brokerExecutionAudit.create({
-          data: {
+          data: sanitizeBrokerAuditInput({
             actorId: input.audit.actorId,
             tenantId: input.audit.tenantId,
             accountId: input.audit.accountId ?? null,
@@ -195,8 +199,8 @@ export const CommandRepository = {
             reason: input.audit.reason ?? null,
             correlationId: input.audit.correlationId ?? input.correlationId,
             commandId: input.commandId,
-            ipMetadata: (input.audit.ipMetadata ?? undefined) as never,
-          },
+            ipMetadata: input.audit.ipMetadata,
+          }) as never,
         });
 
         return command;

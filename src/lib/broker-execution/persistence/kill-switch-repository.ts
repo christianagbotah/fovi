@@ -27,6 +27,7 @@
 
 import { logSecurityEvent } from '@/lib/trading-policy';
 import { requireDb, ServiceUnavailableError, isDbUnavailableError } from './db-access';
+import { sanitizeBrokerAuditInput } from '../observability/redaction';
 import type { KillSwitch, KillSwitchScope, KillSwitchState } from '@/lib/broker-execution/types/kill-switches';
 import {
   KillSwitchScope as KillSwitchScopeEnum,
@@ -245,7 +246,7 @@ export const KillSwitchRepository = {
       });
 
       await tx.brokerExecutionAudit.create({
-        data: {
+        data: sanitizeBrokerAuditInput({
           actorId: params.activatedBy,
           tenantId: 'system',
           action: 'KILL_SWITCH_ACTIVATE',
@@ -253,7 +254,7 @@ export const KillSwitchRepository = {
           resultingState: `KILL_SWITCH_ACTIVE:${String(params.scope).toUpperCase()}:${canonical.scopeId}`,
           reason: params.reason,
           commandId: null,
-        },
+        }) as never,
       });
 
       return row;
@@ -321,7 +322,7 @@ export const KillSwitchRepository = {
       });
 
       await tx.brokerExecutionAudit.create({
-        data: {
+        data: sanitizeBrokerAuditInput({
           actorId: params.deactivatedBy,
           tenantId: 'system',
           action: 'KILL_SWITCH_DEACTIVATE',
@@ -329,7 +330,7 @@ export const KillSwitchRepository = {
           resultingState: 'KILL_SWITCH_INACTIVE',
           reason: `Kill switch deactivated by ${params.deactivatedBy}`,
           commandId: null,
-        },
+        }) as never,
       });
 
       return result;

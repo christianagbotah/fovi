@@ -516,36 +516,16 @@ model PaperTradeSettlement {
 // Broker Execution Framework Models
 // ============================================
 
-/// Broker provider catalog entry
-model BrokerProviderConfig {
-  id          String   @id @default(cuid())
-  providerId  String   @unique // e.g., "demo", "mt5-icmarkets", "ctrader-pepperstone"
-  providerType String  // MT4, MT5, CTRADER, FIX_API, REST_WS, OAUTH_API, BRIDGE
-  name        String
-  description String?
-  authType    String   // API_KEY, OAUTH2, CERTIFICATE, BRIDGE
-  config      Json?    // Provider-specific config (REST URLs, etc.) - NO credentials
-  isActive    Boolean  @default(true)
-  isDemo      Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  capabilities BrokerProviderCapability[]
-  connections  BrokerConnection[]
-}
-
-/// Provider capability flags
-model BrokerProviderCapability {
-  id         String @id @default(cuid())
-  providerId String
-  capability String // Enum value from BrokerCapability
-  supported  Boolean @default(true)
-  constraints Json?  // Limits, restrictions, etc.
-
-  provider BrokerProviderConfig @relation(fields: [providerId], references: [providerId])
-
-  @@unique([providerId, capability])
-}
+// NOTE (architect correction round 2, item 1):
+//   The BrokerProviderConfig / BrokerProviderCapability models were
+//   REMOVED. Provider identity is NOT database-bootstrapped: the
+//   canonical provider registry (src/lib/broker-execution/providers/
+//   canonical-providers.ts) is the SINGLE authoritative source of
+//   provider truth (type, demo classification, availability,
+//   capabilities). A providerId on BrokerConnection is a plain
+//   registry reference validated server-side at every use — an
+//   empty provider table can never block or bootstrap connection
+//   creation, and no seed order dependency exists.
 
 /// Broker connection (tenant-scoped)
 model BrokerConnection {
@@ -575,7 +555,10 @@ model BrokerConnection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  provider        BrokerProviderConfig @relation(fields: [providerId], references: [providerId])
+  // providerId references the CANONICAL provider registry
+  // (canonical-providers.ts) — a validated application-level
+  // reference, NOT a database foreign key. See the note above the
+  // BrokerConnection model.
   executionCommands ExecutionCommandRecord[]
   reconciliationResults ReconciliationResult[]
 

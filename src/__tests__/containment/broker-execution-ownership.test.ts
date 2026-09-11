@@ -242,7 +242,10 @@ describe('Scenario F: user A cannot submit/validate against user B\'s account; P
         size: 1,
       }),
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    // Round 2, item 2: foreign connection = indistinguishable 404
+    expect(body.code).toBe('CONNECTION_NOT_FOUND');
     expect(fakeDb().__tables.get('executionCommandRecord')!.size).toBe(0);
   });
 
@@ -258,7 +261,9 @@ describe('Scenario F: user A cannot submit/validate against user B\'s account; P
         size: 1,
       }),
     );
-    expect(res.status).toBe(403);
+    // Round 2, item 2: foreign connection = indistinguishable 404
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe('CONNECTION_NOT_FOUND');
   });
 
   it('user A submits and user B cannot READ the resulting command by id', async () => {
@@ -350,7 +355,10 @@ describe('Scenario G: omitting connectionId cannot bypass ownership; accountId/c
         'http://localhost/api/broker-execution/reconciliation?accountId=acct_g1&connectionId=conn_g1',
       ),
     );
-    expect(res.status).toBe(403);
+    // Round 2, items 2+3: owner-scoped reconciliation with the
+    // indistinguishable 404 for foreign connections (admin or not).
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe('CONNECTION_NOT_FOUND');
   });
 
   it('accountId/connectionId mismatch is rejected even for the owning user', async () => {
@@ -694,7 +702,36 @@ describe('Scenario K: no broker execution method is called; live trading denied 
     expect(adapterSpy.adapterCreated).toBe(0);
   });
 
-  it('live trading remains denied for an ADMIN user on a live connection', async () => {
+  it('live trading remains denied for an ADMIN user on a live connection THEY OWN', async () => {
+    // The admin OWNS this live connection — the only remaining
+    // barrier is Phase 1 containment itself, which must hold for
+    // admins too (round 2, item 3 removed admin cross-tenant
+    // resolution, NOT the containment denial).
+    seedConnection({ id: 'conn_k_admin_live', tenantId: 'usr_admin_k', isDemo: false, accountType: 'live', providerId: 'okx' });
+    const { POST } = await import('@/app/api/broker-execution/commands/route');
+    const req = new NextRequest(new URL('http://localhost/api/broker-execution/commands'), {
+      method: 'POST',
+      headers: {
+        'x-user-id': 'usr_admin_k',
+        'x-user-role': 'admin',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        commandType: 'PLACE_MARKET',
+        connectionId: 'conn_k_admin_live',
+        idempotencyKey: 'idem_k_admin',
+        symbol: 'BTC/USDT',
+        side: 'BUY',
+        size: 1,
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe('PHASE1_LIVE_TRADING_DISABLED');
+    expect(adapterSpy.adapterCreated).toBe(0);
+  });
+
+  it('an ADMIN gets the indistinguishable 404 for a live connection owned by ANOTHER user (round 2, items 2+3)', async () => {
     const { POST } = await import('@/app/api/broker-execution/commands/route');
     const req = new NextRequest(new URL('http://localhost/api/broker-execution/commands'), {
       method: 'POST',
@@ -706,14 +743,18 @@ describe('Scenario K: no broker execution method is called; live trading denied 
       body: JSON.stringify({
         commandType: 'PLACE_MARKET',
         connectionId: 'conn_k_live',
-        idempotencyKey: 'idem_k_admin',
+        idempotencyKey: 'idem_k_admin_foreign',
         symbol: 'BTC/USDT',
         side: 'BUY',
         size: 1,
       }),
     });
     const res = await POST(req);
-    expect(res.status).toBe(403);
+    // conn_k_live belongs to user_1 — the admin receives the SAME
+    // indistinguishable 404 CONNECTION_NOT_FOUND as anyone else
+    // (no admin cross-tenant branch exists anywhere).
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe('CONNECTION_NOT_FOUND');
     expect(adapterSpy.adapterCreated).toBe(0);
   });
 

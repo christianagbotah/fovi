@@ -10,8 +10,19 @@
 //     required, resolved from trusted PostgreSQL records, and must
 //     correspond to each other AND to the authenticated tenant.
 //   - connectionId is NOT an optional authorization mechanism.
-//   - A verified admin may reconcile across tenants through an
-//     explicit verified-admin branch (before tenant-scoped lookup).
+//
+// CORRECTION ROUND 2 (item 3) — ADMIN CROSS-TENANT RECONCILIATION
+// REMOVED:
+//   - There is NO admin cross-tenant branch at this boundary. The
+//     route previously authorized a verified admin to reconcile
+//     another tenant's connection, but the ReconciliationStore and
+//     ReconciliationRepository below resolve ownership with the
+//     requesting user's identity — an admin-authorized request
+//     would then be REFUSED by the store (self-contradiction).
+//   - Phase 1 decision: reconciliation is strictly OWNER-SCOPED.
+//     Every caller — admin or not — may only reconcile connections
+//     they own. A foreign connection resolves to the
+//     indistinguishable 404 CONNECTION_NOT_FOUND (item 2).
 //   - Reconciliation results are persisted to ReconciliationResult
 //     (PostgreSQL) via the ownership-proven store.
 //   - READ-ONLY and demo/simulator-only: reconciliation never
@@ -29,11 +40,6 @@ import { CommandRepository } from '@/lib/broker-execution/persistence/command-re
 import { getCanonicalProvider } from '@/lib/broker-execution/providers/canonical-providers';
 import { persistenceErrorStatus } from '@/lib/broker-execution/persistence/db-access';
 
-/** Check admin role from the verified JWT security context. */
-function isAdmin(req: NextRequest): boolean {
-  return req.headers.get('x-user-role') === 'admin';
-}
-
 // ── Reconciliation store singleton (stateless — PostgreSQL-backed) ──
 let _reconStore: ReconciliationStore | null = null;
 function getReconStore(): ReconciliationStore {
@@ -46,11 +52,11 @@ function getReconStore(): ReconciliationStore {
 /**
  * Resolve and verify the account+connection pair for the caller.
  * Mandatory ownership: both identifiers are required and must
- * correspond to each other and to the authenticated tenant
- * (admin may cross tenants through the verified-admin branch).
+ * correspond to each other and to the authenticated tenant.
+ * Strictly owner-scoped (round 2, item 3) — no admin cross-tenant
+ * branch exists anywhere in this path.
  */
 async function resolveOwnedAccountConnection(
-  req: NextRequest,
   userId: string,
   accountId: string,
   connectionId: string,
@@ -58,10 +64,7 @@ async function resolveOwnedAccountConnection(
   | { ok: true; connection: BrokerConnectionRow }
   | { ok: false; status: number; code: string; message: string }
 > {
-  const resolution = await resolveOwnedConnection(connectionId, userId, {
-    allowAdminCrossTenant: true,
-    callerIsAdmin: isAdmin(req),
-  });
+  const resolution = await resolveOwnedConnection(connectionId, userId);
   if (!resolution.ok) {
     return { ok: false, status: resolution.status, code: resolution.code, message: resolution.message };
   }
@@ -123,7 +126,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const resolved = await resolveOwnedAccountConnection(req, userId, accountId, connectionId);
+    const resolved = await resolveOwnedAccountConnection(userId, accountId, connectionId);
     if (!resolved.ok) {
       return NextResponse.json(
         { error: resolved.message, code: resolved.code, remediationPhase: 'containment' },
@@ -187,7 +190,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const resolved = await resolveOwnedAccountConnection(req, userId, accountId, connectionId);
+    const resolved = await resolveOwnedAccountConnection(userId, accountId, connectionId);
     if (!resolved.ok) {
       return NextResponse.json(
         { error: resolved.message, code: resolved.code, remediationPhase: 'containment' },

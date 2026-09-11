@@ -29,6 +29,7 @@ import { enforcePhase1CredentialIntake, logSecurityEvent } from '@/lib/trading-p
 import { requireDb, ServiceUnavailableError } from './db-access';
 import { resolveProviderForConnection } from '../providers/canonical-providers';
 import { resolveOwnedConnection, type BrokerConnectionRow } from '../security/ownership';
+import { sanitizeBrokerAuditInput } from '../observability/redaction';
 import {
   encryptCredentialFields,
   decryptCredentialFields,
@@ -61,8 +62,8 @@ export interface CreateConnectionInput {
 }
 
 export interface UpdateConnectionInput {
+  /** Harmless display metadata ONLY (round 2, item 5). */
   accountName?: string | null;
-  isActive?: boolean;
 }
 
 // ── Containment result for credential intake ──
@@ -164,7 +165,7 @@ export const ConnectionRepository = {
             },
           });
           await tx.brokerExecutionAudit.create({
-            data: {
+            data: sanitizeBrokerAuditInput({
               actorId: input.actorId,
               tenantId: input.tenantId,
               accountId: input.accountId ?? null,
@@ -173,14 +174,14 @@ export const ConnectionRepository = {
               resultingState: 'DISCONNECTED',
               reason: 'Credentials encrypted (AES-256-GCM, AAD-bound) and stored',
               commandId: null,
-              ipMetadata: (input.ipMetadata ?? undefined) as never,
-            },
+              ipMetadata: input.ipMetadata,
+            }) as never,
           });
           return updated;
         }
 
         await tx.brokerExecutionAudit.create({
-          data: {
+          data: sanitizeBrokerAuditInput({
             actorId: input.actorId,
             tenantId: input.tenantId,
             accountId: input.accountId ?? null,
@@ -189,8 +190,8 @@ export const ConnectionRepository = {
             resultingState: 'DISCONNECTED',
             reason: `Connection created for canonical provider ${provider.providerId} (isDemo=${provider.isDemo})`,
             commandId: null,
-            ipMetadata: (input.ipMetadata ?? undefined) as never,
-          },
+            ipMetadata: input.ipMetadata,
+          }) as never,
         });
 
         return created;
@@ -271,8 +272,10 @@ export const ConnectionRepository = {
   },
 
   /**
-   * Update mutable connection attributes (ownership enforced).
-   * Credentials are NOT updatable through this method.
+   * Update harmless connection metadata (ownership enforced;
+   * round 2, item 5: operational state such as isActive is
+   * server-derived and NOT caller-settable). Credentials are NOT
+   * updatable through this method.
    */
   async updateConnection(
     connectionId: string,
@@ -290,20 +293,19 @@ export const ConnectionRepository = {
           where: { id: connectionId },
           data: {
             ...(updates.accountName !== undefined ? { accountName: updates.accountName } : {}),
-            ...(updates.isActive !== undefined ? { isActive: updates.isActive } : {}),
           },
         });
         await tx.brokerExecutionAudit.create({
-          data: {
+          data: sanitizeBrokerAuditInput({
             actorId,
             tenantId,
             providerId: row.providerId,
             action: 'UPDATE',
             previousState: owned.connection.connectionState,
             resultingState: row.connectionState,
-            reason: 'Connection updated',
+            reason: 'Connection metadata updated (operational state is server-derived)',
             commandId: null,
-          },
+          }) as never,
         });
         return row;
       });
@@ -334,7 +336,7 @@ export const ConnectionRepository = {
       await db.$transaction(async (tx) => {
         await tx.brokerConnection.delete({ where: { id: connectionId } });
         await tx.brokerExecutionAudit.create({
-          data: {
+          data: sanitizeBrokerAuditInput({
             actorId,
             tenantId,
             providerId: owned.connection.providerId,
@@ -343,7 +345,7 @@ export const ConnectionRepository = {
             resultingState: 'DELETED',
             reason: 'Connection deleted by owner',
             commandId: null,
-          },
+          }) as never,
         });
       });
       return { ok: true };
@@ -414,7 +416,7 @@ export const ConnectionRepository = {
         });
 
         await tx.brokerExecutionAudit.create({
-          data: {
+          data: sanitizeBrokerAuditInput({
             actorId,
             tenantId,
             providerId: connection.providerId,
@@ -423,7 +425,7 @@ export const ConnectionRepository = {
             resultingState: updated.connectionState,
             reason: 'Credentials rotated (AES-256-GCM, AAD-bound, fail-closed verified)',
             commandId: null,
-          },
+          }) as never,
         });
         return updated.credentialVersion;
       });

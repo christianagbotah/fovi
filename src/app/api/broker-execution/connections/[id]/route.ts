@@ -7,11 +7,19 @@
 // GET/PATCH/DELETE never return credentials — the safe DTO
 // excludes all encrypted credential columns.
 //
+// CORRECTION ROUND 2 (items 2, 5):
+//   - Ownership failures are INDISTINGUISHABLE: a foreign
+//     connection and a non-existent connection both resolve to
+//     404 CONNECTION_NOT_FOUND (the existence oracle is removed).
+//   - PATCH accepts harmless metadata ONLY (accountName).
+//     `isActive`/`connectionState` are SERVER-DERIVED — no public
+//     path can control a connection's operational state.
+//
 // GET:    Get connection details (REQUIRES AUTH + ownership)
-// PATCH:  Update connection (REQUIRES AUTH + ownership)
+// PATCH:  Update connection metadata (REQUIRES AUTH + ownership)
 // DELETE: Delete connection (REQUIRES AUTH + ownership)
-// 403 on cross-tenant access; 404 when not found; 503 fail-closed
-// when the authoritative store is unavailable.
+// 404 when not found (or owned by another tenant — identical);
+// 503 fail-closed when the authoritative store is unavailable.
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,11 +33,17 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-// ── Update schema (credentials are NOT updatable here) ──
-const UpdateConnectionSchema = z.object({
-  accountName: z.string().nullable().optional(),
-  isActive: z.boolean().optional(),
-});
+// ── Update schema (round 2, item 5) ──
+// Harmless display metadata ONLY. `isActive` is deliberately absent:
+// operational connection state is derived server-side and must
+// never be caller-controlled. `.strict()` REJECTS (400) any request
+// that carries `isActive` or any other unrecognized key — callers
+// cannot believe they toggled operational state.
+const UpdateConnectionSchema = z
+  .object({
+    accountName: z.string().nullable().optional(),
+  })
+  .strict();
 
 // ============================================================
 // GET — Get connection details (never includes credentials)
@@ -49,17 +63,25 @@ export async function GET(req: NextRequest, context: RouteContext) {
     const connection = await connectionManager.getConnection(connectionId, userId);
 
     if (!connection) {
+      // Indistinguishable 404 (round 2, item 2): foreign and
+      // non-existent connections produce the SAME body — status,
+      // error text AND code.
       return NextResponse.json(
-        { error: 'Connection not found.' },
+        { error: 'Connection not found.', code: 'CONNECTION_NOT_FOUND' },
         { status: 404 },
       );
     }
 
-    // Ownership is enforced inside getConnection (TenantIsolationError
-    // on mismatch). The DTO excludes all credential columns.
+    // Ownership is enforced inside getConnection. The DTO excludes
+    // all credential columns.
     return NextResponse.json(connection);
   } catch (error) {
     if (error instanceof TenantIsolationError) {
+      // Defensive guard (round 2, item 2): if a tenant-isolation
+      // path ever fires again, it MUST return the same
+      // indistinguishable 404 CONNECTION_NOT_FOUND shape — never a
+      // caller-visible 403 that would re-introduce the existence
+      // oracle.
       logSecurityEvent({
         eventType: 'CONNECTION_OWNERSHIP_VIOLATION',
         route: '/api/broker-execution/connections/[id]',
@@ -67,8 +89,8 @@ export async function GET(req: NextRequest, context: RouteContext) {
         reason: 'Cross-tenant connection access denied (DB-backed ownership check)',
       });
       return NextResponse.json(
-        { error: 'Access denied.', code: 'TENANT_ISOLATION_VIOLATION', remediationPhase: 'containment' },
-        { status: 403 },
+        { error: 'Connection not found.', code: 'CONNECTION_NOT_FOUND' },
+        { status: 404 },
       );
     }
     logSecurityEvent({
@@ -114,7 +136,6 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       userId,
       {
         accountName: parsed.data.accountName,
-        isActive: parsed.data.isActive,
       },
       { actorId: userId },
     );
@@ -122,6 +143,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof TenantIsolationError) {
+      // Defensive guard (round 2, item 2): indistinguishable 404.
       logSecurityEvent({
         eventType: 'CONNECTION_OWNERSHIP_VIOLATION',
         route: '/api/broker-execution/connections/[id]',
@@ -129,11 +151,12 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         reason: 'Cross-tenant connection update denied (DB-backed ownership check)',
       });
       return NextResponse.json(
-        { error: 'Access denied.', code: 'TENANT_ISOLATION_VIOLATION', remediationPhase: 'containment' },
-        { status: 403 },
+        { error: 'Connection not found.', code: 'CONNECTION_NOT_FOUND' },
+        { status: 404 },
       );
     }
     const status = (error as { status?: number }).status ?? persistenceErrorStatus(error);
+    const code = (error as { code?: string }).code ?? 'SERVICE_UNAVAILABLE';
     logSecurityEvent({
       eventType: 'CONNECTION_PATCH_ERROR',
       route: '/api/broker-execution/connections/[id]',
@@ -141,7 +164,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       reason: error instanceof Error ? error.message : 'Unknown error',
     });
     return NextResponse.json(
-      { error: 'Failed to update connection.', code: 'SERVICE_UNAVAILABLE' },
+      { error: 'Failed to update connection.', code },
       { status },
     );
   }
@@ -176,6 +199,7 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
     return NextResponse.json({ deleted: true, connectionId });
   } catch (error) {
     if (error instanceof TenantIsolationError) {
+      // Defensive guard (round 2, item 2): indistinguishable 404.
       logSecurityEvent({
         eventType: 'CONNECTION_OWNERSHIP_VIOLATION',
         route: '/api/broker-execution/connections/[id]',
@@ -183,8 +207,8 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
         reason: 'Cross-tenant connection delete denied (DB-backed ownership check)',
       });
       return NextResponse.json(
-        { error: 'Access denied.', code: 'TENANT_ISOLATION_VIOLATION', remediationPhase: 'containment' },
-        { status: 403 },
+        { error: 'Connection not found.', code: 'CONNECTION_NOT_FOUND' },
+        { status: 404 },
       );
     }
     const status = (error as { status?: number }).status ?? persistenceErrorStatus(error);

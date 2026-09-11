@@ -3,37 +3,16 @@
 -- Correction round: canonical KillSwitchRecord.scopeId (non-null,
 -- default 'global') so @@unique([scope, scopeId]) enforces GLOBAL
 -- singleton semantics; identifier reflects 2026 creation date.
+-- Correction round 2 (item 1): BrokerProviderConfig /
+-- BrokerProviderCapability tables are NOT created. Provider truth
+-- lives exclusively in the canonical provider registry
+-- (canonical-providers.ts) — BrokerConnection.providerId is a
+-- validated application-level reference, NOT a foreign key. A
+-- fresh database therefore needs NO provider bootstrap/seed before
+-- connections can be created.
 -- SQL generated via 'prisma migrate diff' (base -> head) for
 -- guaranteed schema/migration consistency. PostgreSQL preserved.
 -- ============================================
-
--- CreateTable
-CREATE TABLE "BrokerProviderConfig" (
-    "id" TEXT NOT NULL,
-    "providerId" TEXT NOT NULL,
-    "providerType" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "description" TEXT,
-    "authType" TEXT NOT NULL,
-    "config" JSONB,
-    "isActive" BOOLEAN NOT NULL DEFAULT true,
-    "isDemo" BOOLEAN NOT NULL DEFAULT false,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "BrokerProviderConfig_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "BrokerProviderCapability" (
-    "id" TEXT NOT NULL,
-    "providerId" TEXT NOT NULL,
-    "capability" TEXT NOT NULL,
-    "supported" BOOLEAN NOT NULL DEFAULT true,
-    "constraints" JSONB,
-
-    CONSTRAINT "BrokerProviderCapability_pkey" PRIMARY KEY ("id")
-);
 
 -- CreateTable
 CREATE TABLE "BrokerConnection" (
@@ -192,12 +171,6 @@ CREATE TABLE "ProviderEventLog" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "BrokerProviderConfig_providerId_key" ON "BrokerProviderConfig"("providerId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "BrokerProviderCapability_providerId_capability_key" ON "BrokerProviderCapability"("providerId", "capability");
-
--- CreateIndex
 CREATE INDEX "BrokerConnection_tenantId_idx" ON "BrokerConnection"("tenantId");
 
 -- CreateIndex
@@ -280,12 +253,6 @@ CREATE INDEX "ProviderEventLog_eventType_idx" ON "ProviderEventLog"("eventType")
 
 -- CreateIndex
 CREATE INDEX "ProviderEventLog_timestamp_idx" ON "ProviderEventLog"("timestamp");
-
--- AddForeignKey
-ALTER TABLE "BrokerProviderCapability" ADD CONSTRAINT "BrokerProviderCapability_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "BrokerProviderConfig"("providerId") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "BrokerConnection" ADD CONSTRAINT "BrokerConnection_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "BrokerProviderConfig"("providerId") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ExecutionCommandRecord" ADD CONSTRAINT "ExecutionCommandRecord_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "BrokerConnection"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

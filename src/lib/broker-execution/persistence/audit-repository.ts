@@ -23,7 +23,7 @@
 
 import { logSecurityEvent } from '@/lib/trading-policy';
 import { requireDb, ServiceUnavailableError } from './db-access';
-import { redactForAudit } from '../observability/redaction';
+import { redactForAudit, sanitizeBrokerAuditInput } from '../observability/redaction';
 
 // ── Row shape ──
 
@@ -88,37 +88,51 @@ export interface AuditAuthContext {
  */
 export const AuditRepository = {
   /**
-   * Append an audit entry. Sanitizes the record (credential fields
-   * and network metadata redaction) before persistence.
+   * Append an audit entry.
+   *
+   * CORRECTION ROUND 2 (item 4): this STANDALONE path and every
+   * TRANSACTIONAL path (tx.brokerExecutionAudit.create in the
+   * command/connection/credential/kill-switch/reconciliation
+   * repositories) run their input through the SAME pure
+   * `sanitizeBrokerAuditInput()` — recursive credential redaction,
+   * IP normalization, malformed-forwarded-data dropping and
+   * length caps. No audit write anywhere in this codebase bypasses
+   * that sanitizer.
+   *
    * This is a CREATE-ONLY operation: no update/delete exists.
    */
   async append(input: AuditCreateInput): Promise<BrokerExecutionAuditRow> {
     const db = requireDb('audit repository append');
 
-    // Sanitize the full record before it touches persistence.
-    const sanitized = redactForAudit({
+    // Sanitize the full record before it touches persistence — the
+    // SAME sanitizer used inside transactional audit writes.
+    const sanitized = sanitizeBrokerAuditInput({
+      actorId: input.actorId,
+      tenantId: input.tenantId,
       accountId: input.accountId ?? null,
       providerId: input.providerId ?? null,
+      action: input.action,
       previousState: input.previousState ?? null,
       resultingState: input.resultingState ?? null,
       reason: input.reason ?? null,
       correlationId: input.correlationId ?? null,
-      ipMetadata: input.ipMetadata ?? null,
-    }) as Record<string, unknown>;
+      commandId: input.commandId ?? null,
+      ipMetadata: input.ipMetadata,
+    });
 
     const row = await db.brokerExecutionAudit.create({
       data: {
-        actorId: input.actorId,
-        tenantId: input.tenantId,
-        accountId: (sanitized.accountId as string | null) ?? null,
-        providerId: (sanitized.providerId as string | null) ?? null,
-        action: input.action,
-        previousState: (sanitized.previousState as string | null) ?? null,
-        resultingState: (sanitized.resultingState as string | null) ?? null,
-        reason: (sanitized.reason as string | null) ?? null,
-        correlationId: (sanitized.correlationId as string | null) ?? null,
-        commandId: input.commandId ?? null,
-        ipMetadata: (sanitized.ipMetadata ?? undefined) as never,
+        actorId: sanitized.actorId,
+        tenantId: sanitized.tenantId,
+        accountId: sanitized.accountId,
+        providerId: sanitized.providerId,
+        action: sanitized.action,
+        previousState: sanitized.previousState,
+        resultingState: sanitized.resultingState,
+        reason: sanitized.reason,
+        correlationId: sanitized.correlationId,
+        commandId: sanitized.commandId,
+        ipMetadata: sanitized.ipMetadata as never,
       },
     });
     return row as unknown as BrokerExecutionAuditRow;

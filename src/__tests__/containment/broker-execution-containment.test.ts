@@ -661,14 +661,37 @@ describe('Invariant 4: Users cannot read or mutate another user\'s broker connec
     process.env = ORIGINAL_ENV;
   });
 
-  describe('connections/[id] GET — cross-tenant isolation (DB-backed ownership)', () => {
-    it('returns 403 when USER_B tries to GET USER_A\'s connection', async () => {
+  describe('connections/[id] GET — cross-tenant isolation (indistinguishable 404)', () => {
+    it('returns the INDISTINGUISHABLE 404 when USER_B tries to GET USER_A\'s connection', async () => {
       const { GET } = await import('@/app/api/broker-execution/connections/[id]/route');
       const req = authedReq(USER_B, `http://localhost/api/broker-execution/connections/${CONN_ID}`);
       const res = await GET(req, { params: Promise.resolve({ id: CONN_ID }) });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       const body = await res.json();
-      expect(body.code).toBe('TENANT_ISOLATION_VIOLATION');
+      expect(body.code).toBe('CONNECTION_NOT_FOUND');
+    });
+
+    it('REGRESSION (round 2, item 2): USER_B on USER_A\'s REAL id vs a RANDOM id — byte-identical responses', async () => {
+      const { GET } = await import('@/app/api/broker-execution/connections/[id]/route');
+      const randomId = 'totally-nonexistent-connection-id-xyz';
+
+      const [foreignRes, nonexistentRes] = await Promise.all([
+        GET(authedReq(USER_B, `http://localhost/api/broker-execution/connections/${CONN_ID}`), {
+          params: Promise.resolve({ id: CONN_ID }),
+        }),
+        GET(authedReq(USER_B, `http://localhost/api/broker-execution/connections/${randomId}`), {
+          params: Promise.resolve({ id: randomId }),
+        }),
+      ]);
+
+      // Same status, same code, same error message — no existence oracle.
+      expect(foreignRes.status).toBe(404);
+      expect(nonexistentRes.status).toBe(404);
+      const foreignBody = await foreignRes.json();
+      const nonexistentBody = await nonexistentRes.json();
+      expect(foreignBody).toEqual(nonexistentBody);
+      expect(foreignBody.code).toBe('CONNECTION_NOT_FOUND');
+      expect(foreignBody.error).toBe('Connection not found.');
     });
 
     it('allows USER_A to GET their own connection (without credentials in the response)', async () => {
@@ -684,8 +707,8 @@ describe('Invariant 4: Users cannot read or mutate another user\'s broker connec
     });
   });
 
-  describe('connections/[id] PATCH — cross-tenant isolation', () => {
-    it('returns 403 when USER_B tries to PATCH USER_A\'s connection', async () => {
+  describe('connections/[id] PATCH — cross-tenant isolation (indistinguishable 404)', () => {
+    it('returns the INDISTINGUISHABLE 404 when USER_B tries to PATCH USER_A\'s connection', async () => {
       const { PATCH } = await import('@/app/api/broker-execution/connections/[id]/route');
       const req = new NextRequest(
         new URL(`http://localhost/api/broker-execution/connections/${CONN_ID}`),
@@ -699,17 +722,17 @@ describe('Invariant 4: Users cannot read or mutate another user\'s broker connec
         },
       );
       const res = await PATCH(req, { params: Promise.resolve({ id: CONN_ID }) });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       const body = await res.json();
-      expect(body.code).toBe('TENANT_ISOLATION_VIOLATION');
+      expect(body.code).toBe('CONNECTION_NOT_FOUND');
       // The connection is unchanged
       const row = fakeDb().__tables.get('brokerConnection')!.get(CONN_ID)!;
       expect(row.accountName).toBeNull();
     });
   });
 
-  describe('connections/[id] DELETE — cross-tenant isolation', () => {
-    it('returns 403 when USER_B tries to DELETE USER_A\'s connection', async () => {
+  describe('connections/[id] DELETE — cross-tenant isolation (indistinguishable 404)', () => {
+    it('returns the INDISTINGUISHABLE 404 when USER_B tries to DELETE USER_A\'s connection', async () => {
       const { DELETE } = await import('@/app/api/broker-execution/connections/[id]/route');
       const req = new NextRequest(
         new URL(`http://localhost/api/broker-execution/connections/${CONN_ID}`),
@@ -719,9 +742,9 @@ describe('Invariant 4: Users cannot read or mutate another user\'s broker connec
         },
       );
       const res = await DELETE(req, { params: Promise.resolve({ id: CONN_ID }) });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       const body = await res.json();
-      expect(body.code).toBe('TENANT_ISOLATION_VIOLATION');
+      expect(body.code).toBe('CONNECTION_NOT_FOUND');
       // The connection still exists
       expect(fakeDb().__tables.get('brokerConnection')!.has(CONN_ID)).toBe(true);
     });
@@ -743,8 +766,8 @@ describe('Invariant 4: Users cannot read or mutate another user\'s broker connec
     });
   });
 
-  describe('commands + reconciliation cross-tenant ownership (DB-backed)', () => {
-    it('USER_B cannot submit a command against USER_A\'s connection', async () => {
+  describe('commands + reconciliation cross-tenant ownership (indistinguishable 404)', () => {
+    it('USER_B cannot submit a command against USER_A\'s connection (404 CONNECTION_NOT_FOUND)', async () => {
       const { POST } = await import('@/app/api/broker-execution/commands/route');
       const req = authedReq(USER_B, 'http://localhost/api/broker-execution/commands', 'POST', {
         commandType: 'PLACE_MARKET',
@@ -755,19 +778,26 @@ describe('Invariant 4: Users cannot read or mutate another user\'s broker connec
         size: 1,
       });
       const res = await POST(req);
-      expect(res.status).toBe(403);
+      // Round 2, item 2: foreign connection = indistinguishable 404
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.code).toBe('CONNECTION_NOT_FOUND');
       // No command was persisted
       expect(tableCount('executionCommandRecord')).toBe(0);
     });
 
-    it('USER_B cannot trigger reconciliation on USER_A\'s connection', async () => {
+    it("USER_B cannot trigger reconciliation on USER_A's connection (404, owner-scoped)", async () => {
       const { POST } = await import('@/app/api/broker-execution/reconciliation/route');
       const req = authedReq(USER_B, 'http://localhost/api/broker-execution/reconciliation', 'POST', {
         accountId: CONN_ID,
         connectionId: CONN_ID,
       });
       const res = await POST(req);
-      expect(res.status).toBe(403);
+      // Round 2, items 2+3: owner-scoped reconciliation, foreign
+      // connection = indistinguishable 404 (even for admins)
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.code).toBe('CONNECTION_NOT_FOUND');
     });
   });
 });
@@ -1303,7 +1333,8 @@ describe('Invariant 9: Execution validation does not itself submit an order', ()
       );
 
       const res = await POST(req);
-      expect(res.status).toBe(403);
+      // Round 2, item 2: foreign connection = indistinguishable 404
+      expect(res.status).toBe(404);
     });
   });
 });
