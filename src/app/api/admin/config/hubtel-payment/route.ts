@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { getHubtelPaymentConfig, saveHubtelPaymentConfig } from '@/lib/hubtel';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 const saveSchema = z.object({
   clientId: z.string().min(1),
@@ -9,21 +11,22 @@ const saveSchema = z.object({
   callbackUrl: z.string().min(1),
 });
 
-/**
- * Mask a credential string, showing only the first `n` characters.
- */
 function mask(val: string, n = 4): string {
   if (!val) return '';
   return val.length <= n ? '****' : val.slice(0, n) + '****';
 }
 
-// GET: return current payment config (masked)
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const config = await getHubtelPaymentConfig();
-    if (!config) {
-      return NextResponse.json({ configured: false });
-    }
+    if (!config) return NextResponse.json({ configured: false });
+
     return NextResponse.json({
       configured: true,
       clientId: mask(config.clientId),
@@ -36,8 +39,13 @@ export async function GET() {
   }
 }
 
-// POST: save payment config
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await request.json();
     const parsed = saveSchema.safeParse(body);
@@ -46,7 +54,6 @@ export async function POST(request: NextRequest) {
     }
 
     await saveHubtelPaymentConfig(parsed.data);
-
     return NextResponse.json({ success: true, message: 'Hubtel Payment config saved successfully.' });
   } catch (err) {
     console.error('[Admin] Failed to save Hubtel Payment config:', err);
