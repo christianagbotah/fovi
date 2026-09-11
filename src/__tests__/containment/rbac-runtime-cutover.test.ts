@@ -13,16 +13,16 @@ const twoFactorSource = readFileSync(
 
 describe('Phase 3BB durable RBAC runtime cutover', () => {
   it('requires current durable admin.access permission for admin API routes', () => {
-    expect(proxySource).toContain(
-      "import { AUTHZ_PERMISSIONS, getAuthorizationSnapshot } from '@/lib/rbac';",
-    );
-
     const adminBoundary = proxySource.indexOf(
       'if (matchesAnyPrefix(pathname, ADMIN_PREFIXES))',
     );
+    const rbacLoad = proxySource.indexOf(
+      "await import('@/lib/rbac')",
+      adminBoundary,
+    );
     const snapshotLookup = proxySource.indexOf(
       'await getAuthorizationSnapshot(payload.sub)',
-      adminBoundary,
+      rbacLoad,
     );
     const permissionCheck = proxySource.indexOf(
       'authorization.permissions.includes(AUTHZ_PERMISSIONS.ADMIN_ACCESS)',
@@ -30,8 +30,10 @@ describe('Phase 3BB durable RBAC runtime cutover', () => {
     );
 
     expect(adminBoundary).toBeGreaterThanOrEqual(0);
-    expect(snapshotLookup).toBeGreaterThan(adminBoundary);
+    expect(rbacLoad).toBeGreaterThan(adminBoundary);
+    expect(snapshotLookup).toBeGreaterThan(rbacLoad);
     expect(permissionCheck).toBeGreaterThan(snapshotLookup);
+    expect(proxySource).not.toContain("from '@/lib/rbac';");
   });
 
   it('distinguishes authorization infrastructure failure from forbidden access', () => {
