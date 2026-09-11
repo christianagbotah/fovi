@@ -156,12 +156,13 @@ export async function POST(request: NextRequest) {
       return authJson({ error: 'Authentication session service unavailable. Please sign in again.' }, { status: 503 });
     }
 
-    const isAdmin = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL.toLowerCase();
+    // Phase 3BB: post-MFA JWTs carry identity/session state only. Current
+    // administrative authority is resolved from durable RBAC at request time.
     const token = await generateAccessToken(
       user.id,
       user.email,
       user.name || undefined,
-      isAdmin ? 'admin' : undefined,
+      undefined,
       session.familyId,
     );
 
