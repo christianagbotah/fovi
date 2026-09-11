@@ -76,6 +76,29 @@ function matchesAnyPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some(p => pathname.startsWith(p));
 }
 
+/**
+ * Admin is a deployment-configured privilege in the current Fovi identity
+ * model. A signed access token proves what was true when it was minted, but
+ * ADMIN_EMAIL may be changed while that token is still alive. Revalidate the
+ * privileged claim against current server configuration on every request so
+ * an old admin token cannot retain admin authority after revocation.
+ *
+ * Non-admin roles are preserved for forward compatibility. Only the elevated
+ * admin claim is configuration-bound today.
+ */
+function currentEffectiveRole(payload: { role?: string; email?: string }): string | undefined {
+  if (payload.role !== 'admin') return payload.role;
+
+  const configuredAdminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const tokenEmail = payload.email?.trim().toLowerCase();
+
+  if (!configuredAdminEmail || !tokenEmail || tokenEmail !== configuredAdminEmail) {
+    return undefined;
+  }
+
+  return 'admin';
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -151,15 +174,17 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  // 3b. Valid access token — inject verified user headers
+  // 3b. Valid access token — inject verified user headers. Elevated admin
+  // authority is revalidated against current server configuration first.
+  const effectiveRole = currentEffectiveRole(payload);
   cleanedHeaders.set('X-User-Id', payload.sub);
   cleanedHeaders.set('X-User-Email', payload.email || '');
-  if (payload.role) cleanedHeaders.set('X-User-Role', payload.role);
+  if (effectiveRole) cleanedHeaders.set('X-User-Role', effectiveRole);
   if (payload.name) cleanedHeaders.set('X-User-Name', payload.name);
 
-  // 3c. Admin routes require admin role
+  // 3c. Admin routes require currently configured admin privilege.
   if (matchesAnyPrefix(pathname, ADMIN_PREFIXES)) {
-    if (payload.role !== 'admin') {
+    if (effectiveRole !== 'admin') {
       return NextResponse.json(
         {
           error: 'Admin access required.',
