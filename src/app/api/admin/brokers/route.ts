@@ -4,8 +4,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_BROKERS_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const providers = await db.brokerProvider.findMany({
@@ -20,6 +28,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authorization = await requireAdminPermission(
+    req,
+    AUTHZ_PERMISSIONS.ADMIN_BROKERS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await req.json();
     const {
