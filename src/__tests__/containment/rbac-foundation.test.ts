@@ -11,6 +11,7 @@ const RBAC_MIGRATION = resolve(
 );
 const RBAC_HELPER = resolve(ROOT, 'src/lib/rbac.ts');
 const BOOTSTRAP = resolve(ROOT, 'scripts/bootstrap-rbac-admin.ts');
+const PRODUCTION_MIGRATION = resolve(ROOT, 'scripts/migrate-production.ts');
 
 describe('Phase 3BA explicit RBAC foundation', () => {
   it('configures Prisma to load the multi-file schema directory', () => {
@@ -64,16 +65,48 @@ describe('Phase 3BA explicit RBAC foundation', () => {
     expect(source).toContain("'[RBAC] Authorization lookup failed:'");
   });
 
-  it('bootstraps only an active verified user and is idempotent after assignment', () => {
+  it('accepts an existing admin assignment only when its user is active and verified', () => {
     const source = readFileSync(BOOTSTRAP, 'utf8');
 
-    expect(source).toContain('adminRole.assignments.length > 0');
+    expect(source).toContain('await prisma.userRole.findMany');
+    expect(source).toContain('id: { in: existingAssignments.map');
+    expect(source).toContain('isActive: true');
+    expect(source).toContain('emailVerified: true');
+    expect(source).toContain('if (existingAdmin)');
+  });
+
+  it('allows a truly empty installation to deploy without fabricating an admin identity', () => {
+    const source = readFileSync(BOOTSTRAP, 'utf8');
+
+    expect(source).toContain('const userCount = await prisma.user.count();');
+    expect(source).toContain('if (userCount === 0)');
+    expect(source).toContain('initial administrator assignment is deferred');
+  });
+
+  it('fails closed for an established user base unless a safe bootstrap target can be proven', () => {
+    const source = readFileSync(BOOTSTRAP, 'utf8');
+
     expect(source).toContain('process.env.RBAC_BOOTSTRAP_ADMIN_EMAIL');
     expect(source).toContain('process.env.ADMIN_EMAIL');
+    expect(source).toContain('users exist, no active verified system_admin assignment exists');
     expect(source).toContain('if (!user.isActive)');
     expect(source).toContain('if (!user.emailVerified)');
-    expect(source).toContain('await prisma.userRole.create');
+    expect(source).toContain('await prisma.userRole.upsert');
     expect(source).toContain('process.exitCode = 1');
+  });
+
+  it('runs RBAC bootstrap only after committed production migrations are applied and verified', () => {
+    const source = readFileSync(PRODUCTION_MIGRATION, 'utf8');
+
+    const migrateDeploy = source.indexOf("runPrisma(['migrate', 'deploy'");
+    const migrateStatus = source.indexOf("runPrisma(['migrate', 'status'", migrateDeploy);
+    const rbacBootstrap = source.indexOf("runPackageScript('auth:bootstrap-admin')", migrateStatus);
+    const migrationPassed = source.indexOf("console.log('[migration] Production migration gate passed.')", rbacBootstrap);
+
+    expect(migrateDeploy).toBeGreaterThanOrEqual(0);
+    expect(migrateStatus).toBeGreaterThan(migrateDeploy);
+    expect(rbacBootstrap).toBeGreaterThan(migrateStatus);
+    expect(migrationPassed).toBeGreaterThan(rbacBootstrap);
   });
 
   it('does not wire runtime authorization back to ADMIN_EMAIL in the RBAC helper', () => {
