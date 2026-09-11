@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
-import { AUTHZ_PERMISSIONS, getAuthorizationSnapshot } from '@/lib/rbac';
 import { constantTimeEqual, CONTAINMENT_CODES } from '@/lib/trading-policy';
 
 /**
@@ -162,7 +161,10 @@ export async function proxy(request: NextRequest) {
   // 3c. Admin routes require CURRENT durable permission state. A JWT carrying
   // role="admin" is insufficient. Storage/model/query failures are distinct
   // from a user who is authenticated but lacks the required permission.
+  // Load RBAC lazily so non-admin traffic never initializes the database-backed
+  // authorization module merely by crossing the request boundary.
   if (matchesAnyPrefix(pathname, ADMIN_PREFIXES)) {
+    const { AUTHZ_PERMISSIONS, getAuthorizationSnapshot } = await import('@/lib/rbac');
     const authorization = await getAuthorizationSnapshot(payload.sub);
 
     if (!authorization) {
