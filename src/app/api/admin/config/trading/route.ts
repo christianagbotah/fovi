@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, isDbAvailable, hasModel } from '@/lib/db';
 import { getSystemConfig, saveSystemConfig } from '@/lib/system-config';
-
-// ============================================================
-// Defaults
-// ============================================================
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 const DEFAULTS = {
   defaultAdminLevyPercent: 10,
@@ -15,10 +13,6 @@ const DEFAULTS = {
   defaultMaxPositionSizePercent: 20,
 };
 
-// ============================================================
-// Zod schemas
-// ============================================================
-
 const tradingSchema = z.object({
   defaultAdminLevyPercent: z.number().min(0).max(100),
   defaultMaxPositions: z.number().int().min(1).max(50),
@@ -27,17 +21,20 @@ const tradingSchema = z.object({
   defaultMaxPositionSizePercent: z.number().min(1).max(100),
 });
 
-// GET: return current trading config (or defaults)
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
       return NextResponse.json(DEFAULTS);
     }
 
     const config = await getSystemConfig<typeof DEFAULTS>('trading');
-    if (!config) {
-      return NextResponse.json(DEFAULTS);
-    }
+    if (!config) return NextResponse.json(DEFAULTS);
 
     return NextResponse.json({
       defaultAdminLevyPercent: config.defaultAdminLevyPercent ?? DEFAULTS.defaultAdminLevyPercent,
@@ -51,8 +48,13 @@ export async function GET() {
   }
 }
 
-// POST: save trading config
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await request.json();
     const parsed = tradingSchema.safeParse(body);
@@ -65,7 +67,6 @@ export async function POST(request: NextRequest) {
     }
 
     await saveSystemConfig('trading', parsed.data);
-
     return NextResponse.json({ success: true, message: 'Trading config saved successfully.' });
   } catch (err) {
     console.error('[Admin] Failed to save trading config:', err);

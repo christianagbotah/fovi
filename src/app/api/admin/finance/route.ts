@@ -1,13 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db, isDbAvailable, hasModel, safeDbQuery, DEMO_USER_ID } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 // ============================================================
 // GET /api/admin/finance — Admin financial dashboard
-// Phase 3BB coarse authorization is enforced by the durable RBAC request
-// boundary. Phase 3BC adds finance-specific authorization in this handler.
 // Returns platform-wide financial metrics and per-user stats.
 // ============================================================
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_FINANCE_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   if (!isDbAvailable() || !db || !hasModel('user')) {
     return NextResponse.json({
       totalUsers: 0,
@@ -24,7 +30,6 @@ export async function GET() {
   }
 
   try {
-    // Run all independent queries in parallel for speed
     const [
       totalUsersResult,
       activeTradersResult,
@@ -35,14 +40,10 @@ export async function GET() {
       recentLevyData,
       perUserData,
     ] = await Promise.all([
-      // 1. Total users (exclude demo)
       safeDbQuery(() =>
         db!.user.count({ where: { id: { not: DEMO_USER_ID } } })
       ),
-
-      // 2. Active traders — users who have open positions OR running bots
       safeDbQuery(async () => {
-        // Users with open positions
         const openPositionAccountIds = await db!.position
           .findMany({
             where: { status: 'open' },
@@ -59,7 +60,6 @@ export async function GET() {
             }).then((a) => a.map((aa) => aa.userId))
           : [];
 
-        // Users with running bots
         const usersWithBots = await db!.bot
           .findMany({
             where: { status: 'running', userId: { not: DEMO_USER_ID } },
@@ -68,12 +68,8 @@ export async function GET() {
           })
           .then((b) => b.map((bb) => bb.userId));
 
-        // Merge unique user IDs
-        const uniqueIds = new Set([...accountUsersFromPositions, ...usersWithBots]);
-        return uniqueIds.size;
+        return new Set([...accountUsersFromPositions, ...usersWithBots]).size;
       }),
-
-      // 3. Account-level aggregates (deposits, levy, realized PnL)
       safeDbQuery(() =>
         db!.tradingAccount.groupBy({
           by: ['userId'],
@@ -87,8 +83,6 @@ export async function GET() {
           _count: { id: true },
         })
       ),
-
-      // 4. Total open positions
       safeDbQuery(async () => {
         const nonDemoAccounts = await db!.tradingAccount.findMany({
           where: { userId: { not: DEMO_USER_ID } },
@@ -102,23 +96,17 @@ export async function GET() {
           },
         });
       }),
-
-      // 5. Total bots running
       safeDbQuery(() =>
         db!.bot.count({
           where: { status: 'running', userId: { not: DEMO_USER_ID } },
         })
       ),
-
-      // 6. Platform-wide trade metrics from Bot table
       safeDbQuery(() =>
         db!.bot.aggregate({
           where: { userId: { not: DEMO_USER_ID } },
           _sum: { totalTrades: true, winTrades: true, totalPnl: true },
         })
       ),
-
-      // 7. Recent levy data from BotConfig (adminLevyCollected > 0)
       safeDbQuery(() =>
         db!.botConfig.findMany({
           where: {
@@ -136,8 +124,6 @@ export async function GET() {
           take: 20,
         })
       ),
-
-      // 8. Per-user stats
       safeDbQuery(async () => {
         const users = await db!.user.findMany({
           where: { id: { not: DEMO_USER_ID } },
@@ -147,7 +133,6 @@ export async function GET() {
         if (users.length === 0) return [];
         const userIds = users.map((u) => u.id);
 
-        // Accounts grouped by user
         const accountsByUser = await db!.tradingAccount.groupBy({
           by: ['userId'],
           where: { userId: { in: userIds } },
@@ -159,7 +144,6 @@ export async function GET() {
           _count: { id: true },
         });
 
-        // Open positions per user
         const allAccounts = await db!.tradingAccount.findMany({
           where: { userId: { in: userIds } },
           select: { id: true, userId: true },
@@ -182,15 +166,12 @@ export async function GET() {
           }
         }
 
-        // Subscription plan per user
         const now = new Date();
         const activeSubs = await db!.subscription.findMany({
           where: { userId: { in: userIds }, status: 'active', expiresAt: { gt: now } },
           select: { userId: true, plan: true },
         });
         const subByUser = new Map(activeSubs.map((s) => [s.userId, s.plan]));
-
-        // Build per-user stats
         const accountMap = new Map(accountsByUser.map((a) => [a.userId, a]));
 
         return users.map((u) => {
@@ -210,7 +191,6 @@ export async function GET() {
       }),
     ]);
 
-    // Build recent levy transactions with user info
     let recentLevyTransactions: Array<Record<string, unknown>> = [];
     if (recentLevyData && recentLevyData.length > 0) {
       const levyUserIds = [...new Set(recentLevyData.map((l) => l.userId))];
@@ -237,14 +217,12 @@ export async function GET() {
       });
     }
 
-    // Compute platform metrics
     const totalTrades = platformTradeStats?._sum.totalTrades ?? 0;
     const winTrades = platformTradeStats?._sum.winTrades ?? 0;
     const totalPnl = platformTradeStats?._sum.totalPnl ?? 0;
     const winRate = totalTrades > 0 ? winTrades / totalTrades : 0;
     const avgTradePnl = totalTrades > 0 ? totalPnl / totalTrades : 0;
 
-    // Compute top-level aggregates from account data
     const totalDeposits = accountAggregates?.reduce(
       (sum, a) => sum + (a._sum.linkedBalance ?? 0),
       0,

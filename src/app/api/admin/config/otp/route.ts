@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, isDbAvailable, hasModel } from '@/lib/db';
 import { getSystemConfig, saveSystemConfig } from '@/lib/system-config';
-
-// ============================================================
-// Defaults
-// ============================================================
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 const DEFAULTS = {
   codeLength: 6,
@@ -13,27 +11,26 @@ const DEFAULTS = {
   maxAttempts: 5,
 };
 
-// ============================================================
-// Zod schemas
-// ============================================================
-
 const otpSchema = z.object({
   codeLength: z.number().int().min(1).max(10),
   expiryMinutes: z.number().int().min(1).max(60),
   maxAttempts: z.number().int().min(1).max(20),
 });
 
-// GET: return current OTP config (or defaults)
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!isDbAvailable() || !db || !hasModel('systemConfig')) {
       return NextResponse.json(DEFAULTS);
     }
 
     const config = await getSystemConfig<typeof DEFAULTS>('otp');
-    if (!config) {
-      return NextResponse.json(DEFAULTS);
-    }
+    if (!config) return NextResponse.json(DEFAULTS);
 
     return NextResponse.json({
       codeLength: config.codeLength ?? DEFAULTS.codeLength,
@@ -45,8 +42,13 @@ export async function GET() {
   }
 }
 
-// POST: save OTP config
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await request.json();
     const parsed = otpSchema.safeParse(body);
@@ -59,7 +61,6 @@ export async function POST(request: NextRequest) {
     }
 
     await saveSystemConfig('otp', parsed.data);
-
     return NextResponse.json({ success: true, message: 'OTP config saved successfully.' });
   } catch (err) {
     console.error('[Admin] Failed to save OTP config:', err);

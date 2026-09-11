@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { sendEmail, isEmailConfigured } from '@/lib/email';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 const testSchema = z.object({
   to: z.email(),
 });
 
-// POST: send a test email
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_CONFIG_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await request.json();
     const parsed = testSchema.safeParse(body);

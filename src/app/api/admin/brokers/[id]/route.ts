@@ -4,11 +4,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const authorization = await requireAdminPermission(
+    req,
+    AUTHZ_PERMISSIONS.ADMIN_BROKERS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const { id } = await params;
@@ -57,9 +65,15 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const authorization = await requireAdminPermission(
+    req,
+    AUTHZ_PERMISSIONS.ADMIN_BROKERS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!db) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
     const { id } = await params;
