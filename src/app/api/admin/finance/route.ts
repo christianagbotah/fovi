@@ -1,34 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, isDbAvailable, hasModel, safeDbQuery, DEMO_USER_ID } from '@/lib/db';
+import { db, isDbAvailable, hasModel, DEMO_USER_ID } from '@/lib/db';
 
 // ============================================================
 // GET /api/admin/finance — Admin financial dashboard
-// Returns platform-wide financial metrics and per-user stats
+// Returns platform-wide financial metrics and per-user stats.
+// Every required query is fail-closed: an operational/storage failure must
+// never be represented as legitimate zero-valued financial state.
 // ============================================================
 export async function GET(request: NextRequest) {
-  // Verify admin role from header (middleware also enforces this)
+  // Verify admin role from the trusted request boundary.
   const userRole = request.headers.get('x-user-role');
   if (userRole !== 'admin') {
     return NextResponse.json({ error: 'Forbidden: admin access required' }, { status: 403 });
   }
 
-  if (!isDbAvailable() || !db || !hasModel('user')) {
-    return NextResponse.json({
-      totalUsers: 0,
-      activeTraders: 0,
-      totalDeposits: 0,
-      totalAdminLevyCollected: 0,
-      totalRealizedPnl: 0,
-      openPositions: 0,
-      totalBotsRunning: 0,
-      perUserStats: [],
-      recentLevyTransactions: [],
-      platformMetrics: { winRate: 0, avgTradePnl: 0, totalTrades: 0 },
-    });
+  const requiredModels = [
+    'user',
+    'tradingAccount',
+    'position',
+    'bot',
+    'botConfig',
+    'subscription',
+  ];
+
+  if (!isDbAvailable() || !db || requiredModels.some((model) => !hasModel(model))) {
+    return NextResponse.json(
+      { error: 'Financial dashboard storage is unavailable.' },
+      { status: 503 },
+    );
   }
 
   try {
-    // Run all independent queries in parallel for speed
+    // Run all independent queries in parallel. These deliberately use direct
+    // Prisma calls rather than safeDbQuery: if any required metric cannot be
+    // established, the whole financial dashboard is unqualified.
     const [
       totalUsersResult,
       activeTradersResult,
@@ -40,119 +45,107 @@ export async function GET(request: NextRequest) {
       perUserData,
     ] = await Promise.all([
       // 1. Total users (exclude demo)
-      safeDbQuery(() =>
-        db!.user.count({ where: { id: { not: DEMO_USER_ID } } })
-      ),
+      db.user.count({ where: { id: { not: DEMO_USER_ID } } }),
 
       // 2. Active traders — users who have open positions OR running bots
-      safeDbQuery(async () => {
-        // Users with open positions
-        const openPositionAccountIds = await db!.position
+      (async () => {
+        const openPositionAccountIds = await db.position
           .findMany({
             where: { status: 'open' },
             select: { accountId: true },
             distinct: ['accountId'],
           })
-          .then((p) => p.map((pp) => pp.accountId));
+          .then((positions) => positions.map((position) => position.accountId));
 
         const accountUsersFromPositions = openPositionAccountIds.length > 0
-          ? await db!.tradingAccount.findMany({
-              where: { id: { in: openPositionAccountIds }, userId: { not: DEMO_USER_ID } },
+          ? await db.tradingAccount.findMany({
+              where: {
+                id: { in: openPositionAccountIds },
+                userId: { not: DEMO_USER_ID },
+              },
               select: { userId: true },
               distinct: ['userId'],
-            }).then((a) => a.map((aa) => aa.userId))
+            }).then((accounts) => accounts.map((account) => account.userId))
           : [];
 
-        // Users with running bots
-        const usersWithBots = await db!.bot
+        const usersWithBots = await db.bot
           .findMany({
             where: { status: 'running', userId: { not: DEMO_USER_ID } },
             select: { userId: true },
             distinct: ['userId'],
           })
-          .then((b) => b.map((bb) => bb.userId));
+          .then((bots) => bots.map((bot) => bot.userId));
 
-        // Merge unique user IDs
-        const uniqueIds = new Set([...accountUsersFromPositions, ...usersWithBots]);
-        return uniqueIds.size;
-      }),
+        return new Set([...accountUsersFromPositions, ...usersWithBots]).size;
+      })(),
 
       // 3. Account-level aggregates (deposits, levy, realized PnL)
-      safeDbQuery(() =>
-        db!.tradingAccount.groupBy({
-          by: ['userId'],
-          where: { userId: { not: DEMO_USER_ID } },
-          _sum: {
-            balance: true,
-            linkedBalance: true,
-            totalRealizedProfit: true,
-            totalAdminLevyCollected: true,
-          },
-          _count: { id: true },
-        })
-      ),
+      db.tradingAccount.groupBy({
+        by: ['userId'],
+        where: { userId: { not: DEMO_USER_ID } },
+        _sum: {
+          balance: true,
+          linkedBalance: true,
+          totalRealizedProfit: true,
+          totalAdminLevyCollected: true,
+        },
+        _count: { id: true },
+      }),
 
-      // 4. Total open positions
-      safeDbQuery(async () => {
-        const nonDemoAccounts = await db!.tradingAccount.findMany({
+      // 4. Total open positions for non-demo accounts
+      (async () => {
+        const nonDemoAccounts = await db.tradingAccount.findMany({
           where: { userId: { not: DEMO_USER_ID } },
           select: { id: true },
         });
         if (nonDemoAccounts.length === 0) return 0;
-        return db!.position.count({
+        return db.position.count({
           where: {
-            accountId: { in: nonDemoAccounts.map((a) => a.id) },
+            accountId: { in: nonDemoAccounts.map((account) => account.id) },
             status: 'open',
           },
         });
-      }),
+      })(),
 
       // 5. Total bots running
-      safeDbQuery(() =>
-        db!.bot.count({
-          where: { status: 'running', userId: { not: DEMO_USER_ID } },
-        })
-      ),
+      db.bot.count({
+        where: { status: 'running', userId: { not: DEMO_USER_ID } },
+      }),
 
       // 6. Platform-wide trade metrics from Bot table
-      safeDbQuery(() =>
-        db!.bot.aggregate({
-          where: { userId: { not: DEMO_USER_ID } },
-          _sum: { totalTrades: true, winTrades: true, totalPnl: true },
-        })
-      ),
+      db.bot.aggregate({
+        where: { userId: { not: DEMO_USER_ID } },
+        _sum: { totalTrades: true, winTrades: true, totalPnl: true },
+      }),
 
       // 7. Recent levy data from BotConfig (adminLevyCollected > 0)
-      safeDbQuery(() =>
-        db!.botConfig.findMany({
-          where: {
-            adminLevyCollected: { gt: 0 },
-            userId: { not: DEMO_USER_ID },
-          },
-          select: {
-            id: true,
-            userId: true,
-            adminLevyCollected: true,
-            totalTrades: true,
-            updatedAt: true,
-          },
-          orderBy: { updatedAt: 'desc' },
-          take: 20,
-        })
-      ),
+      db.botConfig.findMany({
+        where: {
+          adminLevyCollected: { gt: 0 },
+          userId: { not: DEMO_USER_ID },
+        },
+        select: {
+          id: true,
+          userId: true,
+          adminLevyCollected: true,
+          totalTrades: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 20,
+      }),
 
       // 8. Per-user stats
-      safeDbQuery(async () => {
-        const users = await db!.user.findMany({
+      (async () => {
+        const users = await db.user.findMany({
           where: { id: { not: DEMO_USER_ID } },
           select: { id: true, email: true, name: true },
         });
 
         if (users.length === 0) return [];
-        const userIds = users.map((u) => u.id);
+        const userIds = users.map((user) => user.id);
 
-        // Accounts grouped by user
-        const accountsByUser = await db!.tradingAccount.groupBy({
+        const accountsByUser = await db.tradingAccount.groupBy({
           by: ['userId'],
           where: { userId: { in: userIds } },
           _sum: {
@@ -163,114 +156,113 @@ export async function GET(request: NextRequest) {
           _count: { id: true },
         });
 
-        // Open positions per user
-        const allAccounts = await db!.tradingAccount.findMany({
+        const allAccounts = await db.tradingAccount.findMany({
           where: { userId: { in: userIds } },
           select: { id: true, userId: true },
         });
-        const accountIds = allAccounts.map((a) => a.id);
-        const accountIdToUserId = new Map(allAccounts.map((a) => [a.id, a.userId]));
+        const accountIds = allAccounts.map((account) => account.id);
+        const accountIdToUserId = new Map(
+          allAccounts.map((account) => [account.id, account.userId]),
+        );
 
-        let openPositionsByUser: Record<string, number> = {};
+        const openPositionsByUser: Record<string, number> = {};
         if (accountIds.length > 0) {
-          const openPositions = await db!.position.groupBy({
+          const openPositions = await db.position.groupBy({
             by: ['accountId'],
             where: { accountId: { in: accountIds }, status: 'open' },
             _count: { id: true },
           });
-          for (const op of openPositions) {
-            const uid = accountIdToUserId.get(op.accountId);
-            if (uid) {
-              openPositionsByUser[uid] = (openPositionsByUser[uid] || 0) + op._count.id;
+          for (const openPosition of openPositions) {
+            const userId = accountIdToUserId.get(openPosition.accountId);
+            if (userId) {
+              openPositionsByUser[userId] =
+                (openPositionsByUser[userId] || 0) + openPosition._count.id;
             }
           }
         }
 
-        // Subscription plan per user
         const now = new Date();
-        const activeSubs = await db!.subscription.findMany({
-          where: { userId: { in: userIds }, status: 'active', expiresAt: { gt: now } },
+        const activeSubscriptions = await db.subscription.findMany({
+          where: {
+            userId: { in: userIds },
+            status: 'active',
+            expiresAt: { gt: now },
+          },
           select: { userId: true, plan: true },
         });
-        const subByUser = new Map(activeSubs.map((s) => [s.userId, s.plan]));
+        const subscriptionByUser = new Map(
+          activeSubscriptions.map((subscription) => [subscription.userId, subscription.plan]),
+        );
+        const accountMap = new Map(accountsByUser.map((account) => [account.userId, account]));
 
-        // Build per-user stats
-        const accountMap = new Map(accountsByUser.map((a) => [a.userId, a]));
-
-        return users.map((u) => {
-          const acc = accountMap.get(u.id);
-          const subPlan = subByUser.get(u.id);
+        return users.map((user) => {
+          const account = accountMap.get(user.id);
           return {
-            userId: u.id,
-            email: u.email,
-            name: u.name,
-            balance: acc?._sum.balance ?? 0,
-            realizedPnl: acc?._sum.totalRealizedProfit ?? 0,
-            adminLevy: acc?._sum.totalAdminLevyCollected ?? 0,
-            openPositions: openPositionsByUser[u.id] || 0,
-            subscriptionPlan: subPlan || 'Free',
+            userId: user.id,
+            email: user.email,
+            name: user.name,
+            balance: account?._sum.balance ?? 0,
+            realizedPnl: account?._sum.totalRealizedProfit ?? 0,
+            adminLevy: account?._sum.totalAdminLevyCollected ?? 0,
+            openPositions: openPositionsByUser[user.id] || 0,
+            subscriptionPlan: subscriptionByUser.get(user.id) || 'Free',
           };
         });
-      }),
+      })(),
     ]);
 
-    // Build recent levy transactions with user info
     let recentLevyTransactions: Array<Record<string, unknown>> = [];
-    if (recentLevyData && recentLevyData.length > 0) {
-      const levyUserIds = [...new Set(recentLevyData.map((l) => l.userId))];
-      const levyUsers = await safeDbQuery(() =>
-        db!.user.findMany({
-          where: { id: { in: levyUserIds } },
-          select: { id: true, email: true, name: true },
-        })
-      );
-      const levyUserMap = new Map(levyUsers?.map((u) => [u.id, u]) ?? []);
+    if (recentLevyData.length > 0) {
+      const levyUserIds = [...new Set(recentLevyData.map((levy) => levy.userId))];
+      const levyUsers = await db.user.findMany({
+        where: { id: { in: levyUserIds } },
+        select: { id: true, email: true, name: true },
+      });
+      const levyUserMap = new Map(levyUsers.map((user) => [user.id, user]));
 
-      recentLevyTransactions = recentLevyData.map((l) => {
-        const u = levyUserMap.get(l.userId);
+      recentLevyTransactions = recentLevyData.map((levy) => {
+        const user = levyUserMap.get(levy.userId);
         return {
-          id: l.id,
-          userId: l.userId,
-          email: u?.email ?? null,
-          name: u?.name ?? null,
-          amount: l.adminLevyCollected,
-          totalTrades: l.totalTrades,
+          id: levy.id,
+          userId: levy.userId,
+          email: user?.email ?? null,
+          name: user?.name ?? null,
+          amount: levy.adminLevyCollected,
+          totalTrades: levy.totalTrades,
           type: 'admin_levy',
-          timestamp: l.updatedAt,
+          timestamp: levy.updatedAt,
         };
       });
     }
 
-    // Compute platform metrics
-    const totalTrades = platformTradeStats?._sum.totalTrades ?? 0;
-    const winTrades = platformTradeStats?._sum.winTrades ?? 0;
-    const totalPnl = platformTradeStats?._sum.totalPnl ?? 0;
+    const totalTrades = platformTradeStats._sum.totalTrades ?? 0;
+    const winTrades = platformTradeStats._sum.winTrades ?? 0;
+    const totalPnl = platformTradeStats._sum.totalPnl ?? 0;
     const winRate = totalTrades > 0 ? winTrades / totalTrades : 0;
     const avgTradePnl = totalTrades > 0 ? totalPnl / totalTrades : 0;
 
-    // Compute top-level aggregates from account data
-    const totalDeposits = accountAggregates?.reduce(
-      (sum, a) => sum + (a._sum.linkedBalance ?? 0),
+    const totalDeposits = accountAggregates.reduce(
+      (sum, account) => sum + (account._sum.linkedBalance ?? 0),
       0,
-    ) ?? 0;
-    const totalAdminLevyCollected = accountAggregates?.reduce(
-      (sum, a) => sum + (a._sum.totalAdminLevyCollected ?? 0),
+    );
+    const totalAdminLevyCollected = accountAggregates.reduce(
+      (sum, account) => sum + (account._sum.totalAdminLevyCollected ?? 0),
       0,
-    ) ?? 0;
-    const totalRealizedPnl = accountAggregates?.reduce(
-      (sum, a) => sum + (a._sum.totalRealizedProfit ?? 0),
+    );
+    const totalRealizedPnl = accountAggregates.reduce(
+      (sum, account) => sum + (account._sum.totalRealizedProfit ?? 0),
       0,
-    ) ?? 0;
+    );
 
     return NextResponse.json({
-      totalUsers: totalUsersResult ?? 0,
-      activeTraders: activeTradersResult ?? 0,
+      totalUsers: totalUsersResult,
+      activeTraders: activeTradersResult,
       totalDeposits,
       totalAdminLevyCollected,
       totalRealizedPnl,
-      openPositions: openPositionsResult ?? 0,
-      totalBotsRunning: botsRunningResult ?? 0,
-      perUserStats: perUserData ?? [],
+      openPositions: openPositionsResult,
+      totalBotsRunning: botsRunningResult,
+      perUserStats: perUserData,
       recentLevyTransactions,
       platformMetrics: {
         winRate: Math.round(winRate * 100) / 100,
@@ -281,8 +273,8 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error('[Admin Finance] Failed to fetch dashboard data:', err);
     return NextResponse.json(
-      { error: 'Failed to fetch financial dashboard data.' },
-      { status: 500 },
+      { error: 'Financial dashboard data is unavailable.' },
+      { status: 503 },
     );
   }
 }
