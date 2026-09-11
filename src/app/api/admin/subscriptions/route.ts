@@ -1,31 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
-import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { createPaymentInvoice } from '@/lib/hubtel';
 
 // GET: list all subscriptions with user info (admin only)
 export async function GET() {
   try {
     if (!isDbAvailable() || !db || !hasModel('subscription') || !hasModel('user')) {
-      return NextResponse.json({ subscriptions: [] });
+      return NextResponse.json(
+        { error: 'Subscription storage is unavailable.' },
+        { status: 503 },
+      );
     }
 
-    const subscriptions = await safeDbQuery(() =>
-      db!.subscription.findMany({
-        include: {
-          user: {
-            select: { id: true, email: true, name: true, isActive: true },
-          },
+    const subscriptions = await db.subscription.findMany({
+      include: {
+        user: {
+          select: { id: true, email: true, name: true, isActive: true },
         },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-      })
-    );
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
 
-    return NextResponse.json({ subscriptions: subscriptions || [] });
+    return NextResponse.json({ subscriptions });
   } catch (err) {
     console.error('[Admin Subscriptions] Failed to list:', err);
-    return NextResponse.json({ error: 'Failed to fetch subscriptions.' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch subscriptions.' }, { status: 503 });
   }
 }
 
@@ -45,24 +46,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (!isDbAvailable() || !db || !hasModel('subscriptionPlan') || !hasModel('subscription') || !hasModel('user')) {
-      return NextResponse.json({ error: 'Database is not available.' }, { status: 500 });
+      return NextResponse.json({ error: 'Subscription storage is unavailable.' }, { status: 503 });
     }
 
     const { userId, planId, phoneNumber } = parsed.data;
 
-    // Fetch the plan
-    const plan = await safeDbQuery(() =>
-      db!.subscriptionPlan.findUnique({ where: { id: planId } })
-    );
+    // A query exception is not equivalent to a missing plan. Let storage
+    // failures reach the catch block instead of being collapsed to undefined.
+    const plan = await db.subscriptionPlan.findUnique({ where: { id: planId } });
 
     if (!plan || !plan.isActive) {
       return NextResponse.json({ error: 'Plan not found or inactive.' }, { status: 404 });
     }
 
-    // Fetch the user
-    const user = await safeDbQuery(() =>
-      db!.user.findUnique({ where: { id: userId } })
-    );
+    // Likewise, distinguish a real 404 from inability to query user storage.
+    const user = await db.user.findUnique({ where: { id: userId } });
 
     if (!user) {
       return NextResponse.json({ error: 'User not found.' }, { status: 404 });
@@ -105,12 +103,12 @@ export async function POST(request: NextRequest) {
     });
 
     if (!invoiceResult.success) {
-      await safeDbQuery(() =>
-        db!.subscription.update({
-          where: { id: subscription.id },
-          data: { status: 'cancelled' },
-        })
-      );
+      // Persist the cancellation deterministically. Do not hide a failed
+      // compensation write behind safeDbQuery and then report clean failure.
+      await db.subscription.update({
+        where: { id: subscription.id },
+        data: { status: 'cancelled' },
+      });
 
       return NextResponse.json(
         { error: invoiceResult.error || 'Failed to create payment invoice.' },
@@ -118,16 +116,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update subscription with invoice details
-    await safeDbQuery(() =>
-      db!.subscription.update({
-        where: { id: subscription.id },
-        data: {
-          hubtelInvoiceId: invoiceResult.invoiceId || null,
-          hubtelResponse: JSON.stringify(invoiceResult.response),
-        },
-      })
-    );
+    // Invoice metadata is part of the durable admin operation. If this write
+    // fails, return failure rather than a success response with incomplete state.
+    await db.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        hubtelInvoiceId: invoiceResult.invoiceId || null,
+        hubtelResponse: JSON.stringify(invoiceResult.response),
+      },
+    });
 
     return NextResponse.json({
       success: true,
@@ -139,6 +136,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.error('[Admin Subscriptions] Failed to send link:', err);
-    return NextResponse.json({ error: 'Failed to send subscription link.' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Admin subscription operation could not be completed.' },
+      { status: 503 },
+    );
   }
 }
