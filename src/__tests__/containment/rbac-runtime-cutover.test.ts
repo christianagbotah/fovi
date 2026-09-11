@@ -10,6 +10,10 @@ const twoFactorSource = readFileSync(
   resolve(ROOT, 'src/app/api/auth/two-factor/authenticate/route.ts'),
   'utf8',
 );
+const financeSource = readFileSync(
+  resolve(ROOT, 'src/app/api/admin/finance/route.ts'),
+  'utf8',
+);
 
 describe('Phase 3BB durable RBAC runtime cutover', () => {
   it('requires current durable admin.access permission for admin API routes', () => {
@@ -52,6 +56,8 @@ describe('Phase 3BB durable RBAC runtime cutover', () => {
     expect(proxySource).not.toContain("if (payload.role !== 'admin')");
     expect(proxySource).not.toContain("cleanedHeaders.set('X-User-Role', payload.role)");
     expect(proxySource).not.toContain("cleanedHeaders.set('X-User-Role'");
+    expect(financeSource.toLowerCase()).not.toContain('x-user-role');
+    expect(financeSource).not.toContain("userRole !== 'admin'");
   });
 
   it('does not derive access-token privilege from ADMIN_EMAIL during issuance', () => {
