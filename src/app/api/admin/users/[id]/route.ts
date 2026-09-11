@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
-import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
+import { db, hasModel, isDbAvailable } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { revokeAllAuthSessionsForUser } from '@/lib/auth-session-revocation';
 
@@ -30,12 +30,12 @@ export async function PATCH(
     const { id } = await params;
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
-      return NextResponse.json({ error: 'Database is not available.' }, { status: 500 });
+      return NextResponse.json({ error: 'User storage is unavailable.' }, { status: 503 });
     }
 
-    const user = await safeDbQuery(() =>
-      db!.user.findUnique({ where: { id } })
-    );
+    // Do not use safeDbQuery here. A storage/query failure must not be
+    // misreported as a normal 404 for a privileged account-management action.
+    const user = await db.user.findUnique({ where: { id } });
     if (!user) {
       return NextResponse.json({ error: 'User not found.' }, { status: 404 });
     }
@@ -84,7 +84,7 @@ export async function PATCH(
     );
   } catch (err) {
     console.error('[Admin] Failed to update user:', err);
-    return NextResponse.json({ error: 'Failed to update user.' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to update user.' }, { status: 503 });
   }
 }
 
@@ -97,12 +97,12 @@ export async function DELETE(
     const { id } = await params;
 
     if (!isDbAvailable() || !db || !hasModel('user') || !hasModel('authSession')) {
-      return NextResponse.json({ error: 'Database is not available.' }, { status: 500 });
+      return NextResponse.json({ error: 'User storage is unavailable.' }, { status: 503 });
     }
 
-    const user = await safeDbQuery(() =>
-      db!.user.findUnique({ where: { id } })
-    );
+    // A query failure is an operational failure, not evidence that the user
+    // does not exist. Let it reach the catch block as a 503.
+    const user = await db.user.findUnique({ where: { id } });
     if (!user) {
       return NextResponse.json({ error: 'User not found.' }, { status: 404 });
     }
@@ -135,6 +135,6 @@ export async function DELETE(
     return NextResponse.json({ success: true, message: 'User deactivated (soft delete).' });
   } catch (err) {
     console.error('[Admin] Failed to delete user:', err);
-    return NextResponse.json({ error: 'Failed to delete user.' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to delete user.' }, { status: 503 });
   }
 }
