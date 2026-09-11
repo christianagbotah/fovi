@@ -31,6 +31,23 @@ function runPrisma(args: string[]): void {
   }
 }
 
+function runPackageScript(script: string): void {
+  const result = spawnSync('bun', ['run', script], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'inherit',
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `Production post-migration step failed with exit code ${result.status ?? 'unknown'}: bun run ${script}`,
+    );
+  }
+}
+
 function historicalBaselineModelNames(): string[] {
   const schema = readFileSync(BASELINE_SCHEMA, 'utf8');
   return [...schema.matchAll(/^model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm)].map((match) => match[1]);
@@ -143,6 +160,14 @@ async function main(): Promise<void> {
 
   console.log('[migration] Verifying migration status...');
   runPrisma(['migrate', 'status', '--schema', CURRENT_SCHEMA]);
+
+  // RBAC bootstrap belongs after committed migrations (the Role/UserRole tables
+  // must exist) and before deploy.sh is allowed to start/restart application
+  // processes. On an established installation with users, bootstrap is
+  // fail-closed. On a truly empty user base it safely defers assignment.
+  console.log('[migration] Verifying/bootstrapping initial RBAC administrator...');
+  runPackageScript('auth:bootstrap-admin');
+
   console.log('[migration] Production migration gate passed.');
 }
 
