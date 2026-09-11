@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 import { db, hasModel, isDbAvailable, safeDbQuery } from '@/lib/db';
 import { createPaymentInvoice } from '@/lib/hubtel';
+import { requireAdminPermission } from '@/lib/admin-authorization';
+import { AUTHZ_PERMISSIONS } from '@/lib/rbac';
 
 // GET: list all subscriptions with user info (admin only)
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_SUBSCRIPTIONS_READ,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     if (!isDbAvailable() || !db || !hasModel('subscription') || !hasModel('user')) {
       return NextResponse.json({ subscriptions: [] });
@@ -37,6 +45,12 @@ const sendLinkSchema = z.object({
 
 // POST: admin sends a subscription payment link to a user via Hubtel
 export async function POST(request: NextRequest) {
+  const authorization = await requireAdminPermission(
+    request,
+    AUTHZ_PERMISSIONS.ADMIN_SUBSCRIPTIONS_WRITE,
+  );
+  if (!authorization.ok) return authorization.response;
+
   try {
     const body = await request.json();
     const parsed = sendLinkSchema.safeParse(body);
@@ -50,7 +64,6 @@ export async function POST(request: NextRequest) {
 
     const { userId, planId, phoneNumber } = parsed.data;
 
-    // Fetch the plan
     const plan = await safeDbQuery(() =>
       db!.subscriptionPlan.findUnique({ where: { id: planId } })
     );
@@ -59,7 +72,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Plan not found or inactive.' }, { status: 404 });
     }
 
-    // Fetch the user
     const user = await safeDbQuery(() =>
       db!.user.findUnique({ where: { id: userId } })
     );
@@ -71,12 +83,10 @@ export async function POST(request: NextRequest) {
     const clientReference = `fovi-admin-${userId}-${planId}-${Date.now()}`;
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL || '';
 
-    // Calculate subscription period (1 month from now)
     const startsAt = new Date();
     const expiresAt = new Date();
     expiresAt.setMonth(expiresAt.getMonth() + 1);
 
-    // Create a pending subscription in the DB
     const subscription = await db.subscription.create({
       data: {
         userId,
@@ -89,7 +99,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Create Hubtel payment invoice
     const invoiceResult = await createPaymentInvoice({
       totalAmount: plan.price,
       description: `Fovi AI ${plan.displayName} Plan — Monthly Subscription (Admin Sent)`,
@@ -118,7 +127,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update subscription with invoice details
     await safeDbQuery(() =>
       db!.subscription.update({
         where: { id: subscription.id },
