@@ -150,12 +150,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const isAdmin = process.env.ADMIN_EMAIL && emailLower === process.env.ADMIN_EMAIL.toLowerCase();
+      // Phase 3BB: JWTs establish identity/session only. Administrative
+      // authority is resolved from current durable RBAC state at authorization
+      // time and is never derived from an environment-configured email.
       const token = await generateAccessToken(
         user.id,
         user.email,
         user.name || undefined,
-        isAdmin ? 'admin' : undefined,
+        undefined,
         session.familyId,
       );
 
