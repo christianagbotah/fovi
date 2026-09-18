@@ -59,6 +59,7 @@ const INTERNAL_SERVICE_PATHS: string[] = [
   '/api/trading/engine/positions',
   '/api/trading/engine/close',
   '/api/trading/engine/stop-complete',
+  '/api/trading/engine/decisions',
   '/api/trading/bots/engine/activity',
   '/api/trading/bots/engine/status',
   '/api/trading/bots/engine/trigger',
