@@ -511,3 +511,39 @@ model PaperTradeSettlement {
   @@index([accountId])
   @@index([botId])
 }
+
+
+model AiDecisionJournal {
+  id                      String   @id
+  contractVersion         String
+  userId                  String
+  botId                   String
+  accountId               String
+  cycleId                 String
+  stage                   String
+  outcome                 String
+  code                    String
+  reason                  String
+  symbol                  String?
+  side                    String?
+  confidence              Float?
+  strategy                String?
+  timeframe               String?
+  strategyVersion         String?
+  riskEngineVersion       String?
+  supervisorVersion       String?
+  positionNotional        Float?
+  riskAmount              Float?
+  riskPercentOfAllocation Float?
+  riskReward              Float?
+  marketDataEnvironment   String?
+  marketDataSynthetic     Boolean?
+  marketDataSource        String?
+  marketObservedAt        DateTime?
+  createdAt               DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([botId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([cycleId])
+}
