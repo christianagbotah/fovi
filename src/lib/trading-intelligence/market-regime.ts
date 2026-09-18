@@ -38,6 +38,10 @@ function finitePositive(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
+function finiteNonNegative(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
 export function classifyMarketRegime(candles: readonly CandleData[]): MarketRegimeSnapshot {
   if (candles.length < 50) {
     return {
@@ -57,8 +61,8 @@ export function classifyMarketRegime(candles: readonly CandleData[]): MarketRegi
 
   if (
     !finitePositive(price) ||
-    !finitePositive(atr) ||
-    !finitePositive(bb?.width) ||
+    !finiteNonNegative(atr) ||
+    !finiteNonNegative(bb?.width) ||
     !finitePositive(sma20) ||
     !finitePositive(sma50) ||
     adx === null ||
