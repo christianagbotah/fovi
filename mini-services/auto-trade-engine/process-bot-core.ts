@@ -104,6 +104,13 @@ function isVerifiedPrice(result: PriceResult): boolean {
 
 type DecisionDetails = Omit<AiDecisionJournalInput, 'userId' | 'botId' | 'accountId' | 'cycleId'>;
 
+class DecisionJournalWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DecisionJournalWriteError';
+  }
+}
+
 async function persistDecision(
   config: BotRow,
   deps: ProcessBotDeps,
@@ -119,7 +126,13 @@ async function persistDecision(
     cycleId: deps.decisionCycleId,
     ...details,
   });
-  await deps.recordDecision(entry);
+  try {
+    await deps.recordDecision(entry);
+  } catch (error) {
+    throw new DecisionJournalWriteError(
+      error instanceof Error ? error.message : 'AI decision journal write failed.',
+    );
+  }
 }
 
 function safeDecisionMarketData(
@@ -421,6 +434,7 @@ export async function processBotCore(
         bestSignal = signal;
       }
     } catch (err) {
+      if (err instanceof DecisionJournalWriteError) throw err;
       await persistDecision(config, deps, {
         stage: 'strategy',
         outcome: 'reject',
