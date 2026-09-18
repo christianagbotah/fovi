@@ -377,7 +377,7 @@ describe('processBotCore — verified decision boundary', () => {
 
     expect(result).toEqual({ processed: true, reason: 'unsupported-verified-timeframe' });
     expect(recordDecision).toHaveBeenCalledWith(expect.objectContaining({
-      contractVersion: 'phase2k-ai-decision-journal-v1',
+      contractVersion: 'phase2m-ai-decision-journal-v2',
       cycleId: 'cycle-test-001',
       botId: 'bot-001',
       stage: 'strategy',
@@ -424,6 +424,54 @@ describe('processBotCore — verified decision boundary', () => {
     expect(closePosition).toHaveBeenCalledTimes(1);
     expect(positions.has(position.id)).toBe(false);
     expect(deps.executeTrade).not.toHaveBeenCalled();
+  });
+
+  it('journals a regime hold and blocks new paper exposure for an incompatible grid market', async () => {
+    const strongTrend = Array.from({ length: 80 }, (_, i) => {
+      const base = 100 + i * 0.2;
+      return {
+        timestamp: Date.now() - (80 - i) * 4 * 60 * 60 * 1000,
+        open: base - 0.05,
+        high: base + 0.25,
+        low: base - 0.25,
+        close: base,
+        volume: 1_000 + i,
+      };
+    });
+    const recordDecision = vi.fn().mockResolvedValue(undefined);
+    const executeTrade = vi.fn().mockResolvedValue(undefined);
+    const deps = createMockDeps({
+      recordDecision,
+      executeTrade,
+      automatedTradingEnabled: true,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchCandles: vi.fn().mockResolvedValue({
+        candles: strongTrend,
+        provenance: {
+          environment: 'live' as const,
+          isSynthetic: false,
+          source: 'coingecko',
+          observedAt: new Date().toISOString(),
+        },
+        volumeAvailable: true,
+      }),
+    });
+
+    const result = await processBotCore({ ...makeBotRow(), strategy: 'grid' }, deps);
+
+    expect(result.processed).toBe(true);
+    expect(executeTrade).not.toHaveBeenCalled();
+    expect(recordDecision).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'strategy',
+      outcome: 'hold',
+      code: 'REGIME_INCOMPATIBLE',
+      marketRegime: expect.stringMatching(/strong_|high_volatility/),
+      regimeEngineVersion: 'phase2m-market-regime-v1',
+    }));
+    expect(deps.addActivity).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'regime_hold',
+      code: 'REGIME_INCOMPATIBLE',
+    }));
   });
 
   it('legacy signal/sizing hooks cannot force an automated trade', async () => {
