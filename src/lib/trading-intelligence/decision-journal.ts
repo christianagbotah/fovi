@@ -168,6 +168,31 @@ export function validateAiDecisionJournalEntry(
     return { valid: false, code: 'INVALID_DECISION_CONFIDENCE', reason: 'Decision confidence must be within 0–100.' };
   }
 
+  const validRegimes = new Set([
+    'strong_uptrend',
+    'strong_downtrend',
+    'range',
+    'compression',
+    'high_volatility',
+    'indeterminate',
+  ]);
+  const hasRegime = entry.marketRegime !== null && entry.marketRegime !== undefined;
+  const hasRegimeVersion = entry.regimeEngineVersion !== null && entry.regimeEngineVersion !== undefined;
+  if (hasRegime !== hasRegimeVersion) {
+    return {
+      valid: false,
+      code: 'INVALID_DECISION_REGIME_PROVENANCE',
+      reason: 'Market regime and regime engine version must be recorded together.',
+    };
+  }
+  if (hasRegime && !validRegimes.has(entry.marketRegime!)) {
+    return {
+      valid: false,
+      code: 'INVALID_DECISION_MARKET_REGIME',
+      reason: 'Decision market regime is not recognized.',
+    };
+  }
+
   if (entry.marketData) {
     if (!entry.marketData.source || !entry.marketData.observedAt || !Number.isFinite(Date.parse(entry.marketData.observedAt))) {
       return { valid: false, code: 'INVALID_DECISION_MARKET_DATA', reason: 'Decision market-data provenance is incomplete.' };
@@ -179,6 +204,7 @@ export function validateAiDecisionJournalEntry(
       !entry.symbol || !entry.side ||
       entry.confidence === null || entry.confidence === undefined ||
       !entry.strategyVersion || !entry.riskEngineVersion ||
+      !entry.marketRegime || !entry.regimeEngineVersion ||
       !entry.marketData ||
       entry.marketData.environment !== 'live' ||
       entry.marketData.isSynthetic
