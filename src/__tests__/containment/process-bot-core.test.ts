@@ -45,6 +45,7 @@ function createMockDeps(overrides?: Partial<ProcessBotDeps>): ProcessBotDeps {
     callNextJSApi: vi.fn().mockResolvedValue({ ok: true }),
     executeTrade: vi.fn().mockResolvedValue(undefined),
     closePosition: vi.fn().mockResolvedValue(undefined),
+    finalizeAutomationStop: vi.fn().mockResolvedValue(undefined),
     automatedTradingEnabled: false,
     allSymbols: ['BTC'],
     evaluateEngineAccountEligibility: vi.fn(),
@@ -260,6 +261,73 @@ describe('processBotCore — verified decision boundary', () => {
       type: 'position_close_failed',
       symbol: 'BTC',
     }));
+  });
+
+  it('a stopping bot closes paper exposure at verified price even when SL/TP is not crossed, then finalizes', async () => {
+    const positions = new Map<string, EnginePosition>();
+    const position = openLongPosition();
+    positions.set(position.id, position);
+    const closePosition = vi.fn().mockResolvedValue(undefined);
+    const finalizeAutomationStop = vi.fn().mockResolvedValue(undefined);
+    const fetchCandles = vi.fn();
+
+    const deps = createMockDeps({
+      positions,
+      closePosition,
+      finalizeAutomationStop,
+      fetchCandles,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchMarketPrice: vi.fn().mockResolvedValue({
+        price: 40_250, isDemoData: false, environment: 'live' as const,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      }),
+    });
+
+    const result = await processBotCore(
+      { ...makeBotRow(), enabled: false, status: 'stopping' },
+      deps,
+    );
+
+    expect(result).toEqual({ processed: true, reason: 'automation-stop-complete' });
+    expect(closePosition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'bot-001', status: 'stopping' }),
+      expect.objectContaining({ id: position.id }),
+      expect.objectContaining({ reason: 'automation_stopped', price: 40_250 }),
+    );
+    expect(positions.has(position.id)).toBe(false);
+    expect(finalizeAutomationStop).toHaveBeenCalledTimes(1);
+    expect(fetchCandles).not.toHaveBeenCalled();
+    expect(deps.executeTrade).not.toHaveBeenCalled();
+  });
+
+  it('a stopping bot never finalizes while a paper close is still failing', async () => {
+    const positions = new Map<string, EnginePosition>();
+    const position = openLongPosition();
+    positions.set(position.id, position);
+    const closePosition = vi.fn().mockRejectedValue(new Error('durable settlement unavailable'));
+    const finalizeAutomationStop = vi.fn().mockResolvedValue(undefined);
+
+    const deps = createMockDeps({
+      positions,
+      closePosition,
+      finalizeAutomationStop,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchMarketPrice: vi.fn().mockResolvedValue({
+        price: 40_250, isDemoData: false, environment: 'live' as const,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      }),
+    });
+
+    const result = await processBotCore(
+      { ...makeBotRow(), enabled: false, status: 'stopping' },
+      deps,
+    );
+
+    expect(result).toEqual({ processed: true, reason: 'automation-stop-pending' });
+    expect(positions.has(position.id)).toBe(true);
+    expect(finalizeAutomationStop).not.toHaveBeenCalled();
+    expect(deps.fetchCandles).not.toHaveBeenCalled();
+    expect(deps.executeTrade).not.toHaveBeenCalled();
   });
 
   it('legacy signal/sizing hooks cannot force an automated trade', async () => {
