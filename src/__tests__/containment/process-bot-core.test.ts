@@ -263,6 +263,40 @@ describe('processBotCore — verified decision boundary', () => {
     }));
   });
 
+  it('protective paper close still runs before an unsupported decision-timeframe hold', async () => {
+    const positions = new Map<string, EnginePosition>();
+    const position = openLongPosition();
+    positions.set(position.id, position);
+    const closePosition = vi.fn().mockResolvedValue(undefined);
+    const fetchCandles = vi.fn();
+
+    const deps = createMockDeps({
+      positions,
+      closePosition,
+      fetchCandles,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchMarketPrice: vi.fn().mockResolvedValue({
+        price: 38_500, isDemoData: false, environment: 'live' as const,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      }),
+    });
+
+    const result = await processBotCore(
+      { ...makeBotRow(), timeframe: '1h' },
+      deps,
+    );
+
+    expect(result).toEqual({ processed: true, reason: 'unsupported-verified-timeframe' });
+    expect(closePosition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: position.id }),
+      expect.objectContaining({ reason: 'stop_loss', price: 38_500 }),
+    );
+    expect(positions.has(position.id)).toBe(false);
+    expect(fetchCandles).not.toHaveBeenCalled();
+    expect(deps.executeTrade).not.toHaveBeenCalled();
+  });
+
   it('a stopping bot closes paper exposure at verified price even when SL/TP is not crossed, then finalizes', async () => {
     const positions = new Map<string, EnginePosition>();
     const position = openLongPosition();
