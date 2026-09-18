@@ -75,12 +75,14 @@ export interface ProcessBotDeps {
     };
   }) => Promise<void>;
   closePosition: (config: BotRow, position: EnginePosition, close: {
-    reason: 'stop_loss' | 'take_profit';
+    reason: 'stop_loss' | 'take_profit' | 'automation_stopped';
     price: number;
     marketData: {
       environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string;
     };
   }) => Promise<void>;
+  /** Finalize Running -> Stopping -> Stopped only after no paper exposure remains. */
+  finalizeAutomationStop: (config: BotRow) => Promise<void>;
   automatedTradingEnabled: boolean;
   /** Consecutive failures from the single-flight engine cycle coordinator. */
   consecutiveCycleFailures?: number;
@@ -154,8 +156,9 @@ export async function processBotCore(
 
     const sl = pos.stopLoss;
     const tp = pos.takeProfit;
-    let closeReason: 'stop_loss' | 'take_profit' | null = null;
-    if (sl !== null && sl > 0) {
+    let closeReason: 'stop_loss' | 'take_profit' | 'automation_stopped' | null =
+      config.status === 'stopping' ? 'automation_stopped' : null;
+    if (!closeReason && sl !== null && sl > 0) {
       if (pos.side === 'long' && priceResult.price <= sl) closeReason = 'stop_loss';
       else if (pos.side === 'short' && priceResult.price >= sl) closeReason = 'stop_loss';
     }
@@ -180,7 +183,9 @@ export async function processBotCore(
         deps.positions.delete(pos.id);
         closedSymbols.add(pos.symbol);
         deps.addActivity({
-          type: closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit',
+          type: closeReason === 'automation_stopped'
+            ? 'automation_position_closed'
+            : closeReason === 'stop_loss' ? 'sl_hit' : 'tp_hit',
           botId: config.id, botName: config.name, symbol: pos.symbol,
           side: pos.side === 'long' ? 'sell' : 'buy', price: priceResult.price, pnl,
           settlement: 'persisted',
@@ -200,7 +205,33 @@ export async function processBotCore(
     }
   }
 
-  const activePositionCount = botPositions.length - closedSymbols.size;
+  const activePositionCount = botPositions.filter((position) => deps.positions.has(position.id)).length;
+
+  // A user-confirmed Stop is a two-phase paper lifecycle. No new exposure is
+  // possible in "stopping". We finalize "stopped" only after every persisted
+  // paper position has settled successfully.
+  if (config.status === 'stopping') {
+    if (activePositionCount > 0) {
+      deps.addActivity({
+        type: 'automation_stop_pending',
+        botId: config.id,
+        botName: config.name,
+        symbol: '—',
+        reason: `${activePositionCount} paper position(s) still require settlement before Stop completes.`,
+      });
+      return { processed: true, reason: 'automation-stop-pending' };
+    }
+
+    await deps.finalizeAutomationStop(config);
+    deps.addActivity({
+      type: 'automation_stopped',
+      botId: config.id,
+      botName: config.name,
+      symbol: '—',
+      reason: 'All AI-created paper positions are settled; automation is fully stopped.',
+    });
+    return { processed: true, reason: 'automation-stop-complete' };
+  }
 
   // Phase 2I supervisory policy runs AFTER existing-position safety exits and
   // BEFORE any new strategy scan. Circuit breakers therefore stop NEW paper
