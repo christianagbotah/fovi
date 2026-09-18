@@ -114,14 +114,6 @@ export async function processBotCore(
 
   const tag = `[AutoTrade] [${config.id.slice(0, 8)}]`;
   const timeframe = config.timeframe?.trim().toLowerCase() || '';
-  if (timeframe !== '4h') {
-    deps.addActivity({
-      type: 'strategy_hold', botId: config.id, botName: config.name,
-      code: 'UNSUPPORTED_VERIFIED_TIMEFRAME', timeframe,
-      reason: 'Verified automated decisions currently require 4h market data.',
-    });
-    return { processed: true, reason: 'unsupported-verified-timeframe' };
-  }
 
   const strategy = config.strategy?.trim().toLowerCase() || '';
   const accountBalance = config.account?.balance ?? 0;
@@ -231,6 +223,18 @@ export async function processBotCore(
       reason: 'All AI-created paper positions are settled; automation is fully stopped.',
     });
     return { processed: true, reason: 'automation-stop-complete' };
+  }
+
+  // The 4h requirement governs NEW AI decisions only. Existing persisted
+  // paper exposure must still receive verified-price protective/Stop closes
+  // even if a legacy or corrupted bot carries an unsupported timeframe.
+  if (timeframe !== '4h') {
+    deps.addActivity({
+      type: 'strategy_hold', botId: config.id, botName: config.name,
+      code: 'UNSUPPORTED_VERIFIED_TIMEFRAME', timeframe,
+      reason: 'Verified automated decisions currently require 4h market data.',
+    });
+    return { processed: true, reason: 'unsupported-verified-timeframe' };
   }
 
   // Phase 2I supervisory policy runs AFTER existing-position safety exits and
