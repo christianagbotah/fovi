@@ -11,6 +11,7 @@ import {
   buildAiDecisionJournalEntry,
   type AiDecisionJournalEntry,
   type AiDecisionJournalInput,
+  type AiDecisionMarketData,
 } from '../../src/lib/trading-intelligence/decision-journal';
 
 export interface BotRow {
@@ -119,6 +120,18 @@ async function persistDecision(
     ...details,
   });
   await deps.recordDecision(entry);
+}
+
+function safeDecisionMarketData(
+  value: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string },
+): AiDecisionMarketData | null {
+  if (!value.source.trim() || !Number.isFinite(Date.parse(value.observedAt))) return null;
+  return {
+    environment: value.environment,
+    isSynthetic: value.isSynthetic,
+    source: value.source.trim(),
+    observedAt: value.observedAt,
+  };
 }
 
 export async function processBotCore(
