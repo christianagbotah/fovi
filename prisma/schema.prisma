@@ -532,6 +532,8 @@ model AiDecisionJournal {
   strategyVersion         String?
   riskEngineVersion       String?
   supervisorVersion       String?
+  marketRegime            String?
+  regimeEngineVersion     String?
   positionNotional        Float?
   riskAmount              Float?
   riskPercentOfAllocation Float?
