@@ -62,6 +62,8 @@ function makeBotRow(accountOverrides?: Partial<NonNullable<BotRow['account']>>):
     symbols: 'BTC',
     timeframe: '4h',
     allocationAmount: 10_000,
+    enabled: true,
+    status: 'running',
     riskPerTrade: 2,
     maxPositions: 3,
     account: {
