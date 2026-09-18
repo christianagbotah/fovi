@@ -67,6 +67,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useTradingStore } from '@/lib/store/trading-store';
 import type { BrokerProvider } from '@/lib/types';
+import { AiDecisionTimeline } from '@/components/trading/ai-decision-timeline';
 
 // ------------------------------------------------------------
 // Engine types
@@ -1731,6 +1732,8 @@ function BotCard({
                     <span className="tabular-nums">{timeAgo(bot.updatedAt)}</span>
                   </div>
                 </div>
+
+                <AiDecisionTimeline botId={bot.id} botName={bot.name} />
 
                 {bot.lastError && (
                   <div className="flex items-start gap-2 p-2 rounded-lg bg-red-500/[0.06] border border-red-500/20">
