@@ -53,6 +53,8 @@ export async function GET(
         strategyVersion: true,
         riskEngineVersion: true,
         supervisorVersion: true,
+        marketRegime: true,
+        regimeEngineVersion: true,
         positionNotional: true,
         riskAmount: true,
         riskPercentOfAllocation: true,
