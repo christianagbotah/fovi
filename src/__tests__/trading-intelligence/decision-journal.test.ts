@@ -23,6 +23,8 @@ function approvedDecision() {
     timeframe: '4H',
     strategyVersion: 'phase2c-strategy-v1',
     riskEngineVersion: 'phase2c-risk-v1',
+    marketRegime: 'strong_uptrend',
+    regimeEngineVersion: 'phase2m-market-regime-v1',
     positionNotional: 2000,
     riskAmount: 180,
     riskPercentOfAllocation: 1.8,
@@ -73,6 +75,27 @@ describe('Phase 2K AI decision journal contract', () => {
     const result = validateAiDecisionJournalEntry(entry);
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.code).toBe('INVALID_EXECUTION_APPROVAL_DECISION');
+  });
+
+  it('requires market regime and regime-engine provenance together', () => {
+    const entry = buildAiDecisionJournalEntry({
+      ...approvedDecision(),
+      regimeEngineVersion: null,
+    });
+
+    const result = validateAiDecisionJournalEntry(entry);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe('INVALID_DECISION_REGIME_PROVENANCE');
+  });
+
+  it('includes regime provenance in deterministic integrity IDs', () => {
+    const first = buildAiDecisionJournalEntry(approvedDecision());
+    const second = buildAiDecisionJournalEntry({
+      ...approvedDecision(),
+      marketRegime: 'range',
+    });
+
+    expect(first.journalId).not.toBe(second.journalId);
   });
 
   it('permits explainable hold decisions without market data', () => {
