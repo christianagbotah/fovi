@@ -29,6 +29,7 @@ describe('Phase 2E exact internal execution routing', () => {
     '/api/trading/engine/execute',
     '/api/trading/engine/positions',
     '/api/trading/engine/close',
+    '/api/trading/engine/stop-complete',
   ];
 
   beforeEach(() => {
