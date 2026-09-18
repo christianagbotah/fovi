@@ -107,6 +107,11 @@ describe('Phase 2I autonomy supervisor', () => {
 
     expect(evaluateAutonomySupervisor({
       ...baseInput,
+      lastTradeAt: 'not-a-timestamp',
+    })).toMatchObject({ action: 'suspend', code: 'INVALID_SUPERVISOR_STATE' });
+
+    expect(evaluateAutonomySupervisor({
+      ...baseInput,
       lastTradeAt: '2026-09-18T10:11:00.000Z',
     })).toMatchObject({ action: 'suspend', code: 'INVALID_SUPERVISOR_STATE' });
   });
