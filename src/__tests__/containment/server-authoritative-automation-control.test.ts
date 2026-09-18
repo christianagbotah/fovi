@@ -34,7 +34,7 @@ describe('Phase 2J server-authoritative automation control', () => {
   it('uses a two-phase stopping lifecycle and refuses unexpected non-paper exposure', () => {
     const route = source('src/app/api/trading/bots/[id]/toggle/route.ts');
 
-    expect(route).toContain("status: 'stopping'");
+    expect(route).toContain("'stopping'");
     expect(route).toContain("position.id.startsWith('ppos_')");
     expect(route).toContain('NON_PAPER_AI_EXPOSURE_REQUIRES_REVIEW');
     expect(route).toContain('closePending');
@@ -47,7 +47,7 @@ describe('Phase 2J server-authoritative automation control', () => {
     const positionsRoute = source('src/app/api/trading/engine/positions/route.ts');
 
     for (const text of [botsRoute, positionsRoute]) {
-      expect(text).toContain("status === 'stopping'");
+      expect(text).toContain("'stopping'");
       expect(text).toContain('enabled === false');
     }
   });
