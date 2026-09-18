@@ -24,12 +24,10 @@ export async function POST(
   try { userId = getUserIdSync(req); } catch { return authRequiredResponse(); }
   const { id } = await params;
 
-  const parsed = ControlSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) {
-    return controlError(400, 'INVALID_AUTOMATION_CONTROL', 'Request must explicitly set enabled=true or enabled=false.');
-  }
-  const desiredEnabled = parsed.data.enabled;
-
+  // Availability and tenant ownership are security boundaries and are
+  // evaluated before control-payload validation. This preserves fail-closed
+  // 503 behavior and prevents malformed requests from becoming an ownership
+  // oracle for another tenant's bot.
   if (!db || !hasModel('bot') || !hasModel('position')) {
     return controlError(503, 'SERVICE_UNAVAILABLE', 'Bot automation control is temporarily unavailable.');
   }
@@ -40,6 +38,16 @@ export async function POST(
       include: { account: true },
     });
     if (!bot) return controlError(404, 'BOT_NOT_FOUND', 'Bot not found.');
+
+    const parsed = ControlSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      return controlError(
+        400,
+        'INVALID_AUTOMATION_CONTROL',
+        'Request must explicitly set enabled=true or enabled=false.',
+      );
+    }
+    const desiredEnabled = parsed.data.enabled;
 
     // START: only explicitly-demo accounts with canonical bot configuration.
     if (desiredEnabled) {
