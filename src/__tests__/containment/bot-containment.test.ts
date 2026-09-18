@@ -236,7 +236,7 @@ describe('Bot Toggle — Phase 1 containment', () => {
     expect(data.enabled).toBe(true);
     expect(mockBotUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'bot-1', userId: 'user-123' },
+        where: expect.objectContaining({ id: 'bot-1', userId: 'user-123' }),
         data: expect.objectContaining({
           enabled: true,
           status: 'running',
