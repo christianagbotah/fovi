@@ -29,6 +29,8 @@ interface AiDecisionEntry {
   strategyVersion: string | null;
   riskEngineVersion: string | null;
   supervisorVersion: string | null;
+  marketRegime: string | null;
+  regimeEngineVersion: string | null;
   positionNotional: number | null;
   riskAmount: number | null;
   riskPercentOfAllocation: number | null;
@@ -77,6 +79,10 @@ function plainLanguage(decision: AiDecisionEntry): string {
     case 'MARKET_DATA_UNAVAILABLE':
     case 'UNVERIFIED_MARKET_DATA':
       return 'The AI could not verify trustworthy fresh market data, so it did not trade.';
+    case 'REGIME_INCOMPATIBLE':
+      return 'The current market behaviour does not match this bot’s strategy, so the AI waited instead of forcing a trade.';
+    case 'REGIME_UNAVAILABLE':
+      return 'The AI could not classify the market regime reliably enough, so it did not create new exposure.';
     case 'AUTOMATED_PAPER_EXECUTION_DISABLED':
       return 'The strategy and risk checks passed, but automatic paper execution is currently disabled.';
     case 'TRADE_APPROVED':
@@ -91,6 +97,9 @@ function plainLanguage(decision: AiDecisionEntry): string {
 function titleFor(decision: AiDecisionEntry): string {
   if (decision.stage === 'execution' && decision.outcome === 'approve') return 'AI approved a paper trade';
   if (decision.stage === 'risk' && decision.outcome === 'reject') return 'Trade blocked by risk rules';
+  if (decision.code === 'REGIME_INCOMPATIBLE' || decision.code === 'REGIME_UNAVAILABLE') {
+    return 'AI waited for a better market regime';
+  }
   if (decision.stage === 'market_data') return 'AI skipped this market check';
   if (decision.stage === 'autonomy' && decision.outcome === 'suspend') return 'AI paused new trades';
   if (decision.stage === 'autonomy') return 'AI waited before trading';
@@ -294,6 +303,18 @@ export function AiDecisionTimeline({
                               {decision.marketDataSource}
                               {decision.marketDataSynthetic === false ? ' · verified' : ''}
                             </span>
+                          </>
+                        )}
+                        {decision.marketRegime && (
+                          <>
+                            <span>Market regime</span>
+                            <span className="capitalize text-foreground">{decision.marketRegime.replaceAll('_', ' ')}</span>
+                          </>
+                        )}
+                        {decision.regimeEngineVersion && (
+                          <>
+                            <span>Regime engine</span>
+                            <span className="font-mono break-all text-foreground">{decision.regimeEngineVersion}</span>
                           </>
                         )}
                         {decision.strategyVersion && (
