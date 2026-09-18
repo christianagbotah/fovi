@@ -7,6 +7,11 @@ import { type CandleData, type TradeSignal } from './strategies';
 import { evaluateStrategyDecision } from '../../src/lib/trading-intelligence/strategy-engine';
 import { evaluateAutomatedTradeRisk } from '../../src/lib/trading-intelligence/risk-engine';
 import { evaluateAutonomySupervisor } from '../../src/lib/trading-intelligence/autonomy-supervisor';
+import {
+  buildAiDecisionJournalEntry,
+  type AiDecisionJournalEntry,
+  type AiDecisionJournalInput,
+} from '../../src/lib/trading-intelligence/decision-journal';
 
 export interface BotRow {
   id: string; userId?: string; accountId: string; name: string; strategy: string;
@@ -65,6 +70,8 @@ export interface ProcessBotDeps {
   candleDeps: { nextjsApi: string; fetchFn?: typeof fetch };
   positions: Map<string, EnginePosition>;
   addActivity: (entry: Record<string, unknown>) => void;
+  decisionCycleId: string;
+  recordDecision: (entry: AiDecisionJournalEntry) => Promise<void>;
   callNextJSApi: (method: string, path: string, body?: Record<string, unknown>) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   executeTrade: (config: BotRow, trade: {
     symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number;
@@ -92,6 +99,26 @@ export interface ProcessBotDeps {
 
 function isVerifiedPrice(result: PriceResult): boolean {
   return !result.dataUnavailable && !result.isDemoData && result.environment === 'live' && result.price > 0;
+}
+
+type DecisionDetails = Omit<AiDecisionJournalInput, 'userId' | 'botId' | 'accountId' | 'cycleId'>;
+
+async function persistDecision(
+  config: BotRow,
+  deps: ProcessBotDeps,
+  details: DecisionDetails,
+): Promise<void> {
+  if (!config.userId) {
+    throw new Error('AI decision journaling requires a verified bot userId.');
+  }
+  const entry = buildAiDecisionJournalEntry({
+    userId: config.userId,
+    botId: config.id,
+    accountId: config.accountId,
+    cycleId: deps.decisionCycleId,
+    ...details,
+  });
+  await deps.recordDecision(entry);
 }
 
 export async function processBotCore(
