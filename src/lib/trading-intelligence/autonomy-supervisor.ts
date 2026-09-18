@@ -159,7 +159,17 @@ export function evaluateAutonomySupervisor(
     );
   }
 
+  const lastTradeProvided = input.lastTradeAt !== null && input.lastTradeAt !== undefined;
   const lastTradeMs = parseLastTradeMs(input.lastTradeAt);
+  if (lastTradeProvided && lastTradeMs === null) {
+    return decision(
+      'suspend',
+      'INVALID_SUPERVISOR_STATE',
+      'Last trade timestamp is invalid and cannot be trusted.',
+      drawdownPct,
+    );
+  }
+
   const configuredCooldown = input.minNewExposureIntervalMs ?? PAPER_MIN_NEW_EXPOSURE_INTERVAL_MS;
   const cooldownMs = Math.max(PAPER_MIN_NEW_EXPOSURE_INTERVAL_MS, configuredCooldown);
 
