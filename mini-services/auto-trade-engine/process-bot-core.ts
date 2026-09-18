@@ -7,6 +7,7 @@ import { type CandleData, type TradeSignal } from './strategies';
 import { evaluateStrategyDecision } from '../../src/lib/trading-intelligence/strategy-engine';
 import { evaluateAutomatedTradeRisk } from '../../src/lib/trading-intelligence/risk-engine';
 import { evaluateAutonomySupervisor } from '../../src/lib/trading-intelligence/autonomy-supervisor';
+import { evaluateMarketRegimeGovernance } from '../../src/lib/trading-intelligence/market-regime';
 import {
   buildAiDecisionJournalEntry,
   type AiDecisionJournalEntry,
@@ -56,6 +57,8 @@ export interface GeneratedTradeSignal extends TradeSignal {
   strategy?: string;
   timeframe?: string;
   strategyVersion?: string;
+  marketRegime?: string;
+  regimeEngineVersion?: string;
 }
 
 export interface ProcessBotDeps {
@@ -399,6 +402,36 @@ export async function processBotCore(
         continue;
       }
 
+      const regimeDecision = evaluateMarketRegimeGovernance(
+        candleResult.candles,
+        strategy,
+      );
+      if (!regimeDecision.allowed) {
+        await persistDecision(config, deps, {
+          stage: 'strategy',
+          outcome: 'hold',
+          code: regimeDecision.code,
+          reason: regimeDecision.reason,
+          symbol,
+          strategy,
+          timeframe,
+          marketRegime: regimeDecision.snapshot.regime,
+          regimeEngineVersion: regimeDecision.snapshot.engineVersion,
+          marketData: safeDecisionMarketData(candleResult.provenance),
+        });
+        deps.addActivity({
+          type: 'regime_hold',
+          botId: config.id,
+          botName: config.name,
+          symbol,
+          code: regimeDecision.code,
+          reason: regimeDecision.reason,
+          marketRegime: regimeDecision.snapshot.regime,
+          regimeEngineVersion: regimeDecision.snapshot.engineVersion,
+        });
+        continue;
+      }
+
       const strategyDecision = evaluateStrategyDecision(candleResult.candles, {
         symbol,
         strategy,
@@ -414,6 +447,8 @@ export async function processBotCore(
           strategy,
           timeframe,
           strategyVersion: strategyDecision.strategyVersion,
+          marketRegime: regimeDecision.snapshot.regime,
+          regimeEngineVersion: regimeDecision.snapshot.engineVersion,
           marketData: safeDecisionMarketData(candleResult.provenance),
         });
         if (strategyDecision.code !== 'NO_VALID_CANDIDATE') {
@@ -425,7 +460,11 @@ export async function processBotCore(
         continue;
       }
 
-      const signal: GeneratedTradeSignal = strategyDecision.trade;
+      const signal: GeneratedTradeSignal = {
+        ...strategyDecision.trade,
+        marketRegime: regimeDecision.snapshot.regime,
+        regimeEngineVersion: regimeDecision.snapshot.engineVersion,
+      };
       if (
         !bestSignal ||
         signal.confidence > bestSignal.confidence ||
@@ -474,6 +513,8 @@ export async function processBotCore(
       strategy,
       timeframe,
       strategyVersion: bestSignal.strategyVersion ?? null,
+      marketRegime: bestSignal.marketRegime ?? null,
+      regimeEngineVersion: bestSignal.regimeEngineVersion ?? null,
       marketData: safeDecisionMarketData({
         environment: priceResult.environment,
         isSynthetic: priceResult.isDemoData,
@@ -522,6 +563,8 @@ export async function processBotCore(
       timeframe,
       strategyVersion: bestSignal.strategyVersion ?? null,
       riskEngineVersion: riskDecision.engineVersion,
+      marketRegime: bestSignal.marketRegime ?? null,
+      regimeEngineVersion: bestSignal.regimeEngineVersion ?? null,
       marketData: {
         environment: priceResult.environment,
         isSynthetic: priceResult.isDemoData,
@@ -552,6 +595,8 @@ export async function processBotCore(
       timeframe,
       strategyVersion: bestSignal.strategyVersion ?? null,
       riskEngineVersion: riskDecision.engineVersion,
+      marketRegime: bestSignal.marketRegime ?? null,
+      regimeEngineVersion: bestSignal.regimeEngineVersion ?? null,
       positionNotional: riskDecision.positionNotional,
       riskAmount: riskDecision.riskAmount,
       riskPercentOfAllocation: riskDecision.riskPercentOfAllocation,
@@ -584,6 +629,8 @@ export async function processBotCore(
     timeframe,
     strategyVersion: bestSignal.strategyVersion ?? null,
     riskEngineVersion: riskDecision.engineVersion,
+    marketRegime: bestSignal.marketRegime ?? null,
+    regimeEngineVersion: bestSignal.regimeEngineVersion ?? null,
     positionNotional: riskDecision.positionNotional,
     riskAmount: riskDecision.riskAmount,
     riskPercentOfAllocation: riskDecision.riskPercentOfAllocation,
@@ -626,6 +673,8 @@ export async function processBotCore(
     symbol: bestSignal.symbol, side: bestSignal.side, confidence: bestSignal.confidence,
     reason: bestSignal.reason, strategyVersion: bestSignal.strategyVersion,
     riskEngineVersion: riskDecision.engineVersion,
+    marketRegime: bestSignal.marketRegime,
+    regimeEngineVersion: bestSignal.regimeEngineVersion,
   });
   return { processed: true };
 }
