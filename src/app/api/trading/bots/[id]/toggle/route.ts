@@ -28,7 +28,7 @@ export async function POST(
   // evaluated before control-payload validation. This preserves fail-closed
   // 503 behavior and prevents malformed requests from becoming an ownership
   // oracle for another tenant's bot.
-  if (!db || !hasModel('bot') || !hasModel('position')) {
+  if (!db || !hasModel('bot')) {
     return controlError(503, 'SERVICE_UNAVAILABLE', 'Bot automation control is temporarily unavailable.');
   }
 
@@ -129,6 +129,16 @@ export async function POST(
 
     // STOP: disable NEW exposure immediately, then allow the internal paper
     // engine to settle deterministic AI paper positions before final status.
+    // Position storage is a Stop-specific dependency; Start and tenant-scoped
+    // bot lookup do not require it.
+    if (!hasModel('position')) {
+      return controlError(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Paper position persistence is unavailable; Stop cannot safely settle exposure.',
+      );
+    }
+
     if (bot.enabled === false && bot.status === 'stopped') {
       return NextResponse.json({
         success: true,
