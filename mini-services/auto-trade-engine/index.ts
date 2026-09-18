@@ -72,6 +72,7 @@ interface BotRow {
   totalTrades: number;
   winTrades: number;
   totalPnl: number;
+  lastTradeAt: string | null;
   account: {
     id: string;
     broker: string;
