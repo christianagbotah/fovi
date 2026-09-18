@@ -8,7 +8,7 @@
 // risk sizing, paper opens/closes, settlement, lifecycle transitions,
 // and activity truth come from the server-authoritative Bot engine.
 //
-// There is no Math.random trading logic, local position execution,
+// There is no browser-generated trading randomness, local position execution,
 // browser balance mutation, or duplicate BotConfig execution brain here.
 // ============================================================
 
