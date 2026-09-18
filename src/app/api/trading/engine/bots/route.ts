@@ -81,6 +81,9 @@ export async function GET(req: Request) {
     // succeeded. No credential value is ever returned to the mini-service.
     const safe = active.map((b) => ({
       ...b,
+      // Explicitly preserve the authoritative persisted timestamp used by the
+      // autonomy supervisor's minimum-new-exposure cooldown.
+      lastTradeAt: b.lastTradeAt,
       positionSizing: 'canonical_risk_v1',
       account: b.account ? {
         id: b.account.id,
