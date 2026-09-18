@@ -41,7 +41,7 @@ const CloseIntentSchema = z.object({
   side: z.enum(['long', 'short']),
   quantity: z.number().positive().max(1_000_000_000),
   referencePrice: z.number().positive(),
-  reason: z.enum(['stop_loss', 'take_profit']),
+  reason: z.enum(['stop_loss', 'take_profit', 'automation_stopped']),
   marketData: z.object({
     environment: z.enum(['live', 'demo', 'unknown']),
     isSynthetic: z.boolean(),
