@@ -6,12 +6,14 @@
 import { type CandleData, type TradeSignal } from './strategies';
 import { evaluateStrategyDecision } from '../../src/lib/trading-intelligence/strategy-engine';
 import { evaluateAutomatedTradeRisk } from '../../src/lib/trading-intelligence/risk-engine';
+import { evaluateAutonomySupervisor } from '../../src/lib/trading-intelligence/autonomy-supervisor';
 
 export interface BotRow {
   id: string; userId?: string; accountId: string; name: string; strategy: string;
   symbols?: string; timeframe?: string; allocationAmount?: number; enabled?: boolean;
   status?: string; riskPerTrade?: number; maxPositions?: number; stopLossPercent?: number;
   takeProfitPercent?: number; totalTrades?: number; winTrades?: number; totalPnl?: number;
+  lastTradeAt?: string | Date | null;
   account: {
     id: string; broker: string; accountType: string; isDemo: boolean | null; balance?: number;
     isActive?: boolean; apiKey?: string | null; apiSecret?: string | null; passphrase?: string | null;
@@ -80,6 +82,8 @@ export interface ProcessBotDeps {
     };
   }) => Promise<void>;
   automatedTradingEnabled: boolean;
+  /** Consecutive failures from the single-flight engine cycle coordinator. */
+  consecutiveCycleFailures?: number;
   allSymbols: string[];
   evaluateEngineAccountEligibility: (account: { broker: string; accountType: string; isDemo: boolean | null | undefined; isActive: boolean | null | undefined; apiKey: string | null | undefined; apiSecret: string | null | undefined; passphrase: string | null | undefined } | null) => { eligible: boolean; reason?: string };
 }
@@ -197,7 +201,34 @@ export async function processBotCore(
   }
 
   const activePositionCount = botPositions.length - closedSymbols.size;
-  if (maxPos > 0 && activePositionCount >= maxPos) return { processed: true, reason: 'max-positions-reached' };
+
+  // Phase 2I supervisory policy runs AFTER existing-position safety exits and
+  // BEFORE any new strategy scan. Circuit breakers therefore stop NEW paper
+  // exposure without suppressing stop-loss/take-profit reconciliation.
+  const supervisorDecision = evaluateAutonomySupervisor({
+    enabled: config.enabled === true,
+    status: config.status || '',
+    allocationAmount,
+    totalPnl: config.totalPnl ?? 0,
+    currentOpenPositions: activePositionCount,
+    maxPositions: maxPos,
+    consecutiveCycleFailures: deps.consecutiveCycleFailures ?? 0,
+    lastTradeAt: config.lastTradeAt ?? null,
+  });
+  if (supervisorDecision.action !== 'scan') {
+    deps.addActivity({
+      type: supervisorDecision.action === 'suspend' ? 'autonomy_suspend' : 'autonomy_hold',
+      botId: config.id,
+      botName: config.name,
+      symbol: '—',
+      code: supervisorDecision.code,
+      reason: supervisorDecision.reason,
+      supervisorVersion: supervisorDecision.supervisorVersion,
+      drawdownPct: supervisorDecision.drawdownPct,
+      cooldownRemainingMs: supervisorDecision.cooldownRemainingMs,
+    });
+    return { processed: true, reason: `autonomy-${supervisorDecision.code.toLowerCase()}` };
+  }
 
   const botSymbols = config.symbols
     ? config.symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
