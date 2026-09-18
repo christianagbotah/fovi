@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export const AI_DECISION_JOURNAL_CONTRACT_VERSION = 'phase2k-ai-decision-journal-v1';
+export const AI_DECISION_JOURNAL_CONTRACT_VERSION = 'phase2m-ai-decision-journal-v2';
 
 export type AiDecisionStage =
   | 'autonomy'
@@ -35,6 +35,8 @@ export interface AiDecisionJournalInput {
   strategyVersion?: string | null;
   riskEngineVersion?: string | null;
   supervisorVersion?: string | null;
+  marketRegime?: string | null;
+  regimeEngineVersion?: string | null;
   positionNotional?: number | null;
   riskAmount?: number | null;
   riskPercentOfAllocation?: number | null;
@@ -84,6 +86,8 @@ function normalize(input: AiDecisionJournalInput): AiDecisionJournalInput {
     strategyVersion: trim(input.strategyVersion),
     riskEngineVersion: trim(input.riskEngineVersion),
     supervisorVersion: trim(input.supervisorVersion),
+    marketRegime: trim(input.marketRegime)?.toLowerCase() ?? null,
+    regimeEngineVersion: trim(input.regimeEngineVersion),
     positionNotional: finiteOrNull(input.positionNotional),
     riskAmount: finiteOrNull(input.riskAmount),
     riskPercentOfAllocation: finiteOrNull(input.riskPercentOfAllocation),
