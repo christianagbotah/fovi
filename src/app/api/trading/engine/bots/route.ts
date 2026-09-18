@@ -22,7 +22,12 @@ export async function GET(req: Request) {
 
   try {
     const bots = await db.bot.findMany({
-      where: { enabled: true, status: 'running' },
+      where: {
+        OR: [
+          { enabled: true, status: 'running' },
+          { enabled: false, status: 'stopping' },
+        ],
+      },
       include: {
         account: {
           select: {
@@ -42,6 +47,10 @@ export async function GET(req: Request) {
     });
 
     const active = bots.filter((b) => {
+      const lifecycleEligible =
+        (b.enabled === true && b.status === 'running')
+        || (b.enabled === false && b.status === 'stopping');
+      if (!lifecycleEligible) return false;
       if (!b.account || b.account.isActive !== true) return false;
 
       const accountEligibility = evaluateEngineAccountEligibility({
@@ -72,6 +81,9 @@ export async function GET(req: Request) {
     // succeeded. No credential value is ever returned to the mini-service.
     const safe = active.map((b) => ({
       ...b,
+      // Explicitly preserve the authoritative persisted timestamp used by the
+      // autonomy supervisor's minimum-new-exposure cooldown.
+      lastTradeAt: b.lastTradeAt,
       positionSizing: 'canonical_risk_v1',
       account: b.account ? {
         id: b.account.id,

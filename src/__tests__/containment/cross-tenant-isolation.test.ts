@@ -133,17 +133,17 @@ describe('cross-tenant isolation', () => {
   });
 
   it('bot toggle: user B cannot toggle user A\'s bot', async () => {
-    mockDb.bot.findUnique.mockResolvedValueOnce({
-      id: 'bot_1', userId: USER_A, enabled: false,
-    } as any);
+    // Tenant-scoped lookup deliberately makes another tenant's bot
+    // indistinguishable from a nonexistent bot.
+    mockDb.bot.findFirst.mockResolvedValueOnce(null);
 
     const { POST } = await import('@/app/api/trading/bots/[id]/toggle/route');
     const res = await POST(
-      authedReqPost(USER_B, {}, 'http://localhost/api/trading/bots/bot_1/toggle'),
+      authedReqPost(USER_B, { enabled: true }, 'http://localhost/api/trading/bots/bot_1/toggle'),
       { params: Promise.resolve({ id: 'bot_1' }) },
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it('bot update: user B cannot update user A\'s bot', async () => {

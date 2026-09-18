@@ -179,6 +179,15 @@ describe('Phase 2G paper close and settlement contract', () => {
     if (!result.valid) expect(result.code).toBe('POSITION_CLOSE_TRIGGER_NOT_MET');
   });
 
+  it('accepts a verified automation-stop close without requiring an SL/TP threshold crossing', () => {
+    const intent = makeIntent({ referencePrice: 50_125, reason: 'automation_stopped' });
+    expect(validatePaperCloseIntent(intent)).toEqual({ valid: true });
+    expect(validatePaperCloseAgainstPosition(intent, persistedPosition())).toEqual({
+      valid: true,
+      triggerPrice: null,
+    });
+  });
+
   it('accepts long take-profit and short stop-loss/take-profit directionality', () => {
     expect(validatePaperCloseAgainstPosition(
       makeIntent({ referencePrice: 52_100, reason: 'take_profit' }),

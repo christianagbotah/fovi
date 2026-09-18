@@ -72,6 +72,7 @@ interface BotRow {
   totalTrades: number;
   winTrades: number;
   totalPnl: number;
+  lastTradeAt: string | null;
   account: {
     id: string;
     broker: string;
@@ -463,6 +464,7 @@ async function processBot(config: BotRow) {
     callNextJSApi,
     executeTrade,
     closePosition,
+    finalizeAutomationStop,
     automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
     consecutiveCycleFailures: cycleCoordinator.snapshot(AUTOMATED_TRADING_ENABLED).consecutiveCycleFailures,
     allSymbols: ALL_SYMBOLS,
@@ -561,6 +563,17 @@ async function executeTrade(
       qty: hydrated.qty,
       price: Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : hydrated.avgEntryPrice,
     });
+  }
+}
+
+async function finalizeAutomationStop(config: ProcessBotRow) {
+  const result = await callNextJSApi(
+    'POST',
+    '/api/trading/engine/stop-complete',
+    { botId: config.id, accountId: config.accountId },
+  );
+  if (!result.ok) {
+    throw new Error(result.error || 'Paper automation stop finalizer rejected the transition.');
   }
 }
 

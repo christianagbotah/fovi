@@ -48,7 +48,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -56,6 +55,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useTradingStore } from '@/lib/store/trading-store';
 import type { BrokerProvider } from '@/lib/types';
 
@@ -77,7 +86,11 @@ interface EngineStatus {
 interface EngineActivityEntry {
   id: string;
   timestamp: string;
-  type: 'trade_opened' | 'trade_closed' | 'signal_generated' | 'cycle_start' | 'cycle_end' | 'error' | 'sl_hit' | 'tp_hit';
+  type:
+    | 'trade_opened' | 'trade_closed' | 'signal_generated'
+    | 'cycle_start' | 'cycle_end' | 'error' | 'sl_hit' | 'tp_hit'
+    | 'autonomy_hold' | 'autonomy_suspend'
+    | 'automation_position_closed' | 'automation_stop_pending' | 'automation_stopped';
   botId: string;
   botName: string;
   symbol: string;
@@ -221,6 +234,14 @@ const STATUS_CONFIG: Record<string, StatusConfig> = {
     bg: 'bg-emerald-500/10',
     border: 'border-emerald-500/30',
     dot: 'bg-emerald-500',
+  },
+  stopping: {
+    label: 'Stopping',
+    icon: Square,
+    color: 'text-orange-500',
+    bg: 'bg-orange-500/10',
+    border: 'border-orange-500/30',
+    dot: 'bg-orange-500',
   },
   paused: {
     label: 'Paused',
@@ -372,6 +393,10 @@ export function BotsPanel() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [controlTarget, setControlTarget] = useState<{
+    bot: TradingBot;
+    action: 'start' | 'stop';
+  } | null>(null);
 
   // ---- Engine state ----
   const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null);
@@ -524,52 +549,59 @@ export function BotsPanel() {
     }
   };
 
-  // ---- Toggle bot (start / stop) ----
-  const handleToggle = async (bot: TradingBot) => {
-    const newEnabled = !bot.enabled;
-    const newStatus = newEnabled ? 'running' : 'stopped';
+  // ---- Confirmed automation control (Start / Stop) ----
+  const handleControl = async (bot: TradingBot, desiredEnabled: boolean) => {
     setTogglingId(bot.id);
-    // Optimistic update — matches the server's behaviour for persisted bots
-    // and gives demo bots a snappy local toggle (the demo toggle endpoint
-    // always returns "running", so we rely on optimistic state).
-    setBots((prev) =>
-      prev.map((b) =>
-        b.id === bot.id ? { ...b, enabled: newEnabled, status: newStatus } : b,
-      ),
-    );
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(
         `/api/trading/bots/${encodeURIComponent(bot.id)}/toggle`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: newEnabled }),
+          body: JSON.stringify({ enabled: desiredEnabled }),
         },
       );
+      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // revert on failure
-        setBots((prev) =>
-          prev.map((b) =>
-            b.id === bot.id ? { ...b, enabled: bot.enabled, status: bot.status } : b,
-          ),
-        );
-        const body = await res.json().catch(() => ({}));
-        setError(body?.error || `Failed to ${newEnabled ? 'start' : 'stop'} bot`);
-      } else {
-        setNotice(
-          `"${bot.name}" ${newEnabled ? 'started — engine will pick it up on next cycle' : 'stopped'}.`,
-        );
-        // Refresh engine activity after toggle
-        setTimeout(() => { fetchEngineActivity(); fetchEngineStatus(); }, 2000);
+        setError(body?.error || `Failed to ${desiredEnabled ? 'start' : 'stop'} AI automation.`);
+        return;
       }
-    } catch {
+
+      const status = typeof body?.status === 'string'
+        ? body.status
+        : desiredEnabled ? 'running' : 'stopped';
+      const enabled = body?.enabled === true;
       setBots((prev) =>
-        prev.map((b) =>
-          b.id === bot.id ? { ...b, enabled: bot.enabled, status: bot.status } : b,
+        prev.map((candidate) =>
+          candidate.id === bot.id ? { ...candidate, enabled, status } : candidate,
         ),
       );
-      setError(`Failed to ${newEnabled ? 'start' : 'stop'} bot — network error.`);
+
+      if (body?.closePending === true) {
+        const count = Number(body?.openPaperPositions ?? 0);
+        setNotice(
+          `"${bot.name}" is stopping. New AI trades are blocked immediately; ${count} open AI paper position(s) will be closed and settled before Stop completes.`,
+        );
+        setTimeout(() => {
+          void fetchBots();
+          void fetchEngineActivity();
+          void fetchEngineStatus();
+        }, 4000);
+      } else {
+        setNotice(
+          desiredEnabled
+            ? `"${bot.name}" started. The server AI engine will manage paper trading within its configured risk limits.`
+            : `"${bot.name}" stopped. No AI paper exposure remains.`,
+        );
+        setTimeout(() => {
+          void fetchEngineActivity();
+          void fetchEngineStatus();
+        }, 1500);
+      }
+    } catch {
+      setError(`Failed to ${desiredEnabled ? 'start' : 'stop'} AI automation — network error.`);
     } finally {
       setTogglingId(null);
     }
@@ -894,6 +926,11 @@ export function BotsPanel() {
                             {entry.type === 'signal_generated' && `Signal: ${(entry.confidence ?? 0).toFixed(0)}% confidence — ${entry.reason ?? ''}`}
                             {entry.type === 'cycle_start' && 'Cycle started'}
                             {entry.type === 'cycle_end' && 'Cycle completed'}
+                            {entry.type === 'autonomy_hold' && (entry.reason ?? 'Autonomy supervisor is holding new exposure.')}
+                            {entry.type === 'autonomy_suspend' && (entry.reason ?? 'Autonomy supervisor suspended new exposure.')}
+                            {entry.type === 'automation_position_closed' && `Stop request closed AI paper position @ ${(entry.price ?? 0).toFixed(2)}`}
+                            {entry.type === 'automation_stop_pending' && (entry.reason ?? 'Stop is waiting for paper settlement.')}
+                            {entry.type === 'automation_stopped' && (entry.reason ?? 'AI automation fully stopped.')}
                             {entry.type === 'error' && (entry.error ?? 'Unknown error')}
                           </p>
                           <span className="text-[9px] text-muted-foreground/60 tabular-nums">
@@ -1018,7 +1055,12 @@ export function BotsPanel() {
                   onToggleExpanded={() =>
                     setExpandedId((id) => (id === bot.id ? null : bot.id))
                   }
-                  onToggle={handleToggle}
+                  onToggle={(targetBot) =>
+                    setControlTarget({
+                      bot: targetBot,
+                      action: targetBot.enabled ? 'stop' : 'start',
+                    })
+                  }
                   onDelete={handleDelete}
                   toggling={togglingId === bot.id}
                   deleting={deletingId === bot.id}
@@ -1029,15 +1071,71 @@ export function BotsPanel() {
         </div>
       )}
 
+      <AlertDialog
+        open={controlTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setControlTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {controlTarget?.action === 'stop'
+                ? 'Stop AI Automation?'
+                : 'Start AI Automation?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              {controlTarget?.action === 'stop' ? (
+                <>
+                  <span className="block">
+                    New AI trades will be blocked immediately.
+                  </span>
+                  <span className="block font-medium text-foreground">
+                    Any open AI-created paper positions will be closed at verified market prices and durably settled before the bot becomes fully Stopped.
+                  </span>
+                  <span className="block">
+                    This control does not close or modify live-broker positions.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="block">
+                    The server AI engine will begin analyzing verified market data and may open or close paper positions automatically.
+                  </span>
+                  <span className="block font-medium text-foreground">
+                    All new exposure remains limited by the bot&apos;s configured allocation, risk-per-trade, position cap, and autonomy circuit breakers.
+                  </span>
+                  <span className="block">
+                    Live-money execution remains disabled in this contained phase.
+                  </span>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = controlTarget;
+                setControlTarget(null);
+                if (target) void handleControl(target.bot, target.action === 'start');
+              }}
+            >
+              {controlTarget?.action === 'stop' ? 'Confirm Stop' : 'Confirm Start'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* === Footer hint === */}
       {!loading && bots.length > 0 && (
         <p className="text-[11px] text-muted-foreground/80 text-center pt-1">
           {activeAccount
-            ? `Bots trade against your "${activeAccount.broker}" ${activeAccount.accountType} account. `
-            : 'Connect a broker account to enable live trading. '}
+            ? `Automation is attached to your "${activeAccount.broker}" ${activeAccount.accountType} account. `
+            : 'Create or select an explicitly demo account to enable AI paper automation. '}
           {engineStatus
-            ? 'The trade engine is executing strategies automatically.'
-            : 'Start the trade engine to execute bot strategies automatically.'}
+            ? 'The server trade engine is authoritative for AI decisions and paper execution.'
+            : 'The trade engine is offline, so automation cannot process new paper trades.'}
         </p>
       )}
     </div>
@@ -1353,6 +1451,7 @@ function BotCard({
   const StratIcon = strat.icon;
   const StatusIcon = status.icon;
   const isRunning = bot.status === 'running';
+  const isStopping = bot.status === 'stopping';
   const isPaused = bot.status === 'paused';
 
   const pnl = bot.totalPnl ?? 0;
@@ -1430,18 +1529,33 @@ function BotCard({
             </div>
           </div>
 
-          {/* Toggle switch */}
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <Switch
-              checked={bot.enabled}
-              onCheckedChange={() => onToggle(bot)}
-              disabled={toggling}
-              className="cursor-pointer"
-              aria-label={bot.enabled ? 'Stop bot' : 'Start bot'}
-            />
-            <span className="text-[9px] text-muted-foreground tabular-nums">
-              {toggling ? '…' : bot.enabled ? 'ON' : 'OFF'}
-            </span>
+          {/* Explicit Start / Stop control — confirmation happens in parent modal. */}
+          <div className="shrink-0">
+            <Button
+              variant={bot.enabled ? 'outline' : 'default'}
+              size="sm"
+              onClick={() => onToggle(bot)}
+              disabled={toggling || isStopping}
+              className="h-8 min-w-[88px] cursor-pointer"
+              aria-label={bot.enabled ? 'Stop AI Automation' : 'Start AI Automation'}
+            >
+              {toggling || isStopping ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  {isStopping ? 'Stopping…' : 'Working…'}
+                </>
+              ) : bot.enabled ? (
+                <>
+                  <Square className="h-3.5 w-3.5 mr-1.5" />
+                  Stop
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5 mr-1.5" />
+                  Start
+                </>
+              )}
+            </Button>
           </div>
         </div>
       </div>

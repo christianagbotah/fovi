@@ -23,7 +23,7 @@ export const POSITION_RECONCILIATION_CONTRACT_VERSION = 'phase2g-paper-position-
 export const PAPER_SETTLEMENT_ACCOUNTING_VERSION = 'phase2g-paper-settlement-v1';
 
 export type PaperPositionSide = 'long' | 'short';
-export type PaperCloseReason = 'stop_loss' | 'take_profit';
+export type PaperCloseReason = 'stop_loss' | 'take_profit' | 'automation_stopped';
 
 export interface PaperCloseIntentInput {
   userId: string;
@@ -109,7 +109,7 @@ export type PaperClosePositionValidationCode =
   | 'POSITION_CLOSE_TRIGGER_NOT_MET';
 
 export type PaperClosePositionValidation =
-  | { valid: true; triggerPrice: number }
+  | { valid: true; triggerPrice: number | null }
   | { valid: false; code: PaperClosePositionValidationCode; reason: string };
 
 function normalizeText(value: string): string {
@@ -259,7 +259,7 @@ export function validatePaperCloseIntent(
     (intent.side !== 'long' && intent.side !== 'short') ||
     !Number.isFinite(intent.quantity) || intent.quantity <= 0 ||
     !Number.isFinite(intent.referencePrice) || intent.referencePrice <= 0 ||
-    (intent.reason !== 'stop_loss' && intent.reason !== 'take_profit')
+    (intent.reason !== 'stop_loss' && intent.reason !== 'take_profit' && intent.reason !== 'automation_stopped')
   ) {
     return {
       valid: false,
@@ -333,6 +333,13 @@ export function validatePaperCloseAgainstPosition(
       code: 'POSITION_NOT_OPEN',
       reason: 'Paper position is not open.',
     };
+  }
+
+  // Operator-requested automation stop is paper-only and does not require an
+  // SL/TP threshold. Identity, paper provenance, quantity, and a verified fresh
+  // market snapshot have already been validated before this point.
+  if (intent.reason === 'automation_stopped') {
+    return { valid: true, triggerPrice: null };
   }
 
   const triggerPrice = intent.reason === 'stop_loss' ? position.stopLoss : position.takeProfit;

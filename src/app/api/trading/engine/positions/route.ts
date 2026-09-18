@@ -53,7 +53,10 @@ export async function GET(req: Request) {
       const bot = position.bot;
       if (!account || !bot || !position.botId) return false;
       if (bot.id !== position.botId || bot.accountId !== position.accountId || bot.userId !== account.userId) return false;
-      if (bot.enabled !== true || bot.status !== 'running') return false;
+      const lifecycleEligible =
+        (bot.enabled === true && bot.status === 'running')
+        || (bot.enabled === false && bot.status === 'stopping');
+      if (!lifecycleEligible) return false;
 
       const eligibility = evaluateEngineAccountEligibility({
         broker: account.broker,
