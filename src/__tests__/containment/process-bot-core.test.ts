@@ -42,6 +42,8 @@ function createMockDeps(overrides?: Partial<ProcessBotDeps>): ProcessBotDeps {
     candleDeps: { nextjsApi: 'http://localhost:3000' },
     positions: new Map(),
     addActivity: vi.fn(),
+    decisionCycleId: 'cycle-test-001',
+    recordDecision: vi.fn().mockResolvedValue(undefined),
     callNextJSApi: vi.fn().mockResolvedValue({ ok: true }),
     executeTrade: vi.fn().mockResolvedValue(undefined),
     closePosition: vi.fn().mockResolvedValue(undefined),
@@ -361,6 +363,66 @@ describe('processBotCore — verified decision boundary', () => {
     expect(positions.has(position.id)).toBe(true);
     expect(finalizeAutomationStop).not.toHaveBeenCalled();
     expect(deps.fetchCandles).not.toHaveBeenCalled();
+    expect(deps.executeTrade).not.toHaveBeenCalled();
+  });
+
+  it('durably journals a strategy hold before returning from the decision boundary', async () => {
+    const recordDecision = vi.fn().mockResolvedValue(undefined);
+    const deps = createMockDeps({
+      recordDecision,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+    });
+
+    const result = await processBotCore({ ...makeBotRow(), timeframe: '1h' }, deps);
+
+    expect(result).toEqual({ processed: true, reason: 'unsupported-verified-timeframe' });
+    expect(recordDecision).toHaveBeenCalledWith(expect.objectContaining({
+      contractVersion: 'phase2k-ai-decision-journal-v1',
+      cycleId: 'cycle-test-001',
+      botId: 'bot-001',
+      stage: 'strategy',
+      outcome: 'hold',
+      code: 'UNSUPPORTED_VERIFIED_TIMEFRAME',
+    }));
+  });
+
+  it('fails closed on new-exposure decisions when durable journaling is unavailable', async () => {
+    const recordDecision = vi.fn().mockRejectedValue(new Error('journal unavailable'));
+    const deps = createMockDeps({
+      recordDecision,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+    });
+
+    await expect(
+      processBotCore({ ...makeBotRow(), timeframe: '1h' }, deps),
+    ).rejects.toThrow('journal unavailable');
+    expect(deps.executeTrade).not.toHaveBeenCalled();
+  });
+
+  it('keeps protective closes independent from decision-journal availability', async () => {
+    const positions = new Map<string, EnginePosition>();
+    const position = openLongPosition();
+    positions.set(position.id, position);
+    const closePosition = vi.fn().mockResolvedValue(undefined);
+    const recordDecision = vi.fn().mockRejectedValue(new Error('journal unavailable'));
+
+    const deps = createMockDeps({
+      positions,
+      closePosition,
+      recordDecision,
+      evaluateEngineAccountEligibility: vi.fn().mockReturnValue({ eligible: true }),
+      fetchMarketPrice: vi.fn().mockResolvedValue({
+        price: 38_500, isDemoData: false, environment: 'live' as const,
+        source: 'coingecko', observedAt: new Date().toISOString(),
+      }),
+    });
+
+    await expect(
+      processBotCore({ ...makeBotRow(), timeframe: '1h' }, deps),
+    ).rejects.toThrow('journal unavailable');
+
+    expect(closePosition).toHaveBeenCalledTimes(1);
+    expect(positions.has(position.id)).toBe(false);
     expect(deps.executeTrade).not.toHaveBeenCalled();
   });
 

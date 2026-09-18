@@ -387,6 +387,7 @@ async function runCycle(): Promise<boolean> {
   }
 
   const cycleStart = Date.now();
+  const decisionCycleId = `cycle_${cycleCount + 1}_${cycleStart}`;
   let cycleFailure: string | null = null;
   console.log(`[AutoTrade] ═══ Cycle #${cycleCount + 1} starting at ${new Date().toISOString()} ═══`);
 
@@ -415,7 +416,7 @@ async function runCycle(): Promise<boolean> {
     for (const config of botConfigs) {
       addActivity({ type: 'cycle_start', botId: config.id, botName: config.name, symbol: '—' });
       try {
-        await processBot(config);
+        await processBot(config, decisionCycleId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (!cycleFailure) cycleFailure = `Bot ${config.id}: ${errMsg}`;
@@ -451,7 +452,7 @@ async function runCycle(): Promise<boolean> {
   }
 }
 
-async function processBot(config: BotRow) {
+async function processBot(config: BotRow, decisionCycleId: string) {
   await processBotCore(config as ProcessBotRow, {
     fetchMarketPrice,
     fetchCandles,
@@ -461,6 +462,8 @@ async function processBot(config: BotRow) {
     candleDeps,
     positions,
     addActivity: (entry) => addActivity(entry as ActivityInput),
+    decisionCycleId,
+    recordDecision,
     callNextJSApi,
     executeTrade,
     closePosition,
@@ -470,6 +473,19 @@ async function processBot(config: BotRow) {
     allSymbols: ALL_SYMBOLS,
     evaluateEngineAccountEligibility,
   });
+}
+
+async function recordDecision(
+  entry: Parameters<ProcessBotDeps['recordDecision']>[0],
+) {
+  const result = await callNextJSApi(
+    'POST',
+    '/api/trading/engine/decisions',
+    entry as unknown as Record<string, unknown>,
+  );
+  if (!result.ok) {
+    throw new Error(result.error || 'AI decision journal rejected the entry.');
+  }
 }
 
 async function executeTrade(

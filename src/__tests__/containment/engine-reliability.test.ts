@@ -25,6 +25,7 @@ describe('Phase 2H engine reliability primitives', () => {
   it('retries only deterministic idempotent paper mutation endpoints', () => {
     expect(shouldRetryInternalApi({ method: 'POST', path: '/api/trading/engine/execute', attempt: 1, status: 503 })).toBe(true);
     expect(shouldRetryInternalApi({ method: 'POST', path: '/api/trading/engine/close', attempt: 1, transportError: true })).toBe(true);
+    expect(shouldRetryInternalApi({ method: 'POST', path: '/api/trading/engine/decisions', attempt: 1, status: 503 })).toBe(true);
     expect(shouldRetryInternalApi({ method: 'POST', path: '/api/trading/engine/report', attempt: 1, status: 503 })).toBe(false);
     expect(shouldRetryInternalApi({ method: 'POST', path: '/api/trading/engine/positions', attempt: 1, status: 503 })).toBe(false);
   });

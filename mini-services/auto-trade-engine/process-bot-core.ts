@@ -7,6 +7,12 @@ import { type CandleData, type TradeSignal } from './strategies';
 import { evaluateStrategyDecision } from '../../src/lib/trading-intelligence/strategy-engine';
 import { evaluateAutomatedTradeRisk } from '../../src/lib/trading-intelligence/risk-engine';
 import { evaluateAutonomySupervisor } from '../../src/lib/trading-intelligence/autonomy-supervisor';
+import {
+  buildAiDecisionJournalEntry,
+  type AiDecisionJournalEntry,
+  type AiDecisionJournalInput,
+  type AiDecisionMarketData,
+} from '../../src/lib/trading-intelligence/decision-journal';
 
 export interface BotRow {
   id: string; userId?: string; accountId: string; name: string; strategy: string;
@@ -65,6 +71,8 @@ export interface ProcessBotDeps {
   candleDeps: { nextjsApi: string; fetchFn?: typeof fetch };
   positions: Map<string, EnginePosition>;
   addActivity: (entry: Record<string, unknown>) => void;
+  decisionCycleId: string;
+  recordDecision: (entry: AiDecisionJournalEntry) => Promise<void>;
   callNextJSApi: (method: string, path: string, body?: Record<string, unknown>) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   executeTrade: (config: BotRow, trade: {
     symbol: string; side: 'buy' | 'sell'; qty: number; price: number; stopLoss: number; takeProfit: number;
@@ -92,6 +100,51 @@ export interface ProcessBotDeps {
 
 function isVerifiedPrice(result: PriceResult): boolean {
   return !result.dataUnavailable && !result.isDemoData && result.environment === 'live' && result.price > 0;
+}
+
+type DecisionDetails = Omit<AiDecisionJournalInput, 'userId' | 'botId' | 'accountId' | 'cycleId'>;
+
+class DecisionJournalWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DecisionJournalWriteError';
+  }
+}
+
+async function persistDecision(
+  config: BotRow,
+  deps: ProcessBotDeps,
+  details: DecisionDetails,
+): Promise<void> {
+  if (!config.userId) {
+    throw new Error('AI decision journaling requires a verified bot userId.');
+  }
+  const entry = buildAiDecisionJournalEntry({
+    userId: config.userId,
+    botId: config.id,
+    accountId: config.accountId,
+    cycleId: deps.decisionCycleId,
+    ...details,
+  });
+  try {
+    await deps.recordDecision(entry);
+  } catch (error) {
+    throw new DecisionJournalWriteError(
+      error instanceof Error ? error.message : 'AI decision journal write failed.',
+    );
+  }
+}
+
+function safeDecisionMarketData(
+  value: { environment: 'live' | 'demo' | 'unknown'; isSynthetic: boolean; source: string; observedAt: string },
+): AiDecisionMarketData | null {
+  if (!value.source.trim() || !Number.isFinite(Date.parse(value.observedAt))) return null;
+  return {
+    environment: value.environment,
+    isSynthetic: value.isSynthetic,
+    source: value.source.trim(),
+    observedAt: value.observedAt,
+  };
 }
 
 export async function processBotCore(
@@ -229,6 +282,14 @@ export async function processBotCore(
   // paper exposure must still receive verified-price protective/Stop closes
   // even if a legacy or corrupted bot carries an unsupported timeframe.
   if (timeframe !== '4h') {
+    await persistDecision(config, deps, {
+      stage: 'strategy',
+      outcome: 'hold',
+      code: 'UNSUPPORTED_VERIFIED_TIMEFRAME',
+      reason: 'Verified automated decisions currently require 4h market data.',
+      strategy,
+      timeframe,
+    });
     deps.addActivity({
       type: 'strategy_hold', botId: config.id, botName: config.name,
       code: 'UNSUPPORTED_VERIFIED_TIMEFRAME', timeframe,
@@ -251,6 +312,15 @@ export async function processBotCore(
     lastTradeAt: config.lastTradeAt ?? null,
   });
   if (supervisorDecision.action !== 'scan') {
+    await persistDecision(config, deps, {
+      stage: 'autonomy',
+      outcome: supervisorDecision.action,
+      code: supervisorDecision.code,
+      reason: supervisorDecision.reason,
+      strategy,
+      timeframe,
+      supervisorVersion: supervisorDecision.supervisorVersion,
+    });
     deps.addActivity({
       type: supervisorDecision.action === 'suspend' ? 'autonomy_suspend' : 'autonomy_hold',
       botId: config.id,
@@ -272,13 +342,33 @@ export async function processBotCore(
     botPositions.filter(p => !closedSymbols.has(p.symbol)).map(p => p.symbol.toUpperCase()),
   );
   const symbols = botSymbols.filter(s => !openSymbols.has(s.toUpperCase()));
-  if (symbols.length === 0) return { processed: true, reason: 'no-symbols-available' };
+  if (symbols.length === 0) {
+    await persistDecision(config, deps, {
+      stage: 'strategy',
+      outcome: 'hold',
+      code: 'NO_SYMBOLS_AVAILABLE',
+      reason: 'No configured symbol is available for a new autonomous paper position.',
+      strategy,
+      timeframe,
+    });
+    return { processed: true, reason: 'no-symbols-available' };
+  }
 
   let bestSignal: GeneratedTradeSignal | null = null;
   for (const symbol of symbols) {
     try {
       const candleResult = await deps.fetchCandles(symbol, 100, deps.candleDeps);
       if (candleResult.dataUnavailable || candleResult.candles.length < 35) {
+        await persistDecision(config, deps, {
+          stage: 'market_data',
+          outcome: 'reject',
+          code: candleResult.reason || 'INSUFFICIENT_HISTORY',
+          reason: 'Verified candle history was unavailable or insufficient for autonomous analysis.',
+          symbol,
+          strategy,
+          timeframe,
+          marketData: safeDecisionMarketData(candleResult.provenance),
+        });
         deps.addActivity({
           type: 'market_data_unavailable', botId: config.id, botName: config.name,
           symbol, reason: candleResult.reason || 'INSUFFICIENT_HISTORY',
@@ -292,6 +382,16 @@ export async function processBotCore(
         candleResult.provenance.environment !== 'live' ||
         candleResult.provenance.isSynthetic
       ) {
+        await persistDecision(config, deps, {
+          stage: 'market_data',
+          outcome: 'reject',
+          code: candleValidation.reason || 'UNVERIFIED_MARKET_DATA',
+          reason: 'Market-data provenance did not satisfy the verified non-synthetic decision policy.',
+          symbol,
+          strategy,
+          timeframe,
+          marketData: safeDecisionMarketData(candleResult.provenance),
+        });
         deps.addActivity({
           type: 'market_data_unavailable', botId: config.id, botName: config.name,
           symbol, reason: candleValidation.reason || 'SYNTHETIC_DATA',
@@ -305,6 +405,17 @@ export async function processBotCore(
         timeframe,
       });
       if (strategyDecision.action === 'hold') {
+        await persistDecision(config, deps, {
+          stage: 'strategy',
+          outcome: 'hold',
+          code: strategyDecision.code,
+          reason: strategyDecision.reason,
+          symbol,
+          strategy,
+          timeframe,
+          strategyVersion: strategyDecision.strategyVersion,
+          marketData: safeDecisionMarketData(candleResult.provenance),
+        });
         if (strategyDecision.code !== 'NO_VALID_CANDIDATE') {
           deps.addActivity({
             type: 'strategy_hold', botId: config.id, botName: config.name,
@@ -323,15 +434,53 @@ export async function processBotCore(
         bestSignal = signal;
       }
     } catch (err) {
+      if (err instanceof DecisionJournalWriteError) throw err;
+      await persistDecision(config, deps, {
+        stage: 'strategy',
+        outcome: 'reject',
+        code: 'ANALYSIS_ERROR',
+        reason: 'Autonomous analysis failed before a safe strategy decision could be produced.',
+        symbol,
+        strategy,
+        timeframe,
+      });
       console.warn(`${tag} [${symbol}] Analysis error:`, err instanceof Error ? err.message : err);
     }
   }
 
-  if (!bestSignal) return { processed: true, reason: 'no-strategy-decision' };
+  if (!bestSignal) {
+    await persistDecision(config, deps, {
+      stage: 'strategy',
+      outcome: 'hold',
+      code: 'NO_STRATEGY_DECISION',
+      reason: 'No configured symbol produced an approved canonical strategy candidate this cycle.',
+      strategy,
+      timeframe,
+    });
+    return { processed: true, reason: 'no-strategy-decision' };
+  }
 
   // Re-price the selected candidate immediately before sizing/risk evaluation.
   const priceResult = await deps.fetchMarketPrice(bestSignal.symbol, deps.marketPriceDeps);
   if (!isVerifiedPrice(priceResult)) {
+    await persistDecision(config, deps, {
+      stage: 'market_data',
+      outcome: 'reject',
+      code: priceResult.reason || 'MARKET_DATA_UNAVAILABLE',
+      reason: 'Selected strategy candidate could not be repriced from a verified live market snapshot.',
+      symbol: bestSignal.symbol,
+      side: bestSignal.side,
+      confidence: bestSignal.confidence,
+      strategy,
+      timeframe,
+      strategyVersion: bestSignal.strategyVersion ?? null,
+      marketData: safeDecisionMarketData({
+        environment: priceResult.environment,
+        isSynthetic: priceResult.isDemoData,
+        source: priceResult.source,
+        observedAt: priceResult.observedAt,
+      }),
+    });
     deps.addActivity({
       type: 'market_data_unavailable', botId: config.id, botName: config.name,
       symbol: bestSignal.symbol, reason: priceResult.reason || 'MARKET_DATA_UNAVAILABLE',
@@ -361,6 +510,25 @@ export async function processBotCore(
   );
 
   if (!riskDecision.approved) {
+    await persistDecision(config, deps, {
+      stage: 'risk',
+      outcome: 'reject',
+      code: riskDecision.code,
+      reason: riskDecision.reason,
+      symbol: bestSignal.symbol,
+      side: bestSignal.side,
+      confidence: bestSignal.confidence,
+      strategy,
+      timeframe,
+      strategyVersion: bestSignal.strategyVersion ?? null,
+      riskEngineVersion: riskDecision.engineVersion,
+      marketData: {
+        environment: priceResult.environment,
+        isSynthetic: priceResult.isDemoData,
+        source: priceResult.source,
+        observedAt: priceResult.observedAt,
+      },
+    });
     deps.addActivity({
       type: 'risk_rejected', botId: config.id, botName: config.name,
       symbol: bestSignal.symbol, code: riskDecision.code,
@@ -372,6 +540,29 @@ export async function processBotCore(
   // Containment remains authoritative. A valid strategy+risk decision is NOT
   // permission to execute while automated trading is disabled.
   if (!deps.automatedTradingEnabled) {
+    await persistDecision(config, deps, {
+      stage: 'execution',
+      outcome: 'hold',
+      code: 'AUTOMATED_PAPER_EXECUTION_DISABLED',
+      reason: 'Strategy and risk approved the candidate, but automated paper execution is disabled.',
+      symbol: bestSignal.symbol,
+      side: bestSignal.side,
+      confidence: bestSignal.confidence,
+      strategy,
+      timeframe,
+      strategyVersion: bestSignal.strategyVersion ?? null,
+      riskEngineVersion: riskDecision.engineVersion,
+      positionNotional: riskDecision.positionNotional,
+      riskAmount: riskDecision.riskAmount,
+      riskPercentOfAllocation: riskDecision.riskPercentOfAllocation,
+      riskReward: riskDecision.riskReward,
+      marketData: {
+        environment: priceResult.environment,
+        isSynthetic: priceResult.isDemoData,
+        source: priceResult.source,
+        observedAt: priceResult.observedAt,
+      },
+    });
     deps.addActivity({
       type: 'risk_approved_execution_disabled', botId: config.id, botName: config.name,
       symbol: bestSignal.symbol, riskEngineVersion: riskDecision.engineVersion,
@@ -380,6 +571,30 @@ export async function processBotCore(
     console.log(`${tag} AUTOMATED_TRADING_ENABLED=false — approved decision not executed`);
     return { processed: true, reason: 'execution-disabled' };
   }
+
+  await persistDecision(config, deps, {
+    stage: 'execution',
+    outcome: 'approve',
+    code: 'TRADE_APPROVED',
+    reason: bestSignal.reason,
+    symbol: bestSignal.symbol,
+    side: bestSignal.side,
+    confidence: bestSignal.confidence,
+    strategy,
+    timeframe,
+    strategyVersion: bestSignal.strategyVersion ?? null,
+    riskEngineVersion: riskDecision.engineVersion,
+    positionNotional: riskDecision.positionNotional,
+    riskAmount: riskDecision.riskAmount,
+    riskPercentOfAllocation: riskDecision.riskPercentOfAllocation,
+    riskReward: riskDecision.riskReward,
+    marketData: {
+      environment: priceResult.environment,
+      isSynthetic: priceResult.isDemoData,
+      source: priceResult.source,
+      observedAt: priceResult.observedAt,
+    },
+  });
 
   await deps.executeTrade(config, {
     symbol: bestSignal.symbol,

@@ -13,6 +13,7 @@ const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const IDEMPOTENT_POST_PATHS = new Set([
   '/api/trading/engine/execute',
   '/api/trading/engine/close',
+  '/api/trading/engine/decisions',
 ]);
 
 export interface InternalApiRetryInput {
