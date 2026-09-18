@@ -52,6 +52,14 @@ describe('Phase 2J server-authoritative automation control', () => {
     }
   });
 
+  it('carries persisted lastTradeAt into the engine so autonomy cooldowns are enforceable', () => {
+    const botsRoute = source('src/app/api/trading/engine/bots/route.ts');
+    const engine = source('mini-services/auto-trade-engine/index.ts');
+
+    expect(botsRoute).toContain('lastTradeAt: b.lastTradeAt');
+    expect(engine).toContain('lastTradeAt: string | null');
+  });
+
   it('finalizes stopped only after durable storage proves no open exposure remains', () => {
     const finalizer = source('src/app/api/trading/engine/stop-complete/route.ts');
 
