@@ -464,6 +464,7 @@ async function processBot(config: BotRow) {
     executeTrade,
     closePosition,
     automatedTradingEnabled: AUTOMATED_TRADING_ENABLED,
+    consecutiveCycleFailures: cycleCoordinator.snapshot(AUTOMATED_TRADING_ENABLED).consecutiveCycleFailures,
     allSymbols: ALL_SYMBOLS,
     evaluateEngineAccountEligibility,
   });
