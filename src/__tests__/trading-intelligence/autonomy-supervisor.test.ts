@@ -121,7 +121,7 @@ describe('Phase 2I autonomy supervisor', () => {
       'utf8',
     );
     const closeLoopIndex = source.indexOf('for (const pos of botPositions)');
-    const supervisorIndex = source.indexOf('evaluateAutonomySupervisor');
+    const supervisorIndex = source.indexOf('const supervisorDecision = evaluateAutonomySupervisor');
     const strategyScanIndex = source.indexOf('let bestSignal');
 
     expect(source).toContain('autonomy_hold');
